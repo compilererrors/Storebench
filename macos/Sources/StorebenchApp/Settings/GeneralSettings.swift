@@ -35,6 +35,7 @@ struct GeneralSettings: View {
                     }
                 }
             }
+            SampleDataSettings(model: model)
             PreparationSettings(model: model)
             PerformanceSettings(model: model)
         }.storebenchWorking(working)

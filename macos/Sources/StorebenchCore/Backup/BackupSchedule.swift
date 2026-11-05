@@ -326,6 +326,7 @@ extension WorkspaceSession {
 
     /// One scheduled backup poll; `force` creates a backup now even when none is due. Disabled backups run only when forced.
     public func runBackups(writer: VaultWriter, force: Bool = false, folderAccess: BackupFolderAccess = .system, expectedRevision: String? = nil) throws -> BackupStatus {
+        try requireOwnWorkspace()
         try requireSessionAccess()
         let root = self.root
         func passphrase(_ secret: String?) throws -> String {

@@ -95,9 +95,16 @@ public actor WorkspaceSession {
     nonisolated let lifetime = SessionLifetime()
     nonisolated let accessGeneration: String
     nonisolated let accessMarker: URL
+    /// A sample workspace holds synthetic data only. It opens with an in-memory key and never reads or writes credentials.
+    public nonisolated let isSample: Bool
 
     public init(workspace: Workspace, vault: CredentialVault? = nil, password: String? = nil, credentialWriter: VaultWriter? = nil) throws {
-        let writer = credentialWriter ?? (Network.testMode ? nil : VaultWriter(dataRoot: Workspace.defaultRoot))
+        try self.init(workspace: workspace, vault: vault, password: password, credentialWriter: credentialWriter, sample: false)
+    }
+
+    init(workspace: Workspace, vault: CredentialVault?, password: String?, credentialWriter: VaultWriter?, sample: Bool) throws {
+        isSample = sample
+        let writer = sample ? nil : credentialWriter ?? (Network.testMode ? nil : VaultWriter(dataRoot: Workspace.defaultRoot))
         let opened: ((EncryptedDocumentStore, EncryptedMediaStore, Data), VaultWriter.Snapshot?, String)
         if let writer {
             let directory = try Setup.privateDirectory(root: workspace.root)
@@ -121,6 +128,7 @@ public actor WorkspaceSession {
 
     /// Setup already owns the bootstrap mutex; do not acquire it recursively while constructing the actor.
     init(unlocked workspace: Workspace, snapshot: VaultWriter.Snapshot, password: String?, writer: VaultWriter) throws {
+        isSample = false
         (store, media, databaseKey) = try workspace.openWithKey(vault: snapshot.vault, password: password)
         vault = snapshot.vault; root = workspace.root; credentialWriter = writer; credentialSnapshot = snapshot
         accessGeneration = try VaultWriter.markerVersion(store.directory.appendingPathComponent("access-generation"))
@@ -197,7 +205,7 @@ public actor WorkspaceSession {
 
     /// Materialize older per-entry credentials before the explicit backend copy.
     func prepareCredentialCopy(writer: VaultWriter) throws {
-        try requireSessionAccess()
+        try requireSessionAccess(); try requireOwnWorkspace()
         var keys = [CredentialVault.databaseEntry(root: root)]
         for account in try accounts() {
             keys.append("apple:" + account.id)
@@ -242,6 +250,7 @@ public actor WorkspaceSession {
     struct ProtectionChange { let writer: VaultWriter; let previous: String; let currentPassword, newPassword: String? }
     /// A rejected current password leaves the session and its background work open.
     public func changeLock(writer: VaultWriter, currentPassword: String?, newPassword: String?) async throws {
+        try requireOwnWorkspace()
         try requireSessionAccess()
         guard lifetime.status == .open else { throw SessionFailure.closed }
         if let newPassword, !(12...256).contains(newPassword.utf16.count) { throw Setup.Failure.invalidPassword }

@@ -15,6 +15,9 @@ struct StorageChoiceView: View {
                     StorebenchSetupOption(title: "Password without Keychain", description: "Encrypt keys and credentials with a Storebench password. Enter it when you open the app; it cannot be recovered.") {
                         Button("Use Password") { Task { await model.selectStorage(.password) } }.help("Use Password Without Keychain").accessibilityLabel("Use Password Without Keychain")
                     }
+                    StorebenchSetupOption(title: "Explore first", description: "Look around with sample data before choosing storage or connecting Apple. Nothing is saved or sent to Apple.") {
+                        Button("Load Sample Data") { Task { await model.openSampleData() } }.help("Explore Storebench with Fictional Apps").accessibilityLabel("Load Sample Data")
+                    }
                 }
                 Text("If your existing data uses Keychain, choosing password storage offers an explicit copy step before accessing those saved keys.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
                 StorebenchFeedback(text: model.lastError, error: true)
@@ -76,6 +79,9 @@ struct SetupView: View {
                     Button("Back") { model.reviewStorageChoice() }.help("Back to Storage Choice").accessibilityLabel("Back to Storage Choice")
                 }
                 RestoreBackupCard(model: model)
+                Card(title: "Explore first", subtitle: "Look around with sample data before creating storage. Nothing is saved or sent to Apple, and you return here when you close it.") {
+                    StorebenchFormFooter { Button("Load Sample Data") { Task { await model.openSampleData() } }.help("Explore Storebench with Fictional Apps").accessibilityLabel("Load Sample Data") }
+                }
             }
             .frame(maxWidth: 760, alignment: .leading)
         }

@@ -3,7 +3,7 @@ import Foundation
 /// The open session's view of stored credentials: captures, pauses and explicit retries for this workspace.
 extension WorkspaceSession {
     func credentialCapture(_ key: String, writer: VaultWriter? = nil, allowMissing: Bool = false) throws -> String? {
-        try requireSessionAccess()
+        try requireSessionAccess(); try requireOwnWorkspace()
         if let writer { credentialWriter = writer }
         guard !credentialFailures.contains(key) else { throw CredentialAccessFailure.paused }
         guard let writer = credentialWriter else { return vault.entries[key] }
@@ -20,6 +20,7 @@ extension WorkspaceSession {
     }
     /// An explicit retry clears paused access for this account and its current Reporter token.
     public func retryKeychainAccess(accountId: String, writer: VaultWriter) throws {
+        try requireOwnWorkspace()
         guard try accounts().contains(where: { $0.id == accountId }) else { throw AccountFailure.notFound }
         let directory = try storeAccess { $0.directory }, name = "reporter_" + JSONText.string(accountId).rawSHA256.prefix(32)
         try FileMutex.withLock(directory.appendingPathComponent("\(name).mutex")) {

@@ -33,13 +33,15 @@ public enum AppleIDSignInStep: Sendable {
 extension WorkspaceSession {
     /// The Apple ID signed in for this account, as views show it; nil when none is.
     public func appleIDAccount(accountId: String, writer: VaultWriter? = nil) throws -> AppleIDAccount? {
-        try appleIDSession(accountId: accountId, writer: writer).map(AppleIDAccount.init)
+        try requireOwnWorkspace()
+        return try appleIDSession(accountId: accountId, writer: writer).map(AppleIDAccount.init)
     }
 
     /// Sends the Apple ID and password. The password is saved for the next sign-in only after Apple accepted it, and only
     /// when `savePassword` is on. A sign-in that needs no code is kept for this account at once.
     public func signInAppleID(_ appleId: String, password: String, savePassword: Bool, accountId: String, writer: VaultWriter,
                               origins: AppleIDOrigins = .apple, configuration: URLSessionConfiguration = .ephemeral) async throws -> AppleIDSignInStep {
+        try requireOwnWorkspace()
         guard try accounts().contains(where: { $0.id == accountId }) else { throw AccountFailure.notFound }
         let flow = try AppleIDSignIn(appleId: appleId, origins: origins, configuration: configuration)
         let challenge = try await flow.signIn(password: password)
@@ -50,7 +52,8 @@ extension WorkspaceSession {
 
     /// Checks the two-factor code, from a trusted device or the texted `phone`, and keeps the session for the sign-in's account.
     public func verifyAppleID(_ pending: AppleIDPendingSignIn, code: String, phone: Int?, writer: VaultWriter) async throws -> AppleIDAccount {
-        try await keepAppleID(try await pending.flow.verify(code: code, phone: phone), accountId: pending.accountId, writer: writer)
+        try requireOwnWorkspace()
+        return try await keepAppleID(try await pending.flow.verify(code: code, phone: phone), accountId: pending.accountId, writer: writer)
     }
 
     /// Asks Apple to text the two-factor code to one of the sign-in's trusted phone numbers.

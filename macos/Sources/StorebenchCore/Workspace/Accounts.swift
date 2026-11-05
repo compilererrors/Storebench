@@ -58,6 +58,7 @@ extension WorkspaceSession {
     /// Apple reads finish before the account mutex and encrypted-store transaction begin.
     public func connectAccount(name: String, keyType: String, issuerId: String?, keyId: String, privateKeyPEM: String, writer: VaultWriter,
                                origin: URL = AppStoreConnectClient.base, configuration: sending URLSessionConfiguration = .ephemeral) async throws -> Account {
+        try requireOwnWorkspace()
         try requireSessionAccess()
         let lease = try lifetime.admit(.connection); defer { lease.finish() }
         return try await SessionContext.$lease.withValue(lease) {
@@ -135,6 +136,7 @@ extension WorkspaceSession {
     /// Reconnect the original Key ID and issuer. App selections, imports, reports and drafts stay in the encrypted store.
     public func reconnectAccount(_ account: Account, privateKeyPEM: String, writer: VaultWriter,
                                  origin: URL = AppStoreConnectClient.base, configuration: sending URLSessionConfiguration = .ephemeral) async throws {
+        try requireOwnWorkspace()
         try requireSessionAccess()
         let lease = try lifetime.admit(.connection); defer { lease.finish() }
         try await SessionContext.$lease.withValue(lease) {

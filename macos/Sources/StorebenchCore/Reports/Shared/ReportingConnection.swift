@@ -95,6 +95,7 @@ extension WorkspaceSession {
                                 selectedAccount: String = "", selectedVendor: String = "", writer: VaultWriter,
                                 origin: URL = URL(string: "https://reportingitc-reporter.apple.com")!, configuration: sending URLSessionConfiguration = .ephemeral,
                                 now: Date = Date()) async throws -> ReporterSetupResult {
+        try requireOwnWorkspace()
         try requireReportingScope(account, appId: appId); try requireReportingState(baseline, accountId: account.id)
         let token = TextSemantics.trim(token), client = try ReporterClient(token: token, origin: origin, configuration: configuration, selection: nil, accessCheck: sessionRequestCheck())
         ReplyDiagnostics.clear(.reporterSales)
@@ -138,6 +139,7 @@ extension WorkspaceSession {
     }
     /// Disconnect saves metadata first; a failed credential removal restores the prior connection while holding its mutex.
     public func disconnectReporter(account: Account, appId: String, baseline: ReportingConnectionState, writer: VaultWriter) throws -> ReportingConnectionState {
+        try requireOwnWorkspace()
         do {
             return try FileMutex.withLock(reportingMutex(accountId: account.id)) {
                 try requireReportingScope(account, appId: appId); try requireReportingState(baseline, accountId: account.id)

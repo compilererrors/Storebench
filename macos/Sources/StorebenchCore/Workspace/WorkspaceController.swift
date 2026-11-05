@@ -13,6 +13,11 @@ import Security
     public private(set) var writer: VaultWriter
     public private(set) var storageMode: CredentialStorageMode?
     public private(set) var requiresDeviceAuthentication = false
+    /// The open session is the synthetic sample workspace rather than this Mac's own saved data.
+    public private(set) var showingSampleData = false
+    /// True while the sample workspace is being created and filled.
+    public private(set) var loadingSampleData = false
+    @ObservationIgnored private var sampleWorkspace: SampleWorkspace.Opened?
     private let workspace: Workspace
     private let choosesStorage: Bool
     private let keychainStorage: VaultStorage
@@ -104,7 +109,7 @@ import Security
     }
 
     public func choosePasswordStorage() async {
-        guard choosesStorage, !transitioning, storageMode == .keychain, writer.usesKeychain, session != nil else { return }
+        guard !showingSampleData, choosesStorage, !transitioning, storageMode == .keychain, writer.usesKeychain, session != nil else { return }
         await signOut()
         guard !transitioning, session == nil, state == .locked else { return }
         state = .chooseStorage
@@ -196,7 +201,7 @@ import Security
     }
 
     public func changeDeviceAuthentication(required: Bool) async throws {
-        guard choosesStorage, !transitioning, storageMode == .keychain, writer.usesKeychain, let current = session, required != requiresDeviceAuthentication else { throw CredentialAccessFailure.changed }
+        guard !showingSampleData, choosesStorage, !transitioning, storageMode == .keychain, writer.usesKeychain, let current = session, required != requiresDeviceAuthentication else { throw CredentialAccessFailure.changed }
         transitioning = true; defer { transitioning = false }
         let expected = requiresDeviceAuthentication, workspace = workspace
         try await authenticator.authenticate()
@@ -208,7 +213,7 @@ import Security
 
     /// Explicit storage transition. The source remains a recovery copy; this backend never falls back to it.
     public func enableTouchIDKeychain() async throws {
-        guard choosesStorage, !transitioning, storageMode == .keychain, lockMode == .device, let current = session else { throw CredentialAccessFailure.changed }
+        guard !showingSampleData, choosesStorage, !transitioning, storageMode == .keychain, lockMode == .device, let current = session else { throw CredentialAccessFailure.changed }
         try protectedStorage.validateAccess()
         transitioning = true; defer { transitioning = false }
         let source = writer, destination = protectedStorage, workspace = workspace, expected = requiresDeviceAuthentication
@@ -231,6 +236,7 @@ import Security
 
     public func changeLock(currentPassword: String?, newPassword: String?) async throws {
         guard !transitioning, let current = session else { throw SessionFailure.closed }
+        try current.requireOwnWorkspace()
         transitioning = true; defer { transitioning = false }
         do {
             try await current.changeLock(writer: writer, currentPassword: currentPassword, newPassword: newPassword)
@@ -269,6 +275,7 @@ import Security
     }
 
     public func signOut() async {
+        if showingSampleData { await closeSampleData(); return }
         guard !transitioning, let current = session else { return }
         transitioning = true; defer { transitioning = false }
         state = .closing; lastError = ""
@@ -301,6 +308,47 @@ import Security
         let preferences = try? await current.editingPreferences()
         guard session === current else { return }; editingPreferences = preferences
     }
+    /// Opens the sample workspace in place of this Mac's own data. An open workspace signs out first;
+    /// closing the sample returns to the same storage choice, setup or unlock step as before.
+    public func openSampleData() async {
+        guard !transitioning, !showingSampleData else { return }
+        switch state { case .chooseStorage, .migrateStorage, .notSetUp, .locked, .unlocked, .failed: break; default: return }
+        if session != nil { await signOut(); guard session == nil, !showingSampleData else { return } }
+        let previous = state
+        transitioning = true; loadingSampleData = true; defer { transitioning = false; loadingSampleData = false }
+        state = .unlocking; lastError = ""
+        do {
+            let opened = try await SampleWorkspace.open(beside: workspace.root)
+            do {
+                let accounts = try await opened.session.accounts(), preferences = try? await opened.session.editingPreferences()
+                await opened.session.applyCachePolicy(cachePolicy)
+                sampleWorkspace = opened; showingSampleData = true
+                session = opened.session; editingPreferences = preferences; state = .unlocked(accounts)
+                startBackgroundWork(opened.session)
+            } catch { try? await opened.session.signOut(); SampleWorkspace.discard(opened); throw error }
+        } catch {
+            state = previous
+            lastError = (error as? SampleWorkspace.Failure)?.message ?? "Sample data could not be opened. Your own data was not changed."
+        }
+    }
+
+    /// Discards the sample workspace and starts again from this Mac's own saved data.
+    public func closeSampleData() async {
+        guard !transitioning, showingSampleData, let opened = sampleWorkspace else { return }
+        transitioning = true
+        state = .closing; lastError = ""
+        try? await opened.session.signOut()
+        dropSample(opened)
+        state = .loading; transitioning = false
+        await start()
+    }
+
+    private func dropSample(_ opened: SampleWorkspace.Opened) {
+        drop(opened.session)
+        SampleWorkspace.discard(opened)
+        sampleWorkspace = nil; showingSampleData = false
+    }
+
     public func reloadAccounts() async {
         guard !transitioning, let current = session else { return }
         let accounts = try? await current.accounts()
@@ -344,6 +392,8 @@ import Security
             Task { await expected.trimCachedMemory() }
         }
         pressure.resume(); memoryPressure = pressure
+        // The sample workspace has no backups and nothing at Apple to read ahead.
+        guard !expected.isSample else { availabilityTask = nil; return }
         if let warm = releaseWarmDelay {
             // A light start: one app at a time, after the workspace has opened, so Release opens with saved and then fresh status.
             releaseWarmTask = Task { [weak self] in

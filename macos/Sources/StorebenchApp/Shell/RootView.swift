@@ -38,7 +38,7 @@ struct RootView: View {
     @ViewBuilder private var content: some View {
         switch model.state {
         case .loading: ProgressView("Opening Storebench…")
-        case .unlocking: ProgressView("Unlocking saved data…")
+        case .unlocking: ProgressView(model.loadingSampleData ? "Loading sample data…" : "Unlocking saved data…")
         case .closing: ProgressView("Signing out after active work finishes…")
         case .chooseStorage: StorageChoiceView(model: model)
         case .migrateStorage: PasswordStorageMigrationView(model: model)
