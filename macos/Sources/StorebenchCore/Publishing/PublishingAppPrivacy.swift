@@ -121,6 +121,7 @@ extension WorkspaceSession {
 
     /// The Apple ID signed in for this account's App Privacy, if any. The session is kept in the chosen credential storage, like the API key.
     public func appleIDSession(accountId: String, writer: VaultWriter? = nil) throws -> AppleWebSession? {
+        try requireOwnWorkspace()
         guard try accounts().contains(where: { $0.id == accountId }) else { throw AccountFailure.notFound }
         if let route = appleWebTestRoute { return route.session }
         return try credentialCapture(Self.appleIDKey(accountId), writer: writer, allowMissing: true).flatMap(AppleWebSession.init)
@@ -128,6 +129,7 @@ extension WorkspaceSession {
 
     /// Keeps a signed-in Apple ID session for this account, replacing an earlier one.
     public func saveAppleIDSession(_ value: AppleWebSession, accountId: String, writer: VaultWriter) throws {
+        try requireOwnWorkspace()
         guard try accounts().contains(where: { $0.id == accountId }) else { throw AccountFailure.notFound }
         let key = Self.appleIDKey(accountId), previous = try credentialCapture(key, writer: writer, allowMissing: true)
         let text = value.json.stringify()
@@ -140,6 +142,7 @@ extension WorkspaceSession {
     /// The Apple ID and password saved for this account's sign-in when Save Password is on; nil otherwise.
     /// They live only in the chosen credential storage (Keychain or the password-protected vault), never in the workspace database, backups, logs or URLs.
     public func savedAppleIDPassword(accountId: String, writer: VaultWriter) throws -> (appleId: String, password: String)? {
+        try requireOwnWorkspace()
         guard try accounts().contains(where: { $0.id == accountId }) else { throw AccountFailure.notFound }
         guard let text = try credentialCapture(Self.appleIDPasswordKey(accountId), writer: writer, allowMissing: true), let value = try? JSONText.parse(Data(text.utf8)),
               let appleId = value["appleId"]?.text, let password = value["password"]?.text, !appleId.isEmpty, !password.isEmpty else { return nil }
@@ -148,6 +151,7 @@ extension WorkspaceSession {
 
     /// Saves the Apple ID and password in the chosen credential storage for the next sign-in, or removes them when `password` is nil.
     public func saveAppleIDPassword(_ password: String?, appleId: String, accountId: String, writer: VaultWriter) throws {
+        try requireOwnWorkspace()
         guard try accounts().contains(where: { $0.id == accountId }) else { throw AccountFailure.notFound }
         let key = Self.appleIDPasswordKey(accountId), previous = try credentialCapture(key, writer: writer, allowMissing: true)
         guard let password else {
@@ -162,6 +166,7 @@ extension WorkspaceSession {
 
     /// Signs out: removes the stored Apple ID session. A password saved for the next sign-in stays until Save Password is turned off.
     public func signOutAppleID(accountId: String, writer: VaultWriter) throws {
+        try requireOwnWorkspace()
         let key = Self.appleIDKey(accountId), previous = try credentialCapture(key, writer: writer, allowMissing: true)
         guard previous != nil else { return }
         acceptCredential(try writer.removeCredential(key, root: root, expected: previous, expectedVersion: credentialVersions[key]), key: key, writer: writer)

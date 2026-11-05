@@ -79,6 +79,7 @@ extension WorkspaceSession {
         return try FileMutex.withLock(root.appendingPathComponent("backup-settings.mutex")) { try requireSessionAccess(); try Task.checkCancellation(); return try BackupSchedule.read(root: root) }
     }
     public func saveBackupSettings(_ intent: BackupSettingsEditor.SaveIntent, writer: VaultWriter, folderAccess: BackupFolderAccess = .system) throws -> BackupSettings {
+        try requireOwnWorkspace()
         try requireSessionAccess()
         guard LocalPaths.lexical(writer.directory) == LocalPaths.lexical(root.appendingPathComponent("credential-state")) else { throw BackupSettingsFailure.storage }
         return try BackupSchedule.save(root: root, writer: writer, revision: intent.revision, enabled: intent.inputs.enabled, destination: intent.inputs.destination,

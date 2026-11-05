@@ -266,7 +266,8 @@ extension WorkspaceSession {
     }
     /// Starts or follows the aggregate before reading any Apple or Reporter credential.
     public func startSync(account: Account, appId: String, mode: SyncJob.Mode = .all, client: AppStoreConnectClient? = nil, now: Date = Date()) async throws -> SyncJob {
-        try await createSync(account: account, appId: appId, client: client, mode: mode, reuseRunning: true, now: now).0
+        try requireOwnWorkspace()
+        return try await createSync(account: account, appId: appId, client: client, mode: mode, reuseRunning: true, now: now).0
     }
     public func cancelSync(account: Account, appId: String, id: String) throws -> SyncJob? {
         try reviewsScope(account, appId: appId)

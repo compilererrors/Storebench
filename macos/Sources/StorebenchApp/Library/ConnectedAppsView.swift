@@ -20,12 +20,14 @@ struct ConnectedAppsView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
                 StorebenchPageHeader(title: "Apps", description: "Saved revisions and download progress across your configured apps. Missing reports remain unknown.", eyebrow: "YOUR WORKSPACE", help: "sync")
+                SampleDataNotice(model: model)
                 actions
                 if failed { Text("The saved library could not be read. Previously read cards remain here; refresh before starting another download.").foregroundStyle(StorebenchTheme.muted) }
                 if ready, rows.isEmpty {
-                    Card(title: "No apps connected yet", subtitle: "Connect App Store Connect to bring your apps into this workspace.") {
+                    Card(title: "No apps connected yet", subtitle: "Connect App Store Connect to bring your apps into this workspace, or load sample data to see how apps, listings and reports look.") {
                         StorebenchFormFooter {
                             Button("Connect Account", action: connect).help("Connect Apple Account").accessibilityLabel("Connect Apple Account")
+                            LoadSampleDataButton(model: model)
                         }
                     }
                 }
@@ -53,12 +55,19 @@ struct ConnectedAppsView: View {
     private var appsPlaceholder: some View {
         StorebenchCardList(padded: true) { StorebenchLoadingStatus(message: "Reading your apps…", surface: false) }
     }
-    private var actions: some View {
-        AllAppsSyncButton(session: failed || !ready ? nil : model.session, additionalActions: AnyView(Group {
-            StorebenchReadButton("Refresh Apps") { await model.reloadAccounts(); await load(context) }.help("Refresh Connected Apps").accessibilityLabel("Refresh Connected Apps").storebenchWorking(loading || model.session == nil)
-                .shortcutAction(.refresh, enabled: !loading && model.session != nil) { await model.reloadAccounts(); await load(context) }
-            if model.session != nil { Button("Connect Account", action: connect).help("Connect Apple Account").accessibilityLabel("Connect Apple Account") }
-        }))
+    // Sample data has nothing at Apple to sync, so it keeps only Refresh Apps.
+    @ViewBuilder private var actions: some View {
+        if model.showingSampleData { StorebenchActionGroup(alignment: .trailing) { refreshButton } }
+        else {
+            AllAppsSyncButton(session: failed || !ready ? nil : model.session, additionalActions: AnyView(Group {
+                refreshButton
+                if model.session != nil { Button("Connect Account", action: connect).help("Connect Apple Account").accessibilityLabel("Connect Apple Account") }
+            }))
+        }
+    }
+    private var refreshButton: some View {
+        StorebenchReadButton("Refresh Apps") { await model.reloadAccounts(); await load(context) }.help("Refresh Connected Apps").accessibilityLabel("Refresh Connected Apps").storebenchWorking(loading || model.session == nil)
+            .shortcutAction(.refresh, enabled: !loading && model.session != nil) { await model.reloadAccounts(); await load(context) }
     }
     private func load(_ id: UUID) async {
         guard !readGate.active, let session = model.session else { return }

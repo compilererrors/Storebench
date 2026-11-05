@@ -27,12 +27,16 @@ struct LibraryDashboardView: View {
                     Spacer(minLength: 0)
                     Button("Manage Apps", action: manageApps).buttonStyle(StorebenchButtonStyle(.quiet))
                 }), help: section == .history ? "" : "sync")
+                if section == .overview { SampleDataNotice(model: model) }
                 if failed { Text("The saved library could not be confirmed. Previously read information remains here; refresh before opening an app.").foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true) }
                 if let snapshot {
                     if snapshot.apps.isEmpty {
                         Card(title: "Get started", subtitle: "Three steps to your first release. Nothing is sent to Apple until you approve a review.", help: "sync") {
-                            StorebenchSetupStep(number: 1, title: "Connect your Apple account", detail: "Add an App Store Connect API key so Storebench can see your apps. You can also do this later from Settings.") {
-                                StorebenchActionGroup { Button("Connect Account", action: connect).buttonStyle(StorebenchButtonStyle(.primary)).help("Connect Apple Account").accessibilityLabel("Connect Apple Account") }
+                            StorebenchSetupStep(number: 1, title: "Connect your Apple account", detail: "Add an App Store Connect API key so Storebench can see your apps. You can also do this later from Settings, or load sample data to look around first.") {
+                                StorebenchActionGroup {
+                                    Button("Connect Account", action: connect).buttonStyle(StorebenchButtonStyle(.primary)).help("Connect Apple Account").accessibilityLabel("Connect Apple Account")
+                                    LoadSampleDataButton(model: model)
+                                }
                             }
                             StorebenchSetupStep(number: 2, title: "Sync your apps", detail: "Downloads each app's App Store text, screenshots and versions. It only reads from Apple.")
                             StorebenchSetupStep(number: 3, title: "Start a release", detail: "Open an app and choose Release. It takes you through a new version step by step.")
