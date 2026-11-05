@@ -1,36 +1,61 @@
 # Storebench
 
-Storebench is a Mac app for managing apps in App Store Connect. Prepare releases, edit localized listings and media, manage pricing and TestFlight, and read reports across several apps in one encrypted local workspace.
+![Storebench with a saved ASO timeline and listing changes overlaid on reports](docs/images/storebench.png)
 
-Edits are saved locally. Before sending changes to App Store Connect, Storebench shows a concrete review for the selected account and app, asks for approval, and checks that the reviewed information still matches.
+Storebench is a native Mac app for developers managing several apps in App Store Connect. Set country prices from one guide price, keep the listings and reports you import, and see how your numbers changed around each listing update. Prepare releases, manage TestFlight and make screenshot cards in the same encrypted local workspace.
 
-## Screenshots
+Edits stay on your Mac until you prepare a review and approve sending them to Apple. A local save, an upload and a public release are separate steps.
 
-The screenshots show a fictional app with sample data.
+[See all screenshots](#screenshots).
 
-### Pricing models
+## Set country prices without working through them one by one
 
-Set one guide price and let a model price every other country: World Bank purchasing power, the Big Mac Index, currency conversion, the same amount everywhere, or your own percentage per country. Compare the models side by side, keep a choice as a saved profile, or use Apple's comparable prices or typed prices instead. Every price is rounded to one of Apple's price points and reviewed before anything is sent.
+A currency conversion does not tell you what a price means to someone in another country. Start with a guide country and price, then compare different ways to price the other countries before choosing one:
 
-![Pricing comparing currency conversion, purchasing power, the Big Mac Index and your own percentages for the same guide price](docs/images/pricing.png)
+- **World Bank purchasing power:** adjust the guide price for differences in local price levels.
+- **Big Mac Index:** scale prices using the local price of a Big Mac.
+- **Currency conversion:** keep approximately the same value in your guide currency.
+- **Same for all:** use the same number in each currency, such as 4.99, without converting it.
+- **Your country percentages:** adjust converted prices by your own percentage for each country.
+- **Your own index:** import the values you want to price against from a CSV file.
 
-### Your ASO history and what it did
+Build a recipe when one model is not enough. For example, mix 70% purchasing power with 30% currency conversion, adjust particular countries, and set a lowest and highest share of the guide price. Save the recipe as a profile to reuse across your apps. You can also use Apple's comparable prices or type country prices, including importing them from CSV.
 
-Storebench keeps every listing you import, so your full ASO history stays on your Mac. ASO Progress marks each saved change on daily impressions, product page views, first-time downloads and paid purchases, and compares the days after a change with the same number of days before. That shows whether a new subtitle, keywords or screenshots made a difference.
+Compare the resulting country prices side by side. Storebench matches them to the product's available Apple price points, identifies missing data, and shows the proposed changes before you approve anything being sent.
 
-![ASO Progress with saved listing changes marked on impressions, page views, downloads and sales](docs/images/aso-progress.png)
+[See the pricing comparison](#pricing-models).
 
-### Releases, reviews and the rest
+## Keep your listing history and see what happened after a change
 
-![Release guide with numbered steps and what each step still needs](docs/images/release-guide.png)
+You changed a subtitle or replaced some keywords. Which wording was there before, when was the new listing first seen, and did impressions, page views or downloads move afterwards?
 
-![A review listing every App Store Connect change before Send to Apple](docs/images/review-changes.png)
+Storebench saves each listing revision you import for each app, together with downloaded reports, in your encrypted workspace. Later syncs add new snapshots without replacing the earlier ones. You can go back to the saved text and screenshots, compare versions, and read the history on your Mac.
 
-![Localizations with character limits for each language](docs/images/localizations.png)
+In **ASO Progress**, choose a language and the listing fields you want to compare. Overlay up to four report measures on the same graph: impressions, App Store product page views, Get taps, first-time downloads or purchases, including search-specific measures where available. Use the indexed scale to compare lines with different sizes. Markers show where a changed released listing was first observed at a sync.
 
-![TestFlight builds with Apple's status and groups](docs/images/testflight.png)
+Select a change to read the old and new text and compare the same number of days before and after it. For example, compare seven days around a keyword update, then inspect the next update on the same timeline. This helps you decide what to try next from your own saved history.
 
-![Sales and Trends from saved reports](docs/images/sales.png)
+The comparison shows observed changes, not proof that an ASO edit caused them. Other updates in the same window are identified. Missing reports stay missing, and the observed date is not a verified publication time. History builds from the listings and reports you import; text from before your first saved snapshot cannot be reconstructed.
+
+[See the ASO timeline and before/after comparison](#aso-history).
+
+## Follow a full release from setup to App Review
+
+Use **Version setup**, the full release guide, for a new app, a new platform or a release that needs the full setup. Work through the version, text and screenshots, build, export compliance, App Review Information and submission in order. The guide shows what Apple still needs, with the relevant editor or action beside the problem, instead of leaving you to find it across separate pages.
+
+App information, age rating, availability, accessibility and other required declarations are surfaced before submission. Available actions depend on your account and Apple's current state; App Privacy and Tax Category use a separate Apple ID sign-in. Each change at Apple still has its own review and approval.
+
+For an existing app's next version, **Quick Release** keeps the essentials together: choose the version, create it in App Store Connect, update the text, select the build and its export compliance answer, then Add for Review. It uses the same version plan and drafts as Version setup. If Apple needs something outside those steps, continue in the full guide without starting over.
+
+[See Release and Quick Release](#release-and-quick-release).
+
+## Prepare screenshots without moving between tools
+
+Add screenshots from files or Asset Library in **Version setup → Text and Screenshots**. Check the language and display size, drag screenshots into the order you want, and save the layout. Upload prepares a review of what will change at Apple.
+
+Use **Create Media** to turn your app screenshots into App Store cards with titles, text, backgrounds and reusable styles. Save the finished PNGs to **Asset Library**, choose them for a release, and arrange them with your other screenshots. Asset Library keeps encrypted local originals and their history so you can reuse earlier material.
+
+[See screenshot ordering and card creation](#screenshots-and-card-creation), or [see Asset Library](#asset-library).
 
 ## Requirements
 
@@ -64,7 +89,9 @@ Add screenshots and app previews to a version and language, change their order a
 
 Manage the app's download price separately from subscriptions and in-app purchases. Read current and scheduled prices, prepare changes by country or region, and compare proposed prices before sending them.
 
-Price strategies include Apple's comparable prices, currency conversion, purchasing-power models, the Big Mac Index, saved profiles and manually entered country prices. Storebench matches proposed amounts to the product's available Apple price points and identifies missing data. Protected app prices are kept out of model and country-draft changes.
+Price strategies include Apple's comparable prices, currency conversion, purchasing-power models, the Big Mac Index, saved profiles and manually entered country prices. Apple's comparable prices follow the base country or region you choose; any of Apple's countries or regions can be the base. Saved profiles are recipes that can mix two methods, adjust countries by percentage, keep prices within a lowest and highest price, and use your own index values.
+
+Country prices, country percentages and your own index can be imported from CSV files that use Apple's three-letter territory codes. Prices use the columns of Storebench's own price export, so an exported file can be edited and read back. Copy CSV Format copies each format with example rows, and the pricing help describes every column. Importing only fills in the editor; nothing is saved or sent. Storebench matches proposed amounts to the product's available Apple price points and identifies missing data. Protected app prices are kept out of model and country-draft changes.
 
 Shared profiles and local pricing drafts detect conflicting saves. Reading newer saved values leaves your edits in place until you explicitly choose which baseline to use. Price changes and offers go through the same approval process as other App Store Connect changes.
 
@@ -76,7 +103,11 @@ Edit supported app information, age-rating answers, accessibility declarations, 
 
 ## TestFlight
 
-Read builds, processing states, export compliance, groups, testers, test information, feedback and metrics. **Start Testing** brings the setup into a guided sequence. Changes to TestFlight settings, group access, tester assignments and Beta App Review submissions require approval before being sent.
+Keep beta testing with the app's release work. Read builds and processing states, handle export compliance, manage internal and external groups and testers, edit test information, and inspect feedback and metrics. **Start Testing** walks through the setup in order, including what is still needed before a build can reach testers.
+
+Changes to TestFlight settings, group access, tester assignments and Beta App Review submissions are reviewed before being sent. Apple still controls build processing and beta review.
+
+[See TestFlight builds and groups](#testflight-builds-and-groups).
 
 ## Reports and sync
 
@@ -136,3 +167,59 @@ The runner uses synthetic data in a fresh owned workspace. Its macOS sandbox blo
 ## License
 
 Storebench is source-available. Personal and other non-commercial use is free. Business use requires an active subscription for each person who uses Storebench, available through the Mac App Store, or another commercial license from the licensor. Business use ends with the subscription. See [LICENSE](LICENSE).
+
+## Screenshots
+
+These images use the app's own components and synthetic reports for the fictional app Driftwood Journal. The changes and numbers are examples.
+
+### Pricing models
+
+One guide price, several country-pricing models, and a saved recipe you can reuse.
+
+![Country pricing compared across currency conversion, purchasing power, the Big Mac Index and a custom recipe](docs/images/pricing.png)
+
+### ASO history
+
+Saved listing changes overlaid on impressions, product page views and downloads, with a before/after comparison.
+
+![ASO timeline with observed listing-change markers, overlaid measures and reported values before and after an update](docs/images/aso-progress.png)
+
+### Release and Quick Release
+
+Version setup brings the full release and its missing requirements into one flow. Quick Release keeps the five essential steps for an existing app's next version.
+
+![Full release guide with app information and compliance requirements before App Review](docs/images/release-guide.png)
+
+![Quick Release showing version, creation, text, build and Add for Review](docs/images/quick-release.png)
+
+### TestFlight builds and groups
+
+See build status, tester groups and export compliance while preparing beta testing.
+
+![TestFlight builds with tester groups and export compliance status](docs/images/testflight.png)
+
+### Screenshots and card creation
+
+Choose images, arrange their order, and create your own cards before preparing an upload.
+
+![Screenshots arranged by language and display size, with ordering and upload controls](docs/images/screenshots.png)
+
+![Create Media with an App Store card preview, editable title and local Asset Library save](docs/images/create-media.png)
+
+### Asset Library
+
+Keep originals and earlier screenshot versions available for the next release.
+
+![Encrypted local screenshot originals and saved versions in Asset Library](docs/images/asset-library.png)
+
+### Review before sending
+
+Read the current and proposed values before Send to Apple. Saving a draft locally does not send it.
+
+![The exact App Store Connect changes and before/after values before Send to Apple](docs/images/review-changes.png)
+
+### Localizations
+
+Edit each language with its character budgets and current saved text together.
+
+![Localizations with listing fields and character limits for each language](docs/images/localizations.png)
