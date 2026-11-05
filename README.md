@@ -8,6 +8,20 @@ Edits are saved locally. Before sending changes to App Store Connect, Storebench
 
 The screenshots show a fictional app with sample data.
 
+### Pricing models
+
+Set one guide price and let a model price every other country: World Bank purchasing power, the Big Mac Index, currency conversion, the same amount everywhere, or your own percentage per country. Compare the models side by side, keep a choice as a saved profile, or use Apple's comparable prices or typed prices instead. Every price is rounded to one of Apple's price points and reviewed before anything is sent.
+
+![Pricing comparing currency conversion, purchasing power, the Big Mac Index and your own percentages for the same guide price](docs/images/pricing.png)
+
+### Your ASO history and what it did
+
+Storebench keeps every listing you import, so your full ASO history stays on your Mac. ASO Progress marks each saved change on daily impressions, product page views, first-time downloads and paid purchases, and compares the days after a change with the same number of days before. That shows whether a new subtitle, keywords or screenshots made a difference.
+
+![ASO Progress with saved listing changes marked on impressions, page views, downloads and sales](docs/images/aso-progress.png)
+
+### Releases, reviews and the rest
+
 ![Release guide with numbered steps and what each step still needs](docs/images/release-guide.png)
 
 ![A review listing every App Store Connect change before Send to Apple](docs/images/review-changes.png)
@@ -15,8 +29,6 @@ The screenshots show a fictional app with sample data.
 ![Localizations with character limits for each language](docs/images/localizations.png)
 
 ![TestFlight builds with Apple's status and groups](docs/images/testflight.png)
-
-![Pricing with a guide price and country drafts](docs/images/pricing.png)
 
 ![Sales and Trends from saved reports](docs/images/sales.png)
 
