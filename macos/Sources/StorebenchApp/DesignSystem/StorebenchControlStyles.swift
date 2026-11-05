@@ -1,0 +1,163 @@
+import AppKit
+import StorebenchCore
+import SwiftUI
+
+struct StorebenchToggleStyle: ToggleStyle {
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.actionBusy) private var actionBusy
+    func makeBody(configuration: Configuration) -> some View {
+        Toggle(isOn: configuration.$isOn) {
+            configuration.label.font(.sbCallout).foregroundStyle(enabled || actionBusy ? StorebenchTheme.ink : StorebenchTheme.subtle)
+                .fixedSize(horizontal: false, vertical: true)
+        }.toggleStyle(.checkbox)
+            .frame(maxWidth: .infinity, minHeight: StorebenchTheme.controlHeight, alignment: .leading)
+    }
+}
+
+struct StorebenchPicker<Selection: Hashable>: View {
+    let title: String
+    var hint = ""
+    @Binding var selection: Selection
+    let options: [SelectionOption<Selection>]
+    private var hideLabel = false
+    init(_ title: String, selection: Binding<Selection>, hint: String = "", @SelectionOptionsBuilder<Selection> content: () -> [SelectionOption<Selection>]) { self.title = title; self.hint = hint; _selection = selection; options = content() }
+    func labelsHidden() -> Self { var copy = self; copy.hideLabel = true; return copy }
+    var body: some View {
+        StorebenchFormField(label: title, hint: hint, hideLabel: hideLabel, hideHint: hideLabel) {
+            StorebenchNativePicker(title: title, selection: $selection, options: options)
+        }.accessibilityLabel(title)
+    }
+}
+
+struct StorebenchSelectionLabel: View {
+    let text: String
+    var body: some View {
+        HStack(spacing: StorebenchTheme.space(3)) {
+            Text(text).font(.sbBody).lineLimit(1).truncationMode(.tail).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+            StorebenchIcon(name: "down", size: 16).foregroundStyle(StorebenchTheme.muted)
+        }.frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct StorebenchPressStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && enabled && !reduceMotion ? 0.97 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+struct StorebenchNavigationSelect<Options: View>: View {
+    let title, selected: String
+    @ViewBuilder let options: () -> Options
+    var body: some View {
+        StorebenchFormField(label: title, hideHint: true) {
+            Menu { options().nativeMenuContent() } label: { StorebenchSelectionLabel(text: selected) }
+                .menuStyle(.button).menuIndicator(.hidden).buttonStyle(StorebenchButtonStyle(.field, stretch: true))
+                .foregroundStyle(StorebenchTheme.ink).help(selected).accessibilityLabel("Switch " + title.lowercased()).accessibilityValue(selected)
+        }
+    }
+}
+
+/// Button geometry stays in the label; system menus keep their own menu-item rendering.
+struct StorebenchButtonStyle: ButtonStyle {
+    typealias Variant = ControlColors.Variant
+    enum Size { case regular, icon }
+    var variant: Variant = .secondary
+    var size: Size = .regular
+    var stretch = false
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    init(_ variant: Variant = .secondary, size: Size = .regular, stretch: Bool = false) { self.variant = variant; self.size = size; self.stretch = stretch }
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .modifier(StorebenchControlSurface(variant: configuration.role == .destructive ? .danger : variant, size: size, stretch: stretch, emphasized: hovering || configuration.isPressed))
+            .scaleEffect(configuration.isPressed && enabled && !reduceMotion ? 0.97 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+            .contentShape(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
+            .onHover { hovering = $0 }
+    }
+}
+
+/// Commands in content use an opaque surface; Liquid Glass is reserved for the navigation layer, as Apple recommends.
+struct StorebenchControlSurface: ViewModifier {
+    let variant: ControlColors.Variant
+    var size: StorebenchButtonStyle.Size = .regular
+    var stretch = false
+    var emphasized = false
+    var focused: Bool? = nil
+    @Environment(\.naturalActions) private var naturalActions
+    @Environment(\.actionFill) private var actionFill
+    @Environment(\.actionBusy) private var actionBusy
+    @Environment(\.isEnabled) private var enabled
+    func body(content: Content) -> some View {
+        let colors = ControlColors(variant, enabled: enabled, busy: actionBusy, emphasized: emphasized)
+        let icon = CGFloat(StorebenchTheme.controlHeight)
+        let width: StorebenchCommandWidth = size == .icon ? .init(minimum: icon, maximum: icon, fill: false)
+            : .init(minimum: naturalActions || variant == .field ? 0 : CGFloat(StorebenchTheme.actionMinWidth),
+                    maximum: naturalActions && !stretch && !actionFill ? .infinity : CGFloat(StorebenchTheme.actionMaxWidth), fill: stretch || actionFill)
+        width {
+            content.font(.sbCallout.weight(variant == .field ? .regular : .semibold)).lineLimit(nil).multilineTextAlignment(.center)
+                .padding(.horizontal, size == .icon ? 4 : 16)
+        }
+            .frame(minHeight: StorebenchTheme.controlHeight)
+            .foregroundStyle(StorebenchTheme.color(colors.foreground))
+            .background(StorebenchTheme.color(colors.background), in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
+            .overlay(StorebenchControlOutline(border: StorebenchTheme.color(colors.border), focusedOverride: focused))
+    }
+}
+
+/// Observes the control's system focus without adding another focus target or binding.
+struct StorebenchControlOutline: View {
+    var border = StorebenchTheme.color("color-border-control")
+    var radius = StorebenchTheme.controlRadius
+    var focusedOverride: Bool? = nil
+    @Environment(\.isFocused) private var focused
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.actionBusy) private var actionBusy
+    var body: some View {
+        RoundedRectangle(cornerRadius: radius)
+            .strokeBorder(enabled && (focusedOverride ?? focused) ? StorebenchTheme.color("color-focus") : enabled || actionBusy ? border : StorebenchTheme.border,
+                          lineWidth: enabled && (focusedOverride ?? focused) ? 2 : 1)
+            .allowsHitTesting(false).accessibilityHidden(true)
+    }
+}
+
+/// A busy form keeps its normal colours: the operation locks the field without making it look unavailable.
+struct StorebenchTextFieldStyle: TextFieldStyle {
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.actionBusy) private var actionBusy
+    func _body(configuration: TextField<Self._Label>) -> some View {
+        let active = enabled || actionBusy
+        return configuration.font(.system(size: StorebenchTheme.measure("inputFont"))).textFieldStyle(.plain).padding(.horizontal, 11)
+            .frame(height: StorebenchTheme.controlHeight).background(active ? StorebenchTheme.surface : StorebenchTheme.color("color-surface-sunken"), in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
+            .foregroundStyle(active ? StorebenchTheme.ink : StorebenchTheme.subtle)
+            .overlay(StorebenchControlOutline(border: StorebenchTheme.color(hovering ? "color-border-accent" : "color-border-control")))
+            .onHover { hovering = $0 }
+    }
+}
+
+
+/// A command's width: its label on one line within the minimum and maximum, or the whole proposal when it fills
+/// a shared cell or stretches. A label wider than the maximum wraps to a second line instead of being cut off.
+struct StorebenchCommandWidth: Layout {
+    let minimum: CGFloat, maximum: CGFloat, fill: Bool
+    private func width(_ proposal: ProposedViewSize, _ subviews: Subviews) -> CGFloat {
+        let ideal = subviews.first?.sizeThatFits(.unspecified).width ?? 0
+        let natural = min(max(ideal, minimum), maximum)
+        guard let offered = proposal.width, offered.isFinite else { return natural }
+        return fill ? max(offered, 0) : min(natural, max(offered, 0))
+    }
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let resolved = width(proposal, subviews)
+        let height = subviews.first?.sizeThatFits(ProposedViewSize(width: resolved, height: proposal.height)).height ?? 0
+        return CGSize(width: resolved, height: height)
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews.first?.place(at: CGPoint(x: bounds.midX, y: bounds.midY), anchor: .center, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
+    }
+}

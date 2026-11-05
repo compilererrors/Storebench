@@ -1,0 +1,1047 @@
+{
+  "schemaVersion": 1,
+  "topics": [
+    {
+      "id": "apple-setup",
+      "title": "Complete Apple setup and restore sync",
+      "summary": "Apple can block API access until the Account Holder accepts updated terms. Set up Apple opens the Apple Developer account website outside Storebench; it does not change your saved key or accept terms for you.",
+      "links": [
+        {
+          "label": "Apple Developer account",
+          "href": "https://developer.apple.com/account/"
+        },
+        {
+          "label": "App Store Connect",
+          "href": "https://appstoreconnect.apple.com/"
+        }
+      ],
+      "questions": [
+        [
+          "1. Open the affected Apple account",
+          "Sign in as the Account Holder in the Apple Developer account, using the same account and team as the saved Storebench connection. Check the account landing page for an updated Apple Developer Program License Agreement banner. Review and accept any required terms there."
+        ],
+        [
+          "2. Check Business in App Store Connect",
+          "Open App Store Connect and select the same team. Click Business at the top of the page. On the Agreements tab, find the Paid Apps row and choose View and Agree to Terms or Renew Agreement if Apple shows it. Complete missing information that Apple requests and check its status. The API response does not identify which agreement needs attention; it does not prove that only the Paid Apps Agreement is involved."
+        ],
+        [
+          "3. Return to Storebench and retry",
+          "Return to the affected app in Overview or Apps and choose Retry unfinished. This starts a new download and keeps earlier revisions, reports and drafts. Refresh Status only reads the saved result; it cannot check whether accepting the terms restored API access."
+        ],
+        [
+          "Why did sync work before?",
+          "Apple can require new terms after a connection was working. Storebench shows this setup step only when Apple returns its specific missing-or-expired-agreements error. A general permission failure has separate access guidance. A Reporter connection can still download Sales reports while the app's API connection is blocked."
+        ],
+        [
+          "What if there is no prompt or sync is still blocked?",
+          "Verify the selected Apple account and team and ask its Account Holder to check both locations. If Apple still returns the same setup requirement after the terms and required information are complete, contact Apple Developer Support. Replacing the API key does not accept these terms."
+        ]
+      ]
+    },
+    {
+      "id": "import-recovery",
+      "title": "Resume an interrupted app import",
+      "summary": "An interrupted import needs a check of saved work, followed by a fresh download if needed. It does not establish that your Apple key expired.",
+      "questions": [
+        [
+          "What should I do first?",
+          "Open the affected app’s History and check the latest saved revision. Each complete import is saved as its own revision. If the import already committed its assigned revision, Storebench recovers that result without downloading or saving a duplicate."
+        ],
+        [
+          "How do I resume?",
+          "If the expected material is missing, choose Sync app material. Storebench starts a new download and keeps earlier revisions and drafts. When status is unavailable, choose Refresh import status first; it checks the existing job rather than starting another one."
+        ],
+        [
+          "What if another import is running?",
+          "Open the same app to follow its progress. Finish it or use Cancel import, then wait for cancellation to finish before restarting. A slow import is still active; Storebench does not replace its owner based on time alone."
+        ],
+        [
+          "When should I change the API connection?",
+          "Only follow the connection guide when Apple authentication, permissions, an agreement or Keychain access needs attention. An interrupted local job by itself does not require a replacement key."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "sync-recovery",
+      "title": "Recover sync status and unfinished downloads",
+      "summary": "Check the existing job before repeating a download. Sync only reads Apple data; saved material and local drafts are kept.",
+      "questions": [
+        [
+          "Why does Refresh Status show the same old error?",
+          "Refresh Status reads the saved job; it does not repeat the download or test your Apple key. When a completed job contains an old unverified-download result, choose Retry unfinished to run those sources again. Storebench keeps previous revisions and reports. A new attempt reports any authentication, permission or Keychain failure separately."
+        ],
+        [
+          "What should I do when status is unavailable?",
+          "Open the affected app’s Sync app data card and choose Refresh Status. If a request timed out, the download may still be running. Check its status before starting another job, then choose Open beside the affected source to check its saved result."
+        ],
+        [
+          "What should I do after an interruption?",
+          "Open History for app material, or the source’s view for saved reports and reviews. Return to the app’s sync details and choose Retry unfinished. Completed results remain available. Missing reports and partial results are never counted as zero activity or a complete sync."
+        ],
+        [
+          "What if local storage needs attention?",
+          "Unlock Storebench if prompted. Check local storage access and available disk space in Settings. Use the storage recovery guide before changing or removing data. Do not remove job lock files or repeat publishing approval while a result is unknown."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "apple-connection",
+      "title": "Restore Apple API access",
+      "summary": "Test the affected account in Settings → Accounts, then follow the result. Authentication, feature permissions, agreements and Mac Keychain access need different actions.",
+      "questions": [
+        [
+          "Does this mean my API key expired?",
+          "An access failure alone cannot establish that. Storebench signs fresh request tokens automatically and renews them before their ten-minute lifetime ends. Check whether the API key is still active in App Store Connect (Users and Access → Integrations for a team key, or your name → Edit Profile for an individual key). A forbidden response can mean a revoked key or insufficient permission; a missing agreement has its own guidance."
+        ],
+        [
+          "How do I check and reconnect the key?",
+          "Open Settings → Accounts and choose Test connection for the affected account. If Apple cannot authenticate it, check the Key ID, key type and whether the key is active. Expand Reconnect this key to select the original .p8 file for that Key ID and choose Verify and reconnect. For a newly created key with a different Key ID, use Connect an Apple account below; it creates a separate connection. The existing account and saved app history are kept."
+        ],
+        [
+          "What if Test connection succeeds but a feature fails?",
+          "The test authenticates the key and reads the app list. In App Store Connect, check the user's role and access to the selected app under Users and Access → People, and the key's role under Users and Access → Integrations. Analytics needs its own API permissions; Reporter does not enable Analytics or customer reviews. Sales and Finance also require the correct reporting vendor and reporting permissions."
+        ],
+        [
+          "What if Apple asks you to complete setup?",
+          "Follow Complete Apple setup and restore sync: the Account Holder checks the Apple Developer account's updated-terms banner and, in App Store Connect, the Agreements tab under Business for the same team. Then return to Storebench and choose Retry unfinished. Reimporting the key does not accept these terms."
+        ],
+        [
+          "What if Mac Keychain access is blocked?",
+          "Unlock your login keychain in Keychain Access. Open the affected account's Keychain access section and choose Retry Keychain access, then retry your task and respond to the macOS permission prompt. If the saved key is missing, reconnect its original .p8 file."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "keywords",
+      "title": "Keyword Ideas and source notes",
+      "summary": "A private notebook for manual keyword ideas. Record evidence, review changes and reuse a saved shortlist in Languages.",
+      "questions": [
+        [
+          "Does this tool suggest terms or measure search volume and rank?",
+          "No. Add terms you found yourself, record where you found them, mark promising ones Ready to try, then save. Terms, sources, dates, territories and notes are entered manually. There are no automatic suggestions, popularity, volume, rank or competition scores, or external keyword-service requests."
+        ],
+        [
+          "What do the statuses mean?",
+          "Idea is a candidate. Researching means you are gathering evidence. Ready to try makes the saved idea available in the matching Languages editor. Used in listing and Rejected are manual labels; Storebench does not verify that a term is published or automatically change its status."
+        ],
+        [
+          "How do I use ideas in a listing?",
+          "Set the selected ideas to Ready to try, review and save the notebook. Open Languages for the matching locale and choose Choose Ideas beside Keywords. Select saved ideas, add them to current keywords or replace the field, and compare the exact text and UTF-8 byte budget. Use Selection changes the unsaved editor. Upload to App Store saves the draft and opens its exact changes; confirm there to send them."
+        ],
+        [
+          "Is a territory the same as a listing language?",
+          "No. A listing locale identifies the language of metadata. Territory is optional research context for an idea. A country does not automatically create a localization or prove where a keyword is indexed. Ideas can target the same language in several territories; composed keyword lists remove repeated terms."
+        ],
+        [
+          "How do bulk edits, files and concurrent saves work?",
+          "Selection can include other pages and filtered-out ideas. Bulk status changes and removals stay unsaved until you review and save. CSV and JSON export the whole saved notebook with app identity; matching files can replace it after comparison. Use an export as a CSV template and leave keyword_id blank for new ideas; matching terms keep their saved identity, and new ideas get a stable ID. Duplicate terms for the same language and territory are rejected regardless of case or compatibility spelling. If another editor saves first, compare the latest save and explicitly choose which values to keep before reviewing again. Notes and exports are private and included in local backups."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "testflight",
+      "title": "TestFlight builds, groups and testers",
+      "summary": "View build processing and beta review status, manage testing access, and prepare reviewed changes before Apple receives them.",
+      "questions": [
+        [
+          "How do I send a build for external beta review?",
+          "Stage an IPA or PKG in Storebench Build delivery and approve its exact upload review, or use Xcode or Transporter. Save a description for each TestFlight app language with Edit test information, then save contact and demo access with Beta review details. Use Export Compliance only after deciding whether the build uses non-exempt encryption under Apple's guidance; no answer is preselected. If a declaration is needed, choose an existing approved declaration that accurately describes this build. Each change has its own approval. When processing finishes, choose Review beta build beside an eligible build and approve its separate App Store changes review. Apple decides beta approval."
+        ],
+        [
+          "Where do I enter What to Test?",
+          "Choose Edit What to Test beside a build, select its language, enter the tasks testers should focus on and approve the separate App Store changes review. The text belongs to that build and language."
+        ],
+        [
+          "What happens if I expire a build?",
+          "Choose Expire build and approve its separate review. Apple stops testing for every group and tester using that build. This action cannot be undone for the build."
+        ],
+        [
+          "Where can I read TestFlight feedback?",
+          "The TestFlight page shows screenshot and crash feedback with build, date and device context. Open tester screenshots there or download available crash logs. Use Next page to read older submissions and First page to return to the newest. These are read-only Apple requests. A feedback access error does not hide builds or groups."
+        ],
+        [
+          "How do I create or change a group?",
+          "Open Groups under TestFlight for an app, choose Create group or a group action, then prepare an exact review in App Store changes. Approve the review there to send the change to Apple. Creating a group alone does not invite testers or distribute a build."
+        ],
+        [
+          "How are builds and testers assigned?",
+          "Groups can receive builds and existing app testers. An external group can invite by email. For direct build access, choose Individual testers beside a build to assign an existing app tester outside this app's groups, invite an external tester by email, or remove a direct assignment. Group access remains separate. Every change needs its own review and approval. Apple may require beta review or export compliance for external testing. Internal testers must first be App Store Connect team users."
+        ],
+        [
+          "How do I remove a tester from the whole app?",
+          "Open Testers under TestFlight, choose Remove from this app beside the person, and approve the exact App Store changes review. This asks Apple to remove the tester from every group and build of this app. It does not remove access to other apps. Apple may finish processing after accepting the request, so refresh Testers to confirm the result."
+        ],
+        [
+          "What does automatic access mean?",
+          "An internal group with access to all builds receives eligible builds automatically. Use Change settings to turn automatic access off through a separate App Store changes review before managing individual build assignments."
+        ],
+        [
+          "How do I manage a public invitation link?",
+          "Open an external group and choose Change settings. Enable or disable the public link, then optionally set a separate tester limit of 1–10,000 or unlimited. Each change needs its own App Store changes review and approval. An enabled link appears in Groups when Apple provides its URL. Turning a link off stops new sign-ups through it; existing testers remain in the group."
+        ],
+        [
+          "What happens when I delete a group?",
+          "Its testers lose access through that group to its associated builds. They may still have access through other groups. App Store changes shows the group and its current build and tester counts before you approve deletion."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "reviews",
+      "title": "Customer reviews and feedback",
+      "summary": "Download a private snapshot of written reviews, compare ratings and territories, and use feedback to plan work.",
+      "questions": [
+        [
+          "What does Download reviews do?",
+          "It reads customer reviews using the selected app’s API connection, newest first, and adds them to the saved reviews. There is no limit: every review is kept, and a review Apple no longer returns stays saved. Later downloads stop once they reach reviews that are already saved and unchanged; at least once a week, and whenever older reviews may be missing, every page is read so edits to older reviews arrive too. You can leave this view while the background job runs. The progress bar is indeterminate because the final count is unknown until all pages are checked. Reporter tokens do not fetch reviews."
+        ],
+        [
+          "Is the average the same as the App Store rating?",
+          "No. It is the arithmetic average of the downloaded written reviews matching your filters. Ratings without written reviews are not included. Countries with more reviews are not necessarily your largest sales markets. Missing or limited data is not zero feedback."
+        ],
+        [
+          "Will another download create duplicates or erase data after a failure?",
+          "Reviews are identified by Apple’s review ID. A successful refresh replaces the snapshot and reports added, updated, unchanged and no-longer-present reviews. Missing rows are described as outside this snapshot, not necessarily deleted by Apple. Failed, stopped or invalid downloads keep the saved snapshot; any save completed just before an interruption remains. Concurrent imports and downloads must match the starting saved revision."
+        ],
+        [
+          "Can I import, export or reply?",
+          "Export the whole saved snapshot as Storebench CSV or JSON, including its app identity. CSV safely escapes spreadsheet formulas and round-trips text. Import previews changes before replacing local data and rejects another app’s file. Imports and downloads do not post developer responses or change Apple reviews. To respond, open App Store Connect, click Apps, select the app and click Ratings and Reviews in the sidebar."
+        ],
+        [
+          "When does Storebench suggest reading low-rated feedback?",
+          "The informational suggestion requires at least 10 matching written reviews, at least 3 reviews with 1–2 stars and a low-rating share of 30% or more. It links to those reviews and release preparation. Read the actual text for recurring issues before choosing work; no prices, releases or other app settings are changed automatically."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "report-availability",
+      "title": "Check report availability and reporting setup",
+      "summary": "A missing report is an availability state. It does not prove missing setup, a broken key or zero activity.",
+      "links": [
+        {
+          "label": "Apple Sales report availability",
+          "href": "https://developer.apple.com/help/app-store-connect/reference/reporting/sales-and-trends-reports-availability"
+        },
+        {
+          "label": "Download Analytics reports",
+          "href": "https://developer.apple.com/documentation/AppStoreConnectAPI/downloading-analytics-reports"
+        }
+      ],
+      "questions": [
+        [
+          "1. Check the report and period",
+          "In Sales, choose completed reporting days before today in Pacific Time. Daily reports generally become available the following day by 8 a.m. PT. A Summary Sales report requires reportable app units for that vendor; a vendor with no reportable activity may have no file. Daily reports are retained for one year. Check recent days again later, or choose an available older date. Missing data stays unknown."
+        ],
+        [
+          "2. Check account, vendor and access",
+          "Select the Apple account and reporting vendor that own the app. In App Store Connect, click Trends at the top, then Sales and Trends Reports in the left sidebar, and compare the same vendor and period. If a file exists there, check the reporting connection and role. A successful app-list connection test does not establish Sales or Finance permissions. Do not replace the key solely because a report is absent."
+        ],
+        [
+          "3. Set up reporting when it is missing",
+          "Open Sales or Finance and choose Apple Reporter, then Connect Reporter and follow the token guide. A Team API key with the required reporting permission and the correct vendor is an alternative. Reporter downloads Sales and Finance; it does not enable Analytics or customer reviews. File import remains available."
+        ],
+        [
+          "4. Use the module's availability check",
+          "Analytics needs an approved generation request before files can appear. If setup is already complete, choose Check Reports and use an available processing period. Do not create another request just because files are pending. Finance uses Apple's fiscal year, period and report region; an unavailable financial file leaves saved history unchanged. Return to the affected module to retry when the report is available."
+        ]
+      ]
+    },
+    {
+      "id": "reporter",
+      "title": "Connect Reporter and restore reporting access",
+      "summary": "Set up Sales and Finance reporting without a Team API key. Setup guidance keeps entered choices and saved reports.",
+      "questions": [
+        [
+          "1. Obtain a Reporter token",
+          "In Sales or Finance, choose Apple Reporter and expand Connect Reporter. Follow the token guide: sign in to App Store Connect with the matching reporting account, click Trends at the top, then Sales and Trends Reports in the left sidebar, then the question mark (?) beside About Reports and Generate Reporter Token. Paste the token into Storebench; never enter your Apple Account password here."
+        ],
+        [
+          "2. Choose the reporting account and vendor",
+          "Choose Connect Reporter. If Apple returns more than one account or vendor, select the one that owns the app and continue. Storebench saves the token in macOS Keychain only after verifying reporting access. Finance permissions are checked separately; a Sales connection does not establish Finance access."
+        ],
+        [
+          "3. Resolve connection or Keychain setup",
+          "If connecting fails, check your network connection, a VPN, proxy or firewall that blocks Apple’s Reporter service. If saving the connection fails, check free disk space and local storage access. For Keychain guidance, unlock the login keychain and respond to the macOS prompt, then reconnect the original token if needed. Storebench talks to Apple’s Reporter service directly; nothing else needs to be installed."
+        ],
+        [
+          "4. Retry or import files",
+          "Keep your selected account and vendor when retrying. After a connection change, wait for its current state to refresh before starting a new download. Wait for an active connection operation to finish. Use a report file instead if automatic reporting is unavailable; imported files still require a review before saving where the module provides one."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "finance",
+      "title": "Financial reports and fiscal periods",
+      "summary": "Finance downloads or imports final direct-app transactions separately from Sales and Analytics. Review original proceeds, fiscal periods and report regions before saving.",
+      "questions": [
+        [
+          "Can Storebench download Finance without a Team key?",
+          "Yes. Open Finance → Get financial reports and choose Apple Reporter. The saved reporting connection from Sales is reused; otherwise paste a Reporter token and connect there. Finance also checks financial reporting access for the selected vendor. Sales access alone may be insufficient. Team-key accounts can alternatively choose App Store Connect API and enter their reporting vendor number. File import remains available without either connection."
+        ],
+        [
+          "Which year and period should I choose?",
+          "Use Apple fiscal calendar to identify the fiscal year and period 1–12. These are not calendar months. Choose an ending fiscal period and download 1, 3 or 12 periods through it. The range crosses fiscal years when needed. All countries summary is the default; detailed or individual regions remain separate datasets. Check the actual start and end dates in the downloaded review before saving."
+        ],
+        [
+          "Does downloading save or replace my financial history?",
+          "Downloading runs in the background and prepares a private review. You can leave the view and return to see progress. When it finishes, choose Review downloaded reports, compare dates and before/after amounts, then Save reviewed financial reports. Identical reports need no save. Missing reports and reports without this app’s rows are counted separately and never erase existing history. Downloaded reviews remain available for 24 hours, up to three batches per app; download again if one expires. Encrypted backups contain the saved history and any cached reviews still present."
+        ],
+        [
+          "What if a financial download fails or I stop it?",
+          "The batch is checked before a review becomes available. A failed or stopped download leaves saved history unchanged. Retry or select Report file and import complete files. Follow the fiscal-period, access or connection guide shown for the result. Only an unexpected technical failure needs a support incident; do not attach tokens, report contents or request headers. A stopped download cannot undo a separate save that has already completed."
+        ],
+        [
+          "How do I download the right report?",
+          "In App Store Connect, click Reports at the top of the page, then Create Reports at the top right. Select the fiscal month, choose All Countries or Regions (Single File) and click Create Reports. When the report is ready, click Download Reports to save its GZ file. Import it directly in Storebench Finance; no extraction, vendor number or key is needed. Apple requires Account Holder, Admin or Finance access. A detailed report or complete individual regional files also work."
+        ],
+        [
+          "Can I import multiple regional files?",
+          "Yes. Select all files together, then match each file to the report region chosen in Apple’s download screen. This is the report region, which can cover several countries, not a customer’s territory. Confirm each file is complete. Regional reports form a separate dataset; overlapping country/currency activity is rejected. Files containing only other apps are skipped and never imply zero proceeds."
+        ],
+        [
+          "What does a new file replace?",
+          "A revised report replaces the exact fiscal start date, end date and report region after a preview. Identical reimports are skipped. Partly overlapping periods conflict. Financial files do not provide a reliable revision timestamp, so importing an older file can replace a correction: compare the before/after amounts. Concurrent edits invalidate an earlier preview."
+        ],
+        [
+          "Why are there several financial datasets?",
+          "All countries summary, all countries detailed and individual regions can describe the same transactions. They are stored separately and never summed together. Detailed reports retain settlement and transaction dates in original exports. Regional totals cover only imported regions. Missing periods or unavailable regions are not zero activity."
+        ],
+        [
+          "Are reported proceeds the bank payout?",
+          "No. Finance sums the reported Extended Partner Share, including returns. Payouts can include separate taxes, adjustments and currency conversion. The optional display-currency estimate uses dated reference rates shared with Pricing, and incomplete conversions are marked partial. Original currencies stay visible. Sales follows a different timing basis and should not be added to Finance totals."
+        ],
+        [
+          "Which app transactions are included?",
+          "Rows must match this app’s Apple identifier and a recognized direct-app product type. Paid purchase and return counts exclude free initial downloads, updates and redownloads; those appear as other net units. In-app products and subscriptions require verified parent-app ownership and are not assigned by titles or names. Tax reports are a separate format."
+        ],
+        [
+          "How do I export, remove or restore data?",
+          "Export a saved report as Apple TXT/GZ or spreadsheet-safe original CSV. Export all financial data as JSON to retain report scopes. Analysis CSV contains one row per territory with original currency amounts and conversion coverage; it is not a reimportable Apple report. Removing a selected report preserves others and checks that the selection is current. Verified private backups include Finance data."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "aso-progress",
+      "title": "Reading the version comparison",
+      "summary": "Each row compares a measure in the days after a listing change with the same number of days before it. Green means it went up, red down. A status instead of a number means there are not enough saved reports to compare.",
+      "questions": [
+        [
+          "What do +35 and +3.4/day mean?",
+          "A plain number is the change in the total over the chosen days: for example 7 days after the change compared with the 7 days before. When some days have no saved report, Storebench compares the average per reported day instead and shows /day. The percentage compares with the days before."
+        ],
+        [
+          "What does Before: 6 of 7 days mean?",
+          "It counts how many of the compared days have a saved report on each side of the change. 6 of 7 means one day before the change has no report. A day without a report is unknown, never counted as zero."
+        ],
+        [
+          "What does Waiting for data mean?",
+          "The days after the change have not all passed yet, or Apple has not delivered their reports. Daily Analytics reports usually arrive two to three days late. Sync again later; the comparison appears when enough days are reported."
+        ],
+        [
+          "What do No reports before and No reports after mean?",
+          "No reports are saved for the days on that side of the change, so there is nothing to compare with. Download older or newer reports in Analytics or Sales, or choose a shorter comparison period."
+        ],
+        [
+          "What does Too few reports mean?",
+          "Fewer than half of the days on one side have a saved report. Comparing so few days would be misleading, so no number is shown."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "analytics",
+      "title": "Analytics reports, segments and corrections",
+      "summary": "Analytics measures downloads and App Store activity separately from paid sales. Download complete reports in the background or review and import their files.",
+      "questions": [
+        [
+          "Which reports are supported?",
+          "Apple App Store Downloads and App Store Discovery and Engagement, standard or detailed, as CSV, TXT, TSV or GZ. Standard Downloads supports daily reports only. Detailed Downloads and Engagement also support weekly and monthly periods. Sales and Trends files belong in Sales, not Analytics."
+        ],
+        [
+          "How do I download Analytics reports?",
+          "Open an app’s Analytics and use the Download Analytics reports card. Select Downloads or Discovery and Engagement, detail level, granularity and a processing period. Automatic checks the app’s active ongoing report requests, then historical snapshots if none contain the selected period. An explicit request selection never switches to another request. Check Reports shows the latest processing date and lets you use that period before downloading. Download Reports runs in the background with progress; you can leave the view and return. Retry skips identical data instead of adding it twice."
+        ],
+        [
+          "How do I start report generation?",
+          "If Analytics shows setup required or paused, choose its main Set Up Reports action. Otherwise expand Set up report generation or use a file. Set up ongoing reports or Request historical snapshot opens App Store changes. This requests report generation; it does not release an app version. Prepare the review and approve the exact request there. Existing matching requests are reused. Apple requires an Admin role to create requests; Admin, Sales and Reports, or Finance can download generated reports. Initial reports can take 1–2 days. Return to Analytics and choose Check Reports. Analytics uses the app’s API connection; a Reporter token does not provide Analytics access."
+        ],
+        [
+          "Does a seven-day processing period mean seven activity days?",
+          "No. Processing dates identify when Apple prepared each report, including corrections to earlier activity. You can include today (UTC); an already generated instance does not require waiting until tomorrow. A report processed this week can contain older activity. The summary uses activity dates from verified saved reports. Missing instances and reports without this app’s rows do not prove zero activity. Choose a longer processing period or a different available request when looking for older data."
+        ],
+        [
+          "Why are no Analytics reports found?",
+          "If no generation request exists, use Set Up Reports and approve its review in App Store changes. Resume generation only if the existing request is inactive. If the selected type or detail level is not listed, wait for Apple to prepare it. A report can exist before its instances or downloadable files are ready. If instances exist outside your chosen processing dates, choose Check Reports and Use Latest Period, then download. These states never mean zero activity. Weekly Downloads (detailed) and Engagement reports arrive on Fridays; monthly reports on the fifth. Initial generation normally takes 1–2 days, but it can take longer; an existing pending request does not need to be recreated."
+        ],
+        [
+          "What happens if a download fails or I stop it?",
+          "Storebench checks every segment’s size, checksum and format before saving the complete batch atomically. A failed or interrupted download preserves saved history; retry it to start a new attempt. Stopping cannot undo a save already completed. If saved reports change while a download runs, the stale save is rejected. Setup, access and report availability show a guide and next step. Integrity and storage failures retain diagnostic details for support."
+        ],
+        [
+          "Where do processing date and segments come from for file import?",
+          "Use the metadata for the report instance supplied by the App Store Connect Analytics Reports API: processingDate, granularity and its full segment list. Select all its segment files at once and enter that count. Do not infer processingDate from the activity Date column or your download date. Automatic download obtains this metadata and checks the complete segment list for you. File import remains available when automatic download is unavailable."
+        ],
+        [
+          "How are duplicates and corrections handled?",
+          "All segments are combined before saving. Identical periods are skipped. For the same report type, detail level, granularity and activity date, a newer processing date replaces earlier data in full. Older imports cannot overwrite newer data. A changed file with the same processing date requires review as a replacement. If saved data changes after the preview, preview again. Periods absent from an import are kept."
+        ],
+        [
+          "Can I compare these numbers with sales?",
+          "First-time downloads, redownloads, updates and restores are separate counts. Impressions exclude page views; Get / Buy / Pre-order taps are not completed downloads. Sales measures purchases and proceeds on a different basis. Storebench never treats one of these measures as another or calculates conversion across these separate reports."
+        ],
+        [
+          "Why can numbers be missing or change later?",
+          "Daily Downloads can take two days to complete and Discovery and Engagement three. Apple can issue later corrections. Detailed reports can omit small groups and add privacy noise. Missing rows and missing periods do not prove zero activity. Unique Counts are retained in exports but never added across groups or days, which would overcount people."
+        ],
+        [
+          "How do I export or move these reports?",
+          "Export an individual period as original Apple TXT or GZ, or as spreadsheet-safe CSV. Those files require the same report metadata when reimporting. All datasets JSON preserves processing dates, granularity, detail level and this app’s original rows. Verified private backups include Analytics data. Keep reports and backups out of Git."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "storage",
+      "title": "Encrypted local storage",
+      "summary": "Saved work is kept in a shared SQLCipher database and authenticated encrypted media files on this device.",
+      "questions": [
+        [
+          "Is my work saved locally?",
+          "Saved versions, text, prices, status and reports are stored in SQLCipher. Media is kept once in encrypted files referenced by the database. Settings → Editing can automatically save language text and media layouts after a short pause. Other editors use their save controls. Confirmed local saves survive quitting and reopening Storebench."
+        ],
+        [
+          "How do I protect saved data?",
+          "Choose a Storebench password or a Mac Keychain protected key on first start. You can add or change the password later in Settings. If you use a password, it is required whenever Storebench starts and after you sign out. Keep the password and device access secure; Apple cannot recover the local encryption key."
+        ],
+        [
+          "What happens if an import or download stops?",
+          "A running job keeps its process-owned lock. After a crash, Storebench checks whether an import revision was committed before retrying. Interrupted report downloads can be retried. Publishing is never replayed automatically; prepare a new review against Apple's current state."
+        ],
+        [
+          "Can two Storebench processes save reports at the same time?",
+          "Saved revisions are compared within SQLCipher transactions, and longer jobs use operating-system locks. An outdated Analytics or Finance review must be refreshed. Keep the data directory on a private local disk rather than a synchronized or network folder."
+        ],
+        [
+          "How do backups work?",
+          "Open Settings → Backups, choose a folder with Choose Folder…, enter a restore passphrase of 12–256 characters and choose Save Backup Settings. Back up automatically runs while Storebench is open and unlocked; Back Up Now makes a copy immediately. Each backup holds an encrypted copy of saved data, media and staged build packages. To restore, use Restore from a backup on the setup screen: choose Choose Backup…, enter its restore passphrase and choose Restore Backup. Reconnect Apple credentials afterwards. Keep backup files and passphrases outside Git."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "versions",
+      "title": "Starting and saving a version",
+      "summary": "Use New version in an app to save a release plan and its material draft, even before the first import.",
+      "questions": [
+        [
+          "How do I start without an imported version?",
+          "Open Version setup and check Apple's version list. If there is no saved version, choose the platform, first language and version number. The new local draft starts empty. Add text, more languages, screenshots and app previews in their editors."
+        ],
+        [
+          "What is copied into a new version?",
+          "Starting a new version automatically makes a separate draft from the saved version’s text, app information, languages, screenshots and locally saved app previews. Image and video order, exclusions and poster frames are retained. Save unfinished source edits first. Changes in the copy leave the original material unchanged. Import again first if Apple has newer material."
+        ],
+        [
+          "How do I continue a local version draft?",
+          "Open the existing release plan and its saved language and media editors. Their edits stay with that local draft. One active release plan is supported per app."
+        ],
+        [
+          "Where is the version saved?",
+          "The plan and material draft are saved locally and survive quitting and reopening Storebench. Empty starting points are labeled Local draft, and do not count as Apple imports. Save each editor to retain its changes."
+        ],
+        [
+          "How do I review release settings?",
+          "Changed marks unsaved version and release settings. Expand Release plan changes to compare them with the saved plan. Saving opens the new version workspace directly and marks the plan Saved. If the plan was changed elsewhere, your save or removal is rejected and your entries stay visible."
+        ],
+        [
+          "What if I leave with unsaved release settings?",
+          "Switching apps, navigating elsewhere or quitting Storebench asks Save changes before leaving? when edits are unsaved. Choose Save and Continue, Discard and Continue or Keep Editing. Nothing is published to Apple. Save before leaving to keep your work."
+        ],
+        [
+          "How do I create it in App Store Connect?",
+          "In App Store changes, choose Review Apple version setup and approve the creation. If the version already exists, the review reuses it. Then choose Review Text & Media to prepare a separate review of the exact listing changes. Approve that review to send the saved material. An existing app must be configured for your account; Storebench does not create the app record itself."
+        ],
+        [
+          "Can I prepare more than one version?",
+          "One active plan is supported per app. Remove the plan to start another; its saved language and media drafts remain available as starting material. A plan saved elsewhere since you opened it cannot be silently replaced."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "changes",
+      "title": "Changed, saved and comparing edits",
+      "summary": "Changed means an unsaved edit. Saved confirms a successful local save. Neither status means the change has been published to Apple.",
+      "questions": [
+        [
+          "What does the diff compare?",
+          "Expand Compare changes to see saved and unsaved values per country, model setting, text field or media property. Screenshots and app previews compare positions, inclusion and poster frames. Country model changes compare with the saved local model, respecting protection and overrides. The Apple price and Change columns separately compare with the current Apple price."
+        ],
+        [
+          "Can I compare after saving?",
+          "Yes. The last successful save keeps its before-and-after comparison while you stay in the view. Reuse text, country overrides and media layouts each retain their last save. Changing model settings starts a new comparison against the latest saved model. Leaving the view clears these temporary comparisons, but keeps the saved data."
+        ],
+        [
+          "Why is a country missing from the model diff?",
+          "Only effective price changes are listed. A protected country or permanent override keeps its existing price when the model changes. A new rounding rule may also produce the same amount. The Model changes comparison still records changed settings."
+        ],
+        [
+          "What happens if a bulk save fails?",
+          "Changes stay unsaved and the error is shown. Text reuse checks that its reviewed source and destinations still match. Country overrides check the selected saved drafts and Apple prices again, and reject the entire selection if a country is no longer eligible. Media layouts also reject stale saves; new files can be appended while preserving your pending edits if existing saved items are unchanged. Review again after loading updated data."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "imports",
+      "title": "Importing files and reviewing changes",
+      "summary": "CSV and JSON imports compare the file’s actual effect with saved local data. Preview first, review the differences, then import.",
+      "questions": [
+        [
+          "Which parts can I import?",
+          "Language text and app information, screenshot order and selection, country price drafts, and release plans have import and export tools. Screenshot layout files refer to images already in the app; add new PNG or JPEG screenshots in the language editor. Sales reports have their own importer in Pricing."
+        ],
+        [
+          "What does Import changes show?",
+          "Only values that would change are listed. Expand the comparison to inspect each saved and proposed value. Position and inclusion are separate screenshot changes. Identical prices with different decimal formatting are unchanged. View file rows shows the original input."
+        ],
+        [
+          "Can the file change after I preview it?",
+          "Choose the changed file with Import… and preview it again. Storebench checks both the file and saved data before applying an import. If either has changed since the review, the import is rejected without modifying saved data. Choose Preview Again to read the latest saved values and compare the file again."
+        ],
+        [
+          "Where is the comparison after importing?",
+          "Last saved import appears after you choose Import Changes, showing the exact before-and-after values confirmed by the save. It remains while this view is open. Leaving the view clears the comparison, while the imported data stays saved."
+        ],
+        [
+          "What does Read Saved Data do?",
+          "It reads the saved values for this import type and shows them in a table, so you can confirm the imported values. The import is already saved once Last saved import appears."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "release-material",
+      "title": "Checking release material",
+      "summary": "Version setup shows gaps in saved text and selected screenshots per language. These local checks help prepare material before an Apple publishing review.",
+      "questions": [
+        [
+          "What does Checks passed mean?",
+          "The saved local listing has no issues in the checks shown: required listing text, text budgets, public URL format and selected screenshots. It does not confirm submission readiness. Apple separately checks device sizes, inherited media, the build, review information, agreements and other requirements."
+        ],
+        [
+          "Why are there no selected screenshots for a language?",
+          "That language has no included images in its local draft. Reuse images from another language, add localized screenshots, or check inherited screenshots on the version page in App Store Connect: click Apps, select the app and click the version in the sidebar. App previews are optional and counted separately."
+        ],
+        [
+          "Do these checks include unsaved edits?",
+          "No. Save the language or media editor before opening Version setup. The Changed text filter compares saved fields with their imported values."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "listing",
+      "title": "Listing text and keyword budgets",
+      "summary": "Counters show Apple’s text limits as you type. Keywords use a 100-byte UTF-8 budget; other fields count characters.",
+      "questions": [
+        [
+          "How can I reuse release notes or other text?",
+          "Open Reuse saved text between languages in Languages. Choose the saved source, destination languages and fields. Fill empty fields preserves existing translations; Replace selected fields previews each replacement. Empty source values are skipped. Apply reviewed text saves only the displayed changes locally. Copied text is not translated automatically."
+        ],
+        [
+          "How do I compare or undo a field?",
+          "Show changed fields only hides fields that match the import. Expand a field’s comparison to see imported and current text. Use imported text changes the editor; save the draft to keep that choice. Other fields keep their edits."
+        ],
+        [
+          "How do local and App Store saves work?",
+          "Languages opens the latest imported Apple version by default. Choose Upload to App Store to save all sections locally and open the exact changes. Confirm upload to App Store there to send them. Save keeps an optional draft; Sync new data only downloads from Apple. The difference count compares with the last import, even after publishing. Open a version draft explicitly if you intend to create another version. If that planned version is missing at Apple, approve its creation review, then review the exact saved text and media in a separate review. Submitting a version for Apple review is a later action."
+        ],
+        [
+          "Can I keep sections minimized between sessions?",
+          "Yes. Click a section heading to expand or collapse it, or open Text section preferences and choose Expand All Sections or Collapse All Sections. Storebench remembers this layout in the encrypted database for this account and app, across languages, versions and restarts. Collapsing keeps your text edits and shows unsaved and text-limit counts in the header. Layout saves are independent of text autosave; if saving the view fails, choose Retry Layout Save."
+        ],
+        [
+          "Which text fields belong to Search & ASO?",
+          "App name, subtitle and keywords are grouped together because Apple identifies them as text-relevance factors for App Store search. Promotional text, description and what’s new belong to Product page copy. Promotional text does not affect App Store search ranking. Categories, downloads, ratings and reviews also affect discovery; this grouping is not a ranking score."
+        ],
+        [
+          "Can drafts save automatically?",
+          "Turn on Automatically save local drafts in Settings → Editing. Language text and screenshot/app preview layouts save after a short pause. Selected files still require an explicit upload. Autosave never sends changes to Apple. Errors pause automatic retries and keep edits; use the local save button to retry. Text entered while a save is running is retained for the next save."
+        ],
+        [
+          "What happens if the draft is saved elsewhere first?",
+          "Each language saves against the draft it loaded. If either section changed through another save, import or reuse operation, Storebench rejects the entire stale save and keeps both sections visible. Open Compare with latest saved values, choose Read Latest Save, then choose Keep My Edits or Use Saved Values. This comparison never saves. After keeping edits, choose Save to resume. Reuse previews also require a new preview if their selected source or destination values changed."
+        ],
+        [
+          "Why do some keywords use more than one byte?",
+          "Accented letters and many non-Latin characters need several UTF-8 bytes. The keyword counter measures those bytes, including commas and spaces. For example, é uses two bytes. The publishing review checks the same budget."
+        ],
+        [
+          "Can I save text that is too long?",
+          "Yes. You can keep unfinished local drafts. Fields over Apple’s limits are marked, and publishing is blocked until you shorten them. Saving a draft does not send it to Apple."
+        ],
+        [
+          "How do I clean up repeated keywords?",
+          "The Keywords field flags duplicates regardless of capitalization. When Storebench finds keywords to remove, Clean Up Keywords removes repeated terms, filler words such as “app”, terms already in the app name or subtitle, and plural duplicates, then trims spacing and empty entries. Keyword check lists what it found and the bytes freed. Review the result, then save the draft."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "sync",
+      "title": "Sync data from Apple",
+      "summary": "Sync new data downloads one app’s data from Apple; Sync all apps downloads across your library. Local edits stay local. The Sync app data card shows results, Check Setup and recovery actions.",
+      "questions": [
+        [
+          "What does the source count mean?",
+          "Each item is one Apple data source: app material and versions, prices, Sales, Analytics downloads, Analytics discovery and engagement, Finance, or reviews. Only fully read items count. Missing days and partial results need attention. Syncing downloads data; it never sends a local draft or creates a version at Apple. A completed check does not mean every historical report exists or that missing activity is zero."
+        ],
+        [
+          "Can I leave the view or retry?",
+          "Yes. Progress is saved and survives leaving the view or quitting Storebench. Retry unfinished keeps recently successful items; older results are checked again. Sync new data discovers recent reports and reuses verified data; Download all again, in the More menu, bypasses the freshness and report caches for the same reporting window. Concurrent starts share the same running sync. Choose Open beside a source to see its data; each result shows when it was checked. Check Setup, also in the More menu, checks reporting access without downloading reports. Refresh Status reads saved progress again, and Stop ends a running sync. If status is unavailable, choose Refresh Status before starting another sync."
+        ],
+        [
+          "Which periods and connections are used?",
+          "Sales uses the saved Reporter connection when available, otherwise the saved Team API reporting connection, for seven completed Pacific days. Analytics checks seven processing days through today for both daily standard report types. Finance repeats the last fiscal period and region you downloaded; choose these once in Finance and review downloaded changes before saving."
+        ],
+        [
+          "How does syncing avoid unnecessary downloads?",
+          "Sources run one at a time. Prices use a five-minute cache; successful material, Finance and review checks can be reused for five minutes. Sales starts with the newest completed day, rechecking recent days hourly, older days daily and unavailable days after 15 minutes. Analytics checks available instance metadata and segment checksums before downloading changed files. Receipts are invalid if the saved report changes or disappears. Download all again bypasses report caches; use individual report views to fetch older history."
+        ],
+        [
+          "Does syncing publish changes or set up Analytics?",
+          "No. Syncing downloads data and retains local edits. It never creates report generation requests or approves publishing. Missing Analytics generation links to Analytics, where you can open the guarded setup review in App Store changes."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "review-information",
+      "title": "App Review Information",
+      "summary": "Choose the Apple version, edit its notes and optional file, then check the reusable access and contact section below. Review and confirm one exact save.",
+      "questions": [
+        [
+          "Where is this saved?",
+          "Review changes saves an encrypted local draft and opens a preview of Apple's current values and your changes. Confirm save to App Store Connect sends only those changes. The review expires after 15 minutes; prepare it again if it expires."
+        ],
+        [
+          "Which version receives it?",
+          "The selected version must already exist at Apple. Review information is attached to that exact version, so check its platform and number before confirming."
+        ],
+        [
+          "Why are fields already filled in?",
+          "When a new Apple version has no review details yet, Storebench copies the previous version's review fields, including notes. It also reuses a prior local attachment and App Sandbox draft when available. Apple's existing values for the selected version always take priority. An attachment that exists only at Apple cannot be downloaded through the documented review attachment API; choose that original file again if Apple did not copy it. Check copied values before sending. The two lower sections start open and remember when you collapse them."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "review-signin",
+      "title": "Sign-in for Apple's reviewer",
+      "summary": "Select whether Apple needs a demo account. If yes, provide a working username and password. The password is encrypted locally and its contents are hidden from the review and history.",
+      "questions": [
+        [
+          "Can I keep an existing password?",
+          "Yes. Leave the password box empty to keep the password already saved in this draft or at Apple, including a suggested prior version. Enter a new one only when replacing it."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "review-contact",
+      "title": "App Review contact",
+      "summary": "Provide the person Apple can reach about this version during review: first name, last name, phone and email.",
+      "questions": [
+        [
+          "Is this shown on the App Store?",
+          "No. Apple uses these details for the review process."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "review-notes",
+      "title": "Notes for Apple's reviewer",
+      "summary": "Explain setup, steps, test data and anything else needed to assess the app. Apple allows up to 4,000 UTF-8 bytes.",
+      "questions": [
+        [
+          "Should I put a password here?",
+          "Use the dedicated demo password field. Notes appear in the exact review; only provide information Apple needs to assess this version."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "review-attachment",
+      "title": "App Review attachment",
+      "summary": "Optionally add a document, image or short video that helps Apple review the app. Storebench keeps existing Apple attachments when adding a file. You can review removal of an Apple attachment separately; approval deletes only that file and keeps the local draft.",
+      "questions": [
+        [
+          "Which files work?",
+          "Choose a PDF, PNG, JPEG, MP4 or MOV file up to 50 MB. The exact file name and size appear in the review. Apple verifies the upload before Storebench marks it complete."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "review-sandbox",
+      "title": "macOS App Sandbox information",
+      "summary": "Explain each temporary exception entitlement used by the macOS app. The key and usage notes stay local because Apple's public API does not expose a write operation for this section.",
+      "questions": [
+        [
+          "What must I do in App Store Connect?",
+          "In App Store Connect, click Apps, select the app and click the macOS version in the sidebar. Enter each temporary exception entitlement key and its usage information there before submitting. If your app has no temporary exception entitlements, no entries are needed."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "publishing",
+      "title": "Publishing to App Store Connect",
+      "summary": "Save, prepare a review, then approve the exact changes to send to Apple. Each app has App Store changes.",
+      "questions": [
+        [
+          "What does approval send to Apple?",
+          "Approval sends only the exact changes listed in the current review after checking them again. Confirm Apple version setup creates or updates the version only. Confirm upload to App Store sends the reviewed listing text and media separately. Other approvals can send prices, create Analytics report requests or make the specific change shown in their review. Starting Analytics reports does not release a new app version or submit it for App Review."
+        ],
+        [
+          "What happens after preparing a review?",
+          "Storebench checks Apple and your saved edits, then opens the exact changes automatically. The prepared review is local and has sent nothing to Apple. Confirm Apple version setup creates or updates only the version. Confirm upload to App Store sends reviewed listing text and media in a separate step."
+        ],
+        [
+          "What if preparing a review takes too long or fails?",
+          "Check for a macOS Keychain prompt. After two minutes, Storebench stops waiting and shows a reportable error code. Check Publishing history before retrying: a review may have been saved even if its response did not arrive. Open an unexpired review to continue. Copy issue details includes the public error code and guidance, without your app data or Apple’s explanation."
+        ],
+        [
+          "How do I start a new Apple release?",
+          "Save a release plan with its version number. In App Store changes, choose Review Apple version setup and approve it. After creation, choose Review Text & Media to see the exact saved text, screenshots and app previews for that version, then approve that review to send them. Apple may copy existing material when it creates the version; the second review compares against it."
+        ],
+        [
+          "Can I choose when a version is released?",
+          "In Version setup, under Version Release, choose Manually release this version, Automatically release this version, or Automatically release this version after App Review, no earlier than a chosen date. The date is entered in your Mac’s time zone and stored in UTC. Apple must approve the app before any release. App Store changes → Review Apple version setup reviews the choice before creating or updating the Apple version."
+        ],
+        [
+          "What happens when I publish prices?",
+          "The saved app model and country overrides are combined, while protected countries keep their Apple prices. An unavailable exact price blocks publishing. Existing future prices are retained. When changing Apple's base price, the review explicitly converts other automatic prices to manual prices to preserve them."
+        ],
+        [
+          "Does publishing material submit the app for review?",
+          "No. Submit to App Review is a separate action. Select a processed, unexpired App Store eligible build for the same platform and version, delivered through Storebench, Xcode or Transporter. Apple validates required metadata, review information, agreements and export compliance. Approved versions using manual release can then be released from App Store changes."
+        ],
+        [
+          "Can I cancel an App Review submission?",
+          "Choose Cancel Submission beside the version in Versions at Apple, or in App Store changes, then review the exact submission. Storebench allows it only when that version is the sole item in a waiting, in-review or unresolved submission. Apple returns the version to Developer Rejected; submitting again restarts review."
+        ],
+        [
+          "What if something changes after I review?",
+          "Reviews expire after 15 minutes. Storebench checks local drafts and Apple's current data again before writing. Changed data requires a fresh review. Each approval can run only once, and only one publishing operation per app runs at a time."
+        ],
+        [
+          "What if uploading or publishing fails?",
+          "The status lists completed and failed steps. Apple does not provide a transaction covering all steps, so completed changes remain applied. Prepare a new review to inspect remaining changes. Media replacement may remove old files before uploading replacements because Apple limits set sizes. Local drafts and archived files remain available."
+        ],
+        [
+          "Can I continue after quitting Storebench?",
+          "Open Publishing history from App Store changes or History to reopen saved reviews, including after quitting and reopening Storebench. Keep Storebench open while a publishing job runs. Expired reviews cannot be approved; prepare a new review to check current changes. After completion, import the app again to archive its latest Apple material."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "publish-approval",
+      "title": "What this Apple approval does",
+      "summary": "Sends only the steps shown in this review to App Store Connect after checking them again. An Analytics review creates a report request; it does not release or submit an app version.",
+      "questions": [
+        [
+          "What happens when I approve?",
+          "Storebench checks the saved drafts and Apple's current state again, then sends only the steps listed in this exact review. The review expires after 15 minutes and can be approved once."
+        ],
+        [
+          "Does Analytics setup publish my app?",
+          "No. An Analytics review requests report generation for this app. App release and App Review submission are separate actions with separate reviews."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "model",
+      "title": "Pricing model and country overrides",
+      "summary": "The model proposes prices across countries. You only need a country override when a country should differ from that model.",
+      "questions": [
+        [
+          "What happens when I change my pricing model?",
+          "The Proposed price and Change columns update automatically while you edit. Save model remembers the settings for this app and profile. You do not need to select countries or use the override editor to apply the model to this local plan."
+        ],
+        [
+          "What if prices changed elsewhere?",
+          "A newer model or shared profile was saved elsewhere. Your inputs stay in the editor. Expand Compare with latest saved values and choose Read Latest Save. Keep My Edits keeps your input for a subsequent explicit save; Use Saved Values loads the saved version. Reading or comparing does not save anything. If the guide country or currency changed, your inputs stay in the editor; review the comparison before choosing which values to keep."
+        ],
+        [
+          "What if saving or reading prices fails?",
+          "Your inputs stay in the editor. If Storebench was locked or signed out, unlock it with your Storebench password; unsaved inputs stay in the editor until you leave it. If validation failed, check the price, method and country percentages. If the save could not be confirmed, it might have completed: compare the latest saved values before retrying. Read Latest Save does not change your inputs, update their baseline or save them; choose Keep My Edits or Use Saved Values explicitly after reviewing the comparison."
+        ],
+        [
+          "Can another profile save erase my draft?",
+          "Dirty profile editors retain their inputs when another profile is saved. If a profile was deleted elsewhere, its dirty editor stays available so you can copy the values. Discard Editor removes that editor after confirmation. It does not recreate the deleted profile."
+        ],
+        [
+          "Which price takes precedence?",
+          "Protected countries keep the current Apple price. Otherwise a saved permanent country override takes precedence over the model. A country with an override is labeled Country override; remove that override to return to the model. Temporary drafts are listed with their dates separately."
+        ],
+        [
+          "Does Save model change App Store Connect?",
+          "No. Model settings, country overrides and temporary drafts are saved locally. The Apple price column is the last imported current price and does not change when you edit the plan. Open the app’s App Store changes, choose Pricing and prepare a review. Only Publish reviewed changes to Apple sends the saved prices."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "protection",
+      "title": "Protected and unprotected countries",
+      "summary": "Protected keeps the current Apple price and excludes the country from bulk edits. Unprotected allows model prices and local overrides; it does not mean anything has been published.",
+      "questions": [
+        [
+          "What does Unprotected mean?",
+          "The country has no local price lock. The pricing model can suggest a different price and you can create a country override. It is not a security warning and does not describe the state of your Apple account."
+        ],
+        [
+          "How do I protect or unprotect a country?",
+          "Open the country’s Details and toggle Keep current Apple price. Protection applies to this app across profiles. It keeps the latest current Apple price in the preview, not an older price captured when you first enabled protection."
+        ],
+        [
+          "What happens to existing overrides when I protect a country?",
+          "They stay saved, but the current Apple price takes precedence while protection is on. Review existing overrides before turning protection off."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "methods",
+      "title": "Pricing methods and rounding",
+      "summary": "Same for all keeps the same number in each currency. Currency conversion preserves value using reference rates. Other methods use country percentages or price-level indices.",
+      "questions": [
+        [
+          "What is Same for all?",
+          "Entering 12.99 proposes 12.99 USD, 12.99 EUR and 12.99 SEK. It does not convert currencies or round to a different Apple price. An unavailable Apple price point is flagged in country details."
+        ],
+        [
+          "What is the guide country?",
+          "It is the country and currency used as the starting point for your model. Shared profiles define the guide country. App-specific model edits do not change the shared profile."
+        ],
+        [
+          "How do percentages, currency conversion and indices differ?",
+          "Country percentages scale the guide price before converting currency. Currency conversion uses the same guide value without country percentages. World Bank PPP and the Big Mac Index use local price-level ratios. Missing rates or index data leave a country without an estimated model price."
+        ],
+        [
+          "Why can the proposed price differ from the calculated target?",
+          "Nearest (the default), round up and round down select an available Apple price point for both the model and percentage overrides. Nearest chooses the smallest difference, with ties going upward; it does not invent a .99 or .95 price. Keep exact amount shows the calculated price even without a matching price point. Country details show both values and the data source."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "no-sales-pricing",
+      "title": "Lower prices without paid sales",
+      "summary": "Choose a period from 7 days to 1 year and whether a country may have no sales or at most a few. Every day needs a saved report for this app; missing reports cannot establish zero sales.",
+      "questions": [
+        [
+          "Which countries are eligible?",
+          "Countries with a positive current Apple price, no price protection, no scheduled local draft and no paid app purchases in the entire selected period, or at most the number of paid sales you enter. You can then clear countries before choosing a method. Purchases outside that period do not exclude a country. Add missing reports in Sales before continuing. The manual no-sales table filter uses all saved report periods instead."
+        ],
+        [
+          "How do I choose a reduction?",
+          "Choose a base country as the reference, then a fixed price converted from it, a fixed reduction in its currency, the Big Mac Index or World Bank PPP compared with it, a percentage reduction or the same numeric price. The guide uses available Apple price points and only retains prices below the current Apple price and any existing local override. Review countries across pages and deselect any you want to keep."
+        ],
+        [
+          "What if an index or price point is missing?",
+          "That country is skipped and identified in the review. Try another method or base price. Protected countries are excluded. Reports, protection, profile and country drafts are rechecked before saving; changed data requires a new review."
+        ],
+        [
+          "Does saving publish the reductions?",
+          "Saving creates local country overrides. The shared profile stays unchanged. Review saved prices in App Store changes and explicitly approve that prepared review to publish to Apple."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "overrides",
+      "title": "Country overrides and temporary prices",
+      "summary": "Overrides are optional exceptions. A percentage starts from the current Apple price, not the model price. An exact amount edits one country.",
+      "questions": [
+        [
+          "Do I need Adjust selected after changing the model?",
+          "No. The model already proposes prices for its countries. Select countries only when you want optional exceptions. Review the proposed changes, then save the country overrides locally."
+        ],
+        [
+          "What does 75% mean in the country editor?",
+          "It means 75% of each country’s current Apple price, a 25% reduction. It is independent of the guide-price percentages in the model. The review shows the starting Apple price and the proposed override."
+        ],
+        [
+          "What does a temporary draft do?",
+          "It stores a planned amount with a start and end date. It is listed separately from the ongoing model price. Dates are checked for overlaps and known Apple schedules. The schedule is sent only after reviewing and approving Pricing in App Store changes."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "rates",
+      "title": "USD equivalents and data sources",
+      "summary": "USD equivalent is an indicative currency comparison of the current Apple selling price. It is not your proceeds or settlement amount.",
+      "questions": [
+        [
+          "How is the USD equivalent calculated?",
+          "The local Apple price is divided by a dated rate for one USD in that currency. Taxes, Apple proceeds, payment fees and Apple settlement rates are not included. Country details show the rate, date and provider."
+        ],
+        [
+          "Where do the rates come from?",
+          "Storebench uses Frankfurter reference rates with ExchangeRate-API as backup. Dated cached rates are labeled. When a recent rate is unavailable, the USD value stays blank. Index methods use World Bank PPP or The Economist Big Mac Index instead of exchange rates."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "sales",
+      "title": "Sales reports and suggestions",
+      "summary": "Sales shows paid app purchases by report period and storefront. Suggestions are observations for review and never change prices or listings. Missing reports are not zero sales.",
+      "questions": [
+        [
+          "Why can report dates or totals differ from Apple’s dashboard?",
+          "Downloaded Summary Sales reports follow Pacific Time (PT), including daylight saving time. Storebench keeps those date labels and only downloads completed Pacific days; a completed day may still be awaiting Apple’s report. App Analytics uses UTC activity dates and can have a later processing date. Financial reports use Apple fiscal periods. The Sales and Trends dashboard can use a different timezone from its downloadable reports. Changing your display currency does not change report dates. Storebench cannot shift daily aggregates into another timezone or reconcile these different datasets as identical events."
+        ],
+        [
+          "Can I compare a custom range or several apps?",
+          "Sales shows all configured apps for one shared date range, with coverage for each app. Open an app to keep that range and compare it with the preceding range of equal length. Changes appear only when both ranges have full report coverage. A weekly or monthly report crossing a date boundary is excluded, because its daily values are unknown. Summary-only CSVs cannot provide refund, free-download or proceeds comparisons."
+        ],
+        [
+          "What does Export analysis CSV contain?",
+          "The country analysis for the selected dates, including the Pacific reporting timezone, metric scope, covered and requested days, paid units, available refunds and free downloads, original proceeds and the estimate in your display currency. Missing amounts stay empty and incomplete estimates are marked. The country search only filters the screen; the export includes all countries. This analysis file is for review, not reimport. Use Manage saved periods for reimportable original reports or summaries."
+        ],
+        [
+          "Why does the button say Connect to download reports?",
+          "Reporter needs its own access token before downloading; your app’s .p8 API key does not replace it. Choose Connect to download reports to open setup. Connect Reporter opens the token guide when the field is empty, or points to any missing account or vendor choice. Once connected, the action becomes Download reports. While reporting is being prepared, Report source remains available: choose Report file to import without connecting. Switching sources stops the pending connection check or setup and keeps entered values; any save already completed is kept."
+        ],
+        [
+          "How do I get sales data?",
+          "Open Sales and choose an app. Select Apple Reporter to download 1, 7 or 30 completed days without a Team key. Paste a Reporter token and connect; choose an account or vendor only if there are several. A Team API key remains an optional report source. Or import a Summary Sales Report as TXT, TSV, GZ or CSV without a vendor number. Sales and Pricing use the same saved data. Downloads start when you choose Download reports, then run in the background. You can leave the view; reopen Sales or Pricing to follow progress. Keep Storebench running until the job finishes."
+        ],
+        [
+          "How do I connect Reporter?",
+          "In Sales or Pricing, select Apple Reporter. In App Store Connect, click Trends at the top, then Sales and Trends Reports in the left sidebar. At the top right, click the small grey question mark (?) beside About Reports. In the pop-up, choose Generate Reporter Token. Create one the first time, or reuse a valid token you already have. Copy it, return to Storebench, paste it into Reporter access token and click Connect Reporter. A single account and vendor are selected automatically; if there are several, choose the matching ones. Nothing else needs to be installed. The token is saved in macOS Keychain, separate from your app API key. If setup fails, Try Again keeps the token. During a slow connection or download, Stop, Use a File cancels the wait. Saved reports stay available; any save already completed is kept. Expand the step-by-step guides for help getting a token or report."
+        ],
+        [
+          "What if my Reporter token stops working?",
+          "For a temporary connection failure, retry with the same token. Apple tokens expire after 180 days; generating a replacement invalidates the previous token in all reporting tools. In App Store Connect, click Trends at the top, then Sales and Trends Reports in the left sidebar. Click the question mark (?) beside About Reports and choose Generate Reporter Token. In Storebench, open the Connection menu on the Reporting connection card, choose Replace Reporter Token… and paste the new token. Storebench never asks for your Apple Account password. Disconnecting removes the local token and keeps saved reports. After moving a backup to another Mac, reconnect the token there."
+        ],
+        [
+          "Where is my vendor number?",
+          "In App Store Connect, click Reports at the top of the page. Your Vendor Number appears at the top left, under your Legal Entity Name; click the arrow next to your vendor name to switch legal entities. Apple's help calls this area Payments and Financial Reports. Apple lists Account Holder, Admin or Finance access for that screen. The vendor number is different from your Team ID, Issuer ID and app ID."
+        ],
+        [
+          "Why does my Individual API key not work for reports?",
+          "Apple does not allow Individual keys to call Sales and Finance. Choose Apple Reporter and connect a Reporter token instead. Reporter works alongside an Individual API key and finds your vendor numbers automatically. File import also works without a reporting key or token."
+        ],
+        [
+          "Is Territory the same as a country?",
+          "Territory identifies the App Store country or region associated with the customer’s billing address. It is not their physical location. Summary Sales calls its column Country Code. Storebench maps those codes to the same country rows used in Pricing. Analytics is a separate reporting source with different metrics and privacy rules; its chart exports are not Summary Sales Reports."
+        ],
+        [
+          "What happens if a multi-day download fails?",
+          "Unavailable days reported by Apple are listed and are not counted as zero. Existing saved data for those days stays intact. Authentication, invalid data and overlap failures reject the entire new batch, preserving saved reports. Download the same period again to refresh it without doubling counts."
+        ],
+        [
+          "What do proceeds and refunds mean?",
+          "Developer Proceeds are after Apple's commission and applicable taxes; App Store Connect's Sales metric describes customer spending. Proceeds include in-app purchases and subscriptions whose Apple identifiers are verified in this app's product catalog. App download counts stay separate. Refund units reduce proceeds. Missing dates, unverified product coverage and missing currency rates make estimates partial. Restore app API product access and retry if ownership cannot be checked. Settings → General selects the display currency for estimates. Original amounts remain visible; estimates are not confirmed payouts. Summary CSVs contain paid app units only."
+        ],
+        [
+          "Why did seven days produce fewer reports?",
+          "Progress counts every day checked. With sales counts days whose report contains this app. Without sales means Apple reported no sales for the vendor that day, or its report lists other apps but nothing for this app while the app's complete product catalog matched every product. These days are saved as days without sales, so coverage, comparisons and price guides treat them as complete zero days; no Apple report rows are invented and saved sales are never replaced by them. Unattributed means the report has no rows for this app but its in-app purchases could not be verified; import the app information and sync again. Not yet available means Apple has not delivered the report; those days stay unknown, are not zero sales and are retried on the next sync. Every category keeps existing saved data."
+        ],
+        [
+          "How are duplicates handled?",
+          "The result separates new, updated and unchanged periods. Identical reports are skipped, including reordered rows and columns. Revised reports replace the exact same period. Reimporting an unchanged summary CSV keeps original proceeds details. Overlapping periods are rejected before the batch is saved."
+        ],
+        [
+          "Which exchange rates are used for the total?",
+          "The total and country estimates use the same dated reference rates and backup source as Pricing. Amounts are converted before summing and rounded only for display. The source amounts stay visible. These are reference estimates, not historical exchange rates or bank payouts. Missing rates or summary-only reports produce a clearly marked partial total."
+        ],
+        [
+          "How do I report an error?",
+          "Click the SB- error code to copy just the code, or choose Copy issue details for a GitHub bug report. Contact Support opens the Storebench support page in your browser; paste the error code there. Settings → Help also has Contact Support. If clipboard access is blocked, a dialog offers selectable text. Add reproduction steps without tokens, cookies, headers, account or app identifiers, report files or private screenshots."
+        ],
+        [
+          "How are suggestions generated?",
+          "The default leading-market criteria are 30 total paid purchases, 20 in the leading country and at least 40% of purchases in that country. A tie is described as a shared lead. Growth tips compare adjacent reports of equal length, each meeting your total-purchase minimum, with at least 10 country purchases before, 20 after and a 30% increase. Refund observations need complete details, your total-purchase minimum, at least three refunds and refunds equal to at least 10% of paid purchases. These are observations, not proof of a cause or a statistically significant result. Storefront country is not the customer’s location."
+        ],
+        [
+          "Can I choose the criteria for sales suggestions?",
+          "Yes. In Sales, the Sales observations card has Minimum purchases, Minimum country purchases and Minimum share % fields. Observations update immediately; totals, saved reports and app prices are unchanged. The values apply to the analysis you are viewing and start from the defaults each time you open it."
+        ],
+        [
+          "What if analysis criteria are invalid?",
+          "Observations and Export Analysis CSV wait until all criteria are valid. Purchases, refunds and proceeds remain visible. Correct the values to continue. The analysis CSV records the applied criteria alongside country figures, coverage and currency information. It remains separate from a reimportable source report."
+        ],
+        [
+          "Does zero paid units mean a country has never had sales?",
+          "No. Zero only covers the periods you imported. Gaps or earlier periods may contain sales. Unknown means no usable sales report is available."
+        ],
+        [
+          "Which reports can I use?",
+          "Import Apple Summary Sales Reports as TXT, TSV, GZ or CSV, or a Storebench sales summary CSV. Reports must belong to the selected app. Identical reimports are skipped; revised reports replace the exact period. Overlapping periods are rejected."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "pagination",
+      "title": "Finding countries and jumping between pages",
+      "summary": "Page X of Y shows where you are. Enter a number in the Go to page field and choose Go, or press Return, to jump. First page, Previous page, Next page and Last page move one step at a time or to either end.",
+      "questions": [
+        [
+          "Can I keep a country selection across pages?",
+          "Yes. Paging and sorting keep your selection. Select all matching editable countries includes every matching page. Changing the search or filter resets the page and selection so a bulk edit does not silently include countries you can no longer see."
+        ]
+      ],
+      "links": []
+    },
+    {
+      "id": "media",
+      "title": "Languages, screenshots and app previews",
+      "summary": "Add languages locally, reuse screenshots from another language, and prepare images or preview videos before reviewing them in App Store changes.",
+      "questions": [
+        [
+          "How do I upload screenshots to App Store Connect?",
+          "Choose Save to keep the current language’s selected images, videos and layout edits locally. Upload to App Store saves those edits first and opens a review of all saved text and media for the selected version across languages. Confirm upload to App Store sends the reviewed changes. If saving fails, your remaining edits stay in the editor. Uploading does not submit the version to App Review."
+        ],
+        [
+          "Can I add several screenshots at once?",
+          "Choose PNG or JPEG files or drop them into the language’s upload area. Storebench reads each image’s dimensions and creates the matching Apple display size automatically. Review the selection, remove unwanted files and add the batch. Mac sizes are 1280 × 800, 1440 × 900, 2560 × 1600 and 2880 × 1800 pixels. Each file can be up to 20 MB, with 50 MB per batch. If a file is invalid or a display size is full, none of the batch is added."
+        ],
+        [
+          "Can I reuse an app preview in another language?",
+          "Yes. Open App previews for the destination language and choose Reuse app previews from. Use app previews copies included saved local videos, order and poster times from the same version. Existing destination videos and settings stay unchanged. Copies use the same original files but have independent layouts. Review any language-specific content before publishing."
+        ],
+        [
+          "How do I populate a new language with screenshots?",
+          "Open the language’s Screenshots, choose a source under Reuse screenshots from and click Use screenshots. Saved order and selection are copied; existing images remain. Each language keeps an independent layout."
+        ],
+        [
+          "How much media can I prepare?",
+          "Choose up to ten screenshots and three app previews per language and display size. Excluding media keeps its local file available. Save the layout before adding a replacement to a full set."
+        ],
+        [
+          "How do I make screenshot cards with a title and background?",
+          "Open Create Media and create a card set for one display size. Choose a card type, a screenshot, a title and text, then the background and screenshot frame. Apply Style to All Cards gives every card the same look. Save All to Asset Library adds each card as an opaque PNG local original; nothing is uploaded until you review the upload in Asset Library."
+        ]
+      ],
+      "links": []
+    }
+  ]
+}

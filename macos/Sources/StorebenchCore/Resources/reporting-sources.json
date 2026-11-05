@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    { "kind": "sales", "label": "Sales", "calendar": "Pacific Time (PT)", "purpose": "Purchases, refunds and estimated proceeds", "description": "App purchases and first downloads have separate counts. Proceeds include in-app purchases and subscriptions with Apple identifiers verified in the app's product catalog. Summary-only CSVs lack refunds and proceeds details.", "limits": "Completed Pacific days may still be awaiting a report; those days stay unknown. Days Apple reports as without sales, or whose report has no rows for this app when its products can be matched, are saved as days without sales. Reference currency conversions are estimates, not payouts." },
+    { "kind": "analytics", "label": "Analytics", "calendar": "UTC activity dates", "purpose": "Discovery, engagement and downloads", "description": "Reported activity within one dataset, detail level and granularity. Button taps are not completed downloads. Processing dates can be later than activity dates.", "limits": "Privacy rules can omit or alter rows. Missing partitions are not zero activity. Unique counts cannot be added across days or dimensions; separate datasets do not establish a conversion rate." },
+    { "kind": "finance", "label": "Finance", "calendar": "Apple fiscal periods", "purpose": "Final direct-app transactions and proceeds", "description": "Direct-app financial rows within one report basis. Regional reports only cover the regions imported. Fiscal periods do not necessarily match calendar months.", "limits": "Financial proceeds and Sales estimates describe different reporting stages. Do not add them together. Display-currency estimates are not confirmed bank payments." }
+  ]
+}

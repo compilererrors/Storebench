@@ -1,0 +1,224 @@
+Storebench Source-Available License 1.0
+
+Effective date: 2026-11-04
+
+Copyright (c) 2026 Viktor Nyberg
+
+This license governs use of the Storebench source code, binaries, and other
+project files, except for third-party components that are distributed under
+their own licenses.
+
+1. Definitions
+
+"Storebench" means this software project and its source code, binaries,
+documentation, scripts, assets, and related project files.
+
+"Licensor" means the copyright holder or copyright holders identified above.
+
+"You" means the individual or legal entity exercising rights under this
+license.
+
+"Individual Personal Use" means use by a natural person for that person's own
+private, personal, educational, experimental, or hobby purposes, where the use
+is not Business Use and is not intended for commercial advantage, business
+operations, paid services, revenue generation, or other monetary compensation.
+
+"Non-Commercial Use" means Individual Personal Use and other use that is not
+Business Use.
+
+"Business Use" means use by or for a company, partnership, sole
+proprietorship, government agency, nonprofit, school, university, foundation,
+or other organization in connection with that organization's work, operations,
+services, products, customers, infrastructure, employees, contractors,
+research, administration, or revenue-generating activities.
+
+"Commercial License" means a separate paid license or written agreement with
+the Licensor that permits Business Use.
+
+"Authorized Store Subscription" means a paid subscription to an official
+version of Storebench purchased through the Mac App Store or another
+distribution channel approved by the Licensor, using an account permitted to
+make that purchase.
+
+"Subscription Period" means the time during which an Authorized Store
+Subscription is active and paid, including any free trial or introductory
+period offered through the authorized store.
+
+2. Non-Commercial Permission
+
+Subject to this license, You may use, copy, modify, compile, run, and
+distribute Storebench for Non-Commercial Use.
+
+Examples of Non-Commercial Use include personal learning, private homelab
+use, personal experimentation, academic experimentation outside an
+organization's operations, and hobby projects that are not connected to an
+organization's work, operations, customers, services, products,
+administration, or revenue.
+
+3. Business Use Requires Payment
+
+Business Use is not permitted under this license unless You have a Commercial
+License.
+
+If You want to use Storebench for Business Use, You must obtain and pay for a
+Commercial License from the Licensor before that use begins.
+
+No Business Use rights are granted by downloading, cloning, building,
+installing, modifying, or distributing Storebench under this license.
+
+Business Use includes use on a personal computer, personal account, home
+network, or private build when that use is for or on behalf of an
+organization.
+
+Examples of Business Use include using Storebench to read, prepare, review,
+publish, upload, price, submit, release, test, analyze, report on, or
+otherwise manage apps, App Store listings, screenshots, app previews, prices,
+in-app purchases, subscriptions, builds, TestFlight testers, sales, finance,
+or analytics data published by or for an organization.
+
+4. Authorized Store Subscriptions
+
+An Authorized Store Subscription grants the subscriber a Commercial License to
+use the official version of Storebench for Business Use during the
+Subscription Period, subject to this license, the applicable store terms, and
+any additional terms presented with that subscription.
+
+Each Authorized Store Subscription covers Business Use by one individual. Each
+person who uses Storebench for Business Use needs their own Authorized Store
+Subscription or another Commercial License.
+
+The Commercial License granted by an Authorized Store Subscription ends when
+the Subscription Period ends, including when the subscription is cancelled,
+expires, is not renewed, or is refunded. Business Use after that time requires
+a renewed Authorized Store Subscription or another Commercial License. Work
+completed during the Subscription Period does not need to be undone.
+
+An Authorized Store Subscription does not grant any right to redistribute Storebench
+outside the authorized store, sublicense Storebench, sell Storebench outside the
+authorized store, or use Storebench's name, logo, icon, or branding for modified
+versions.
+
+5. Redistribution
+
+If You distribute Storebench or a modified version of Storebench under this
+license, You must include this license, preserve copyright notices, and make
+clear that Business Use requires a Commercial License.
+
+Redistribution under this license does not grant Business Use rights to the
+recipient. Each recipient must comply with this license and must obtain a
+Commercial License before Business Use.
+
+6. Contributions
+
+By submitting a contribution to Storebench, You grant the Licensor a perpetual,
+worldwide, non-exclusive, royalty-free, irrevocable license to use, reproduce,
+modify, prepare derivative works of, publicly display, publicly perform,
+distribute, sublicense, and relicense the contribution as part of Storebench,
+including under commercial licenses. You represent that You have the right to
+grant these rights.
+
+7. Third-Party Components
+
+Third-party components, if any, including dependencies, libraries, tools,
+extensions, plugins, themes, and assets, remain subject to their own license
+terms. This license does not grant rights to third-party components beyond
+those provided by their respective licenses.
+
+8. No Trademark Rights
+
+This license does not grant permission to use the names, trademarks, logos,
+icons, or branding of Storebench or the Licensor except as reasonably
+necessary to describe an unmodified copy of Storebench.
+
+You may not distribute modified versions using the Storebench name, logo,
+icon, or branding in a way that suggests they are official, endorsed,
+approved, maintained, or provided by the Licensor.
+
+9. Termination
+
+If You violate this license, the rights granted to You under this license
+terminate automatically. The Licensor may reinstate rights in writing.
+
+10. User Responsibility and Operational Risk
+
+Storebench is a developer and publishing tool. It may read from, write to,
+connect to, upload to, download from, create, modify, delete, submit, release,
+or otherwise interact with App Store Connect, Apple developer accounts, API
+keys, Reporter tokens, apps, versions, App Store listings, screenshots, app
+previews, prices, availability, in-app purchases, subscriptions, builds,
+TestFlight groups and testers, sales, finance and analytics reports, local
+files, the Keychain, network endpoints, and other systems selected,
+configured, or controlled by You.
+
+You are solely responsible for how You install, configure, run, modify,
+distribute, and use Storebench. You are solely responsible for the accounts,
+apps, keys, tokens, credentials, listings, media, prices, builds, testers,
+reports, files, data, networks, and systems You use with Storebench, and for
+all consequences of that use.
+
+You are responsible for verifying that any action You take through Storebench
+is appropriate, authorized, safe, lawful, and suitable for Your apps and
+accounts before You take that action. This includes, without limitation,
+reviewing every prepared change before approving it, including text, media,
+uploads, price changes, availability changes, submissions for review,
+releases, removals, deletions, tester invitations, and any other read or
+write operation.
+
+The Licensor does not control Your accounts or apps, does not validate Your
+authorization to access any account or system, does not assume operational
+responsibility for Your apps, listings, prices, or revenue, and does not
+accept responsibility for Your decisions, configurations, credentials, data,
+or use of Storebench.
+
+11. Disclaimer of Warranty
+
+STOREBENCH IS PROVIDED ON AN "AS IS" AND "AS AVAILABLE" BASIS, WITH ALL FAULTS
+AND WITHOUT WARRANTY OF ANY KIND. TO THE MAXIMUM EXTENT PERMITTED BY
+APPLICABLE LAW, THE LICENSOR DISCLAIMS ALL WARRANTIES AND CONDITIONS,
+WHETHER EXPRESS, IMPLIED, STATUTORY, OR OTHERWISE, INCLUDING WITHOUT
+LIMITATION WARRANTIES OR CONDITIONS OF TITLE, NON-INFRINGEMENT,
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, QUIET ENJOYMENT,
+ACCURACY, RELIABILITY, SECURITY, AVAILABILITY, COMPATIBILITY, AND THAT
+STOREBENCH WILL BE ERROR-FREE OR UNINTERRUPTED.
+
+Without limiting the foregoing, the Licensor does not warrant that Storebench
+will protect against data loss, incorrect listings, rejected submissions,
+incorrect prices, lost sales, downtime, security incidents, unauthorized
+access, accidental changes, destructive operations, misconfiguration,
+credential exposure, service interruption, regulatory non-compliance, or any
+other operational or business impact.
+
+12. Limitation of Liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT AND UNDER NO
+LEGAL THEORY, WHETHER IN TORT, CONTRACT, STRICT LIABILITY, NEGLIGENCE,
+WARRANTY, STATUTE, OR OTHERWISE, SHALL THE LICENSOR BE LIABLE TO YOU OR ANY
+THIRD PARTY FOR ANY DIRECT, INDIRECT, SPECIAL, INCIDENTAL, CONSEQUENTIAL,
+EXEMPLARY, OR PUNITIVE DAMAGES, OR FOR ANY LOSS OF PROFITS, REVENUE, SALES,
+BUSINESS, GOODWILL, USE, DATA, CREDENTIALS, APPS, ACCOUNTS, SYSTEMS, SERVICES,
+OR OTHER LOSSES, ARISING OUT OF OR RELATED TO STOREBENCH, THIS LICENSE, OR ANY
+USE OF OR INABILITY TO USE STOREBENCH, EVEN IF THE LICENSOR HAS BEEN ADVISED
+OF THE POSSIBILITY OF SUCH DAMAGES.
+
+You agree that any use of Storebench is at Your own risk and that You, not the
+Licensor, are responsible for any damage, loss, claim, liability, cost, or
+expense arising from how Storebench is obtained, built, installed, configured,
+run, modified, distributed, or used by You or on Your behalf.
+
+Nothing in this license excludes or limits liability that cannot be excluded
+or limited under applicable law. Some jurisdictions do not allow the exclusion
+of certain warranties or limitations of liability, so some of the above
+exclusions or limitations may not apply to You.
+
+13. Governing Law and Forum
+
+This license is governed by the laws of Sweden, excluding conflict-of-law
+rules. Any dispute arising out of or relating to this license shall be
+resolved by the competent courts of Sweden.
+
+14. Survival
+
+Sections concerning Business Use, Authorized Store Subscriptions, redistribution
+obligations, contributions, third-party components, trademark rights, user
+responsibility, warranty disclaimers, limitation of liability, governing law,
+and this survival clause survive termination of this license.
