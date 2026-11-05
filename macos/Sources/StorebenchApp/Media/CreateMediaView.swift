@@ -1,0 +1,540 @@
+import AppKit
+import StorebenchCore
+import SwiftUI
+import UniformTypeIdentifiers
+
+/// Create Media turns screenshots into App Store cards. Card sets save on this Mac shortly after each change;
+/// finished cards become local Asset Library originals. Nothing here contacts Apple.
+struct CreateMediaView: View {
+    let account: Account, app: Account.App, session: WorkspaceSession?
+    @State private var saved: [WorkspaceSession.SavedMediaCardSet] = []
+    @State private var history: MediaCardHistory?
+    @State private var savedSet: MediaCardSet?
+    @State private var revision = 0
+    @State private var selectedId = ""
+    @State private var loading = true
+    @State private var working = false
+    @State private var saving = false
+    @State private var stale = false
+    @State private var status = ""
+    @State private var statusError = false
+    @State private var creating = false
+    @State private var newName = ""
+    @State private var newTarget = MediaCards.defaultTarget.id
+    @State private var screenshots: [String: DecodedScreenshot] = [:]
+    @State private var preview: ScreenshotPreview?
+    @State private var previewIssue = ""
+    @State private var dragStart: MediaCard?
+    @FocusState private var canvasFocused: Bool
+    @Environment(\.workspaceHeight) private var viewportHeight
+    @Environment(\.confirmDestructive) private var confirm
+    @Environment(\.openReleaseStep) private var openReleaseStep
+
+    private var opened: MediaCardSet? { history?.set }
+    private var dirty: Bool { history != nil && history?.set != savedSet }
+    private var index: Int? { opened?.cards.firstIndex { $0.id == selectedId } ?? (opened?.cards.isEmpty == false ? 0 : nil) }
+    private var current: MediaCard? { index.flatMap { opened?.cards[$0] } }
+    private var busy: Bool { working || loading }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            if !loading { stepsCard }
+            setsCard
+            if let set = opened, let current, let index {
+                cardsCard(set)
+                editorCard(set, card: current, index: index)
+                saveCard(set)
+            }
+        }
+        .task { await load() }
+        .task(id: history?.set) {
+            // Each change is saved on this Mac shortly after editing pauses.
+            guard dirty, !stale else { return }
+            try? await Task.sleep(for: .milliseconds(800))
+            guard !Task.isCancelled else { return }
+            _ = await save()
+        }
+        .task(id: PreviewRequest(card: current, width: opened?.width ?? 0, height: opened?.height ?? 0, loaded: current?.screenshot.map { screenshots[$0.hash] != nil } ?? true)) { await renderPreview() }
+        .trackUnsavedChanges(dirty, busy: busy || saving, onSave: { await save() })
+    }
+
+    // MARK: Steps
+
+    /// Where the open card set stands: each step with a check once done, and the next one in plain words.
+    private var stepsCard: some View {
+        let steps = CreateMediaFlow.steps(opened)
+        return Card(title: "Create Media steps", subtitle: "\(steps.filter(\.done).count) of \(steps.count - 1) complete. Work from the top; each step shows what it still needs.", help: "media") {
+            ForEach(steps) { step in
+                StorebenchSetupStep(number: step.number, title: step.title, detail: step.needed.first ?? step.detail, done: step.done) {
+                    if step.id == .release, let openReleaseStep {
+                        StorebenchActionGroup {
+                            Button("Open Text and Screenshots") { openReleaseStep(ReleaseWizard.phase(containing: "local:") ?? "listing") }.buttonStyle(StorebenchButtonStyle(step.current ? .primary : .secondary))
+                                .help("Open Release step 2, where screenshots are chosen from Asset Library")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Card sets
+
+    private var setsCard: some View {
+        Card(title: "Create Media", subtitle: "Make App Store screenshot cards from your app's screenshots: a background, a screenshot and short text. Card sets are saved on this Mac as you edit. Nothing is uploaded to Apple.", help: "media") {
+            if loading { ProgressView("Opening card sets…") }
+            else {
+                if !saved.isEmpty, !creating {
+                    StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 260) {
+                        StorebenchPicker("Card Set", selection: Binding(get: { opened?.id ?? "" }, set: { id in Task { await open(id) } })) {
+                            selectionOptions(saved) { SelectionOption($0.set.name, value: $0.set.id) }
+                        }
+                        StorebenchTextField("Card Set Name · \(opened?.name.utf16.count ?? 0)/\(MediaCards.nameLimit)", text: Binding(get: { opened?.name ?? "" }, set: { value in
+                            change("name", set: { $0.name = limited(value, MediaCards.nameLimit, lines: false) })
+                        }))
+                    }
+                    if let set = opened { Text("\(StoreLocales.displayTypeName(set.displayType)) · \(set.width) × \(set.height) px · \(set.cards.count) of \(MediaCards.maximumCards) cards").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
+                    StorebenchActionGroup {
+                        Button("New Card Set") { newName = ""; creating = true }
+                        if opened != nil { Button("Delete Card Set", role: .destructive) {
+                            guard confirm(.deleteCreatedMedia, title: "Delete this card set?", message: "Delete \(opened?.name ?? "this card set") from this Mac. Cards already saved to Asset Library stay there.", action: "Delete Card Set") else { return }
+                            Task { await deleteSet() }
+                        } }
+                    }.storebenchWorking(busy)
+                } else { newSetForm }
+            }
+            StorebenchFeedback(text: status, height: 48, error: statusError)
+            if stale { StorebenchActionGroup { Button("Reload Card Set") { Task { await reload() } } } }
+        }
+    }
+
+    private var newSetForm: some View {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
+            Text(saved.isEmpty ? "Start with a card set: one App Store display size with up to 10 cards." : "A new card set has its own display size and cards.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
+            StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 260) {
+                StorebenchTextField("Card Set Name · \(newName.utf16.count)/\(MediaCards.nameLimit)", text: Binding(get: { newName }, set: { newName = limited($0, MediaCards.nameLimit, lines: false) }), placeholder: "Launch screenshots")
+                StorebenchPicker("Display Size", selection: $newTarget) { selectionOptions(MediaCards.targets) { SelectionOption($0.label, value: $0.id) } }
+            }
+            Text("Cards are created at the exact pixel size Apple accepts. Use your largest iPhone or iPad size; the App Store scales it for smaller displays.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
+            StorebenchActionGroup {
+                Button("Create Card Set") { Task { await createSet() } }.buttonStyle(StorebenchButtonStyle(.primary)).storebenchWorking(MediaCards.trimmed(newName).isEmpty)
+                if !saved.isEmpty { Button("Cancel", role: .cancel) { creating = false } }
+            }.storebenchWorking(busy)
+        }
+    }
+
+    // MARK: Cards in the set
+
+    private func cardsCard(_ set: MediaCardSet) -> some View {
+        Card(title: "Cards", subtitle: "Thumbnails are about the size of an App Store search result. The first three cards are seen most; check that their titles are readable here.") {
+            ScrollView(.horizontal) {
+                HStack(alignment: .top, spacing: StorebenchTheme.space(3)) {
+                    ForEach(Array(set.cards.enumerated()), id: \.element.id) { position, card in
+                        Button { select(card.id) } label: {
+                            VStack(spacing: StorebenchTheme.space(1)) {
+                                MediaCardThumbnail(card: card, width: set.width, height: set.height, screenshot: card.screenshot.flatMap { screenshots[$0.hash] })
+                                    .frame(height: 150)
+                                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(card.id == current?.id ? StorebenchTheme.accent : StorebenchTheme.border, lineWidth: card.id == current?.id ? 3 : 1))
+                                Text("\(position + 1)").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
+                            }
+                        }.buttonStyle(StorebenchPressStyle()).help("Edit card \(position + 1)").accessibilityLabel("Edit card \(position + 1)")
+                    }
+                }.padding(StorebenchTheme.space(1))
+            }
+            StorebenchActionGroup {
+                Button("Add Card") { let after = current?.id; operate("add") { selectedId = try $0.addCard(after: after).id } }
+                Button("Duplicate") { if let id = current?.id { operate("duplicate") { selectedId = try $0.duplicateCard(id).id } } }.help("Duplicate the selected card")
+                Button("Move Earlier") { if let id = current?.id { operate("move") { $0.moveCard(id, by: -1) } } }
+                    .storebenchWorking((index ?? 0) == 0).help((index ?? 0) == 0 ? "The selected card is already first" : "Move the selected card one place earlier")
+                Button("Move Later") { if let id = current?.id { operate("move") { $0.moveCard(id, by: 1) } } }
+                    .storebenchWorking(index.map { $0 >= set.cards.count - 1 } ?? true).help(index.map { $0 >= set.cards.count - 1 } ?? true ? "The selected card is already last" : "Move the selected card one place later")
+                Button("Delete Card", role: .destructive) {
+                    if confirm(.deleteCreatedMedia, title: "Delete the selected card?", message: "Undo restores it until you leave this card set.", action: "Delete Card") { deleteCard() }
+                }.storebenchWorking(set.cards.count <= 1).help(set.cards.count <= 1 ? "A card set keeps at least one card" : "Delete the selected card. Undo restores it.")
+                Button("Undo") { undo() }.keyboardShortcut("z", modifiers: .command).storebenchWorking(history?.canUndo != true).help(history?.canUndo == true ? "Undo the last change in this card set" : "Nothing to undo")
+                Button("Redo") { redo() }.keyboardShortcut("z", modifiers: [.command, .shift]).storebenchWorking(history?.canRedo != true).help(history?.canRedo == true ? "Redo the last undone change" : "Nothing to redo")
+            }.storebenchWorking(busy)
+        }
+    }
+
+    // MARK: Editing one card
+
+    private func editorCard(_ set: MediaCardSet, card: MediaCard, index: Int) -> some View {
+        Card(title: "Card \(index + 1)", subtitle: "Changes appear in the preview and are saved on this Mac. Undo and Redo cover every change in this set.") {
+            StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 320) {
+                VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
+                    canvas(set, card: card).padding(16).frame(height: min(620, max(360, viewportHeight * 0.62)))
+                        .background(StorebenchTheme.nav, in: RoundedRectangle(cornerRadius: 12))
+                    StorebenchTextSlot(text: previewIssue, height: 48, font: .sbCallout, color: StorebenchTheme.color("color-danger"), live: true)
+                    StorebenchTextSlot(text: "Drag the screenshot to move the crop after zooming in. Arrow keys move it, + and − zoom, Delete removes the card.", height: 48, font: .sbCaption, color: StorebenchTheme.muted)
+                }
+                controls(card)
+            }
+        }
+    }
+
+    private func canvas(_ set: MediaCardSet, card: MediaCard) -> some View {
+        GeometryReader { bounds in
+            let ratio = min(bounds.size.width / Double(set.width), bounds.size.height / Double(set.height))
+            ZStack {
+                if let preview { Image(decorative: preview.image, scale: 1).resizable().interpolation(.high) }
+                else { Rectangle().fill(StorebenchTheme.color("color-surface-sunken")); ProgressView() }
+            }
+            .frame(width: Double(set.width) * ratio, height: Double(set.height) * ratio)
+            .contentShape(Rectangle()).focusable(!busy, interactions: .edit).focused($canvasFocused)
+            .accessibilityLabel("Card preview")
+            .gesture(DragGesture(minimumDistance: 0).onChanged { gesture in
+                guard !busy else { return }
+                canvasFocused = true
+                if dragStart == nil { dragStart = card }
+                guard let start = dragStart else { return }
+                let moved = MediaCards.drag(start, width: set.width, height: set.height, startX: gesture.startLocation.x / ratio, startY: gesture.startLocation.y / ratio,
+                                            deltaX: gesture.translation.width / ratio, deltaY: gesture.translation.height / ratio)
+                change("crop") { $0 = moved }
+            }.onEnded { _ in dragStart = nil })
+            .onKeyPress { press in
+                guard !busy, press.modifiers.subtracting(.shift).isEmpty else { return .ignored }
+                let step = press.modifiers.contains(.shift) ? 0.1 : 0.01
+                switch press.key {
+                case .delete, .deleteForward: deleteCard(); return .handled
+                case .leftArrow: change("crop") { $0.x = min(1, $0.x + step) }
+                case .rightArrow: change("crop") { $0.x = max(0, $0.x - step) }
+                case .upArrow: change("crop") { $0.y = min(1, $0.y + step) }
+                case .downArrow: change("crop") { $0.y = max(0, $0.y - step) }
+                case "+", "=": change("zoom") { $0.zoom = min(4, $0.zoom + 0.1) }
+                case "-": change("zoom") { $0.zoom = max(1, $0.zoom - 0.1) }
+                default: return .ignored
+                }
+                return .handled
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func controls(_ card: MediaCard) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            StorebenchChoicePicker("Card Type", selection: field(\.layout, "layout"), options: MediaCard.Layout.allCases.map { ($0, $0.label) })
+            if card.layout.usesScreenshot { screenshotControls(card) }
+            textControls(card)
+            backgroundControls(card)
+            StorebenchActionGroup {
+                Button("Apply Style to All Cards") { if let id = current?.id { operate("style") { $0.applyStyle(from: id) }; status = "This card's colors, text style and screenshot frame now apply to every card in the set."; statusError = false } }
+                    .help("Copy this card's background, text style and screenshot frame to every card. Text and screenshots stay.")
+            }
+        }.storebenchWorking(busy).frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func screenshotControls(_ card: MediaCard) -> some View {
+        DisclosureGroup("Screenshot") {
+            VStack(alignment: .leading, spacing: 10) {
+                StorebenchTextSlot(text: card.screenshot.map { "\($0.name) · \($0.width) × \($0.height) px" } ?? "No screenshot chosen.", height: 34, font: .sbCallout, color: card.screenshot == nil ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted)
+                StorebenchActionGroup {
+                    Button(card.screenshot == nil ? "Choose Screenshot" : "Replace Screenshot") { chooseScreenshot() }
+                    if card.screenshot != nil { Button("Remove Screenshot", role: .destructive) { change("screenshot") { $0.screenshot = nil; $0.zoom = 1; $0.x = 0.5; $0.y = 0.5 } } }
+                }
+                StorebenchSliderField(title: "Zoom", value: field(\.zoom, "zoom"), range: 1...4, step: 0.01, percentage: true)
+                StorebenchSliderField(title: "Screenshot width", value: style(\.screenshotWidth, "screenshotWidth"), range: 0.4...1, step: 0.01, percentage: true)
+                StorebenchSliderField(title: "Corner radius (%)", value: style(\.cornerRadius, "cornerRadius"), range: 0...20, step: 0.5)
+                StorebenchSliderField(title: "Border width (%)", value: style(\.borderWidth, "borderWidth"), range: 0...6, step: 0.1)
+                StorebenchColorField("Border Color", selection: color(\.borderColor, "borderColor"))
+                Toggle("Shadow", isOn: style(\.shadow, "shadow")).toggleStyle(StorebenchToggleStyle())
+                StorebenchActionGroup { Button("Recenter Crop") { change("crop") { $0.zoom = 1; $0.x = 0.5; $0.y = 0.5 } } }
+            }.padding(.top, 8)
+        }
+    }
+
+    private func textControls(_ card: MediaCard) -> some View {
+        DisclosureGroup("Text") {
+            VStack(alignment: .leading, spacing: 10) {
+                StorebenchTextField("Title · \(card.title.utf16.count)/\(MediaCards.titleLimit)", text: text(\.title, MediaCards.titleLimit, lines: false), placeholder: "Plan your week in seconds")
+                StorebenchTextField("Subtitle · \(card.subtitle.utf16.count)/\(MediaCards.subtitleLimit)", text: text(\.subtitle, MediaCards.subtitleLimit, lines: false))
+                Text("Body Text · \(card.body.utf16.count)/\(MediaCards.bodyLimit)")
+                StorebenchTextArea(text: text(\.body, MediaCards.bodyLimit, lines: true), height: StorebenchTheme.textarea(rows: 3)).accessibilityLabel("Body text")
+                Text("Short text reads best: about 4 to 8 words in the title. Long text is reduced until it fits; if it still does not fit, the preview says so.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
+                StorebenchChoicePicker("Typeface", selection: style(\.typeface, "typeface"), options: MediaCardStyle.Typeface.allCases.map { ($0, $0.label) })
+                StorebenchChoicePicker("Alignment", selection: style(\.alignment, "alignment"), options: MediaCardStyle.Alignment.allCases.map { ($0, $0.label) })
+                StorebenchSliderField(title: "Text size", value: style(\.textSize, "textSize"), range: 0.6...1.5, step: 0.01, percentage: true)
+                if card.layout.usesScreenshot { StorebenchSliderField(title: "Space for text", value: style(\.textSpace, "textSpace"), range: 0.12...0.5, step: 0.01, percentage: true) }
+                StorebenchMetricGrid(maximumColumns: 3, minimumWidth: 140) {
+                    StorebenchColorField("Title Color", selection: color(\.titleColor, "titleColor"))
+                    StorebenchColorField("Subtitle Color", selection: color(\.subtitleColor, "subtitleColor"))
+                    StorebenchColorField("Body Color", selection: color(\.bodyColor, "bodyColor"))
+                }
+            }.padding(.top, 8)
+        }
+    }
+
+    private func backgroundControls(_ card: MediaCard) -> some View {
+        DisclosureGroup("Background") {
+            VStack(alignment: .leading, spacing: 10) {
+                StorebenchChoicePicker("Fill", selection: style(\.fill, "fill"), options: MediaCardStyle.Fill.allCases.map { ($0, $0.label) })
+                StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 140) {
+                    StorebenchColorField(card.style.fill == .gradient ? "Start Color" : "Color", selection: color(\.color, "color"))
+                    if card.style.fill == .gradient { StorebenchColorField("End Color", selection: color(\.secondColor, "secondColor")) }
+                }
+                if let suggestions = suggestions(card), !suggestions.isEmpty {
+                    Text("Colors from the screenshot").font(.sbCallout.weight(.semibold))
+                    StorebenchActionGroup {
+                        ForEach(suggestions, id: \.self) { hex in
+                            Button { change("color") { $0.style.color = hex; if $0.style.fill == .gradient { $0.style.secondColor = Self.shade(hex) } } } label: {
+                                RoundedRectangle(cornerRadius: 4).fill(Self.swatch(hex)).frame(width: 28, height: 18)
+                            }.help("Use \(hex) as the background").accessibilityLabel("Use background color \(hex)")
+                        }
+                    }
+                }
+                if card.style.fill == .gradient { StorebenchSliderField(title: "Gradient angle (°)", value: style(\.angle, "angle"), range: 0...360, step: 1) }
+                StorebenchSliderField(title: "Margin (%)", value: style(\.margin, "margin"), range: 0...15, step: 0.5)
+            }.padding(.top, 8)
+        }
+    }
+
+    // MARK: Saving cards
+
+    private func saveCard(_ set: MediaCardSet) -> some View {
+        Card(title: "Use the Cards", subtitle: "Each card is an opaque \(set.width) × \(set.height) px PNG, the size Apple accepts for \(StoreLocales.displayTypeName(set.displayType)). Saving to Asset Library keeps them on this Mac. Then add them in Release step 2, Text and Screenshots, which uploads them after you approve.") {
+            Text(set.cards.count == 1 ? "Save All creates 1 PNG file." : "Save All creates \(set.cards.count) PNG files, one per card, in card order.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
+            StorebenchActionGroup {
+                Button("Save All to Asset Library") { Task { await saveToLibrary(all: true) } }.buttonStyle(StorebenchButtonStyle(.primary))
+                Button("Save This Card") { Task { await saveToLibrary(all: false) } }.help("Save the selected card to Asset Library")
+                Button("Export PNG") { Task { await exportPNG() } }.help("Save the selected card as a PNG file on this Mac")
+            }.storebenchWorking(busy)
+        }
+    }
+
+    // MARK: Bindings
+
+    private func change(_ key: String, _ body: (inout MediaCard) -> Void) {
+        guard !stale, let index else { return }
+        history?.change(key, now: ProcessInfo.processInfo.systemUptime) { body(&$0.cards[index]) }
+    }
+    private func change(_ key: String, set body: (inout MediaCardSet) -> Void) {
+        guard !stale else { return }
+        history?.change(key, now: ProcessInfo.processInfo.systemUptime, body)
+    }
+    private func operate(_ key: String, _ body: (inout MediaCardSet) throws -> Void) {
+        guard !stale, !busy else { return }
+        // Card operations are separate undo steps even when repeated quickly.
+        do { try history?.change(key + ":" + UUID().uuidString, now: ProcessInfo.processInfo.systemUptime, body) }
+        catch { status = (error as? MediaCardFailure)?.message ?? MediaCardFailure.invalid.message; statusError = true }
+    }
+    private func field<Value>(_ key: WritableKeyPath<MediaCard, Value>, _ name: String) -> Binding<Value> {
+        Binding(get: { current![keyPath: key] }, set: { value in change(name) { $0[keyPath: key] = value } })
+    }
+    private func style<Value>(_ key: WritableKeyPath<MediaCardStyle, Value>, _ name: String) -> Binding<Value> {
+        let path: WritableKeyPath<MediaCard, MediaCardStyle> = \.style
+        return field(path.appending(path: key), name)
+    }
+    private func text(_ key: WritableKeyPath<MediaCard, String>, _ maximum: Int, lines: Bool) -> Binding<String> {
+        Binding(get: { current![keyPath: key] }, set: { value in change(String(describing: key)) { $0[keyPath: key] = limited(value, maximum, lines: lines) } })
+    }
+    private func limited(_ value: String, _ maximum: Int, lines: Bool) -> String {
+        var result = "", length = 0
+        for character in value where lines || !character.isNewline {
+            let size = String(character).utf16.count; if length + size > maximum { break }; result.append(character); length += size
+        }
+        return result
+    }
+    private func color(_ key: WritableKeyPath<MediaCardStyle, String>, _ name: String) -> Binding<Color> {
+        Binding(get: { Self.swatch(current!.style[keyPath: key]) }, set: { value in
+            guard let rgb = NSColor(value).usingColorSpace(.sRGB) else { return }
+            let hex = String(format: "#%02x%02x%02x", Int((rgb.redComponent * 255).rounded()), Int((rgb.greenComponent * 255).rounded()), Int((rgb.blueComponent * 255).rounded()))
+            change(name) { $0.style[keyPath: key] = hex }
+        })
+    }
+    static func swatch(_ hex: String) -> Color {
+        let rgb = UInt32(hex.dropFirst(), radix: 16) ?? 0
+        return Color(red: Double((rgb >> 16) & 255) / 255, green: Double((rgb >> 8) & 255) / 255, blue: Double(rgb & 255) / 255)
+    }
+    /// A darker partner for a gradient that starts with `hex`.
+    static func shade(_ hex: String) -> String {
+        let rgb = UInt32(hex.dropFirst(), radix: 16) ?? 0
+        return String(format: "#%02x%02x%02x", Int(Double((rgb >> 16) & 255) * 0.62), Int(Double((rgb >> 8) & 255) * 0.62), Int(Double(rgb & 255) * 0.62))
+    }
+    private func suggestions(_ card: MediaCard) -> [String]? {
+        card.screenshot.flatMap { screenshots[$0.hash] }.map { MediaCardColors.suggestions($0) }
+    }
+
+    // MARK: Actions
+
+    private func select(_ id: String) { selectedId = id; previewIssue = "" }
+    private func undo() { guard !busy, !stale else { return }; history?.undo(); keepSelection() }
+    private func redo() { guard !busy, !stale else { return }; history?.redo(); keepSelection() }
+    private func keepSelection() { if let set = opened, !set.cards.contains(where: { $0.id == selectedId }) { selectedId = set.cards.first?.id ?? "" } }
+    private func deleteCard() {
+        guard let id = current?.id else { return }
+        operate("delete") { if let next = $0.removeCard(id) { selectedId = next } }
+    }
+
+    private func load() async {
+        defer { loading = false }
+        guard let session else { return }
+        do {
+            saved = try await session.mediaCardSets(accountId: account.id, appId: app.id)
+            if let first = saved.first { show(first) } else { creating = true }
+        } catch { status = "Card sets could not be opened. Your saved files are unchanged."; statusError = true }
+    }
+    private func show(_ value: WorkspaceSession.SavedMediaCardSet) {
+        history = MediaCardHistory(value.set); savedSet = value.set; revision = value.revision; stale = false
+        selectedId = value.set.cards.first?.id ?? ""; preview = nil; previewIssue = ""
+        Task { await loadScreenshots(value.set) }
+    }
+    private func open(_ id: String) async {
+        guard id != opened?.id, !busy else { return }
+        if dirty, !(await save()) { return }
+        if let value = saved.first(where: { $0.set.id == id }) { show(value); status = ""; statusError = false }
+    }
+    private func reload() async {
+        guard let session, let id = opened?.id else { return }
+        do {
+            saved = try await session.mediaCardSets(accountId: account.id, appId: app.id)
+            if let value = saved.first(where: { $0.set.id == id }) ?? saved.first { show(value); status = "Card set reloaded."; statusError = false }
+            else { history = nil; savedSet = nil; creating = true; status = MediaCardFailure.missing.message; statusError = true }
+        } catch { status = "The card set could not be reloaded."; statusError = true }
+    }
+    private func createSet() async {
+        guard let session, !busy, let target = MediaCards.targets.first(where: { $0.id == newTarget }), !MediaCards.trimmed(newName).isEmpty else { return }
+        if dirty, !(await save()) { return }
+        working = true; defer { working = false }
+        let created = MediaCardSet(name: MediaCards.trimmed(newName), target: target)
+        do {
+            let next = try await session.saveMediaCardSet(accountId: account.id, appId: app.id, set: created, expected: 0)
+            saved = try await session.mediaCardSets(accountId: account.id, appId: app.id)
+            show(.init(revision: next, set: created)); creating = false
+            status = "Card set created. Choose a screenshot and add a title to the first card."; statusError = false
+        } catch { status = (error as? MediaCardFailure)?.message ?? "The card set could not be created."; statusError = true }
+    }
+    private func deleteSet() async {
+        guard let session, let set = opened, !busy else { return }
+        working = true; defer { working = false }
+        do {
+            // Unsaved edits belong to the set being deleted; the saved revision is what is removed.
+            try await session.deleteMediaCardSet(accountId: account.id, appId: app.id, id: set.id, expected: revision)
+            saved = try await session.mediaCardSets(accountId: account.id, appId: app.id)
+            history = nil; savedSet = nil
+            if let first = saved.first { show(first) } else { creating = true }
+            status = "Card set deleted from this Mac."; statusError = false
+        } catch let failure as MediaCardFailure { stale = failure == .stale; status = failure.message; statusError = true }
+        catch { status = "The card set could not be deleted."; statusError = true }
+    }
+
+    /// Saves the current set onto the loaded revision. A newer save from another window stops editing until reload.
+    @discardableResult private func save() async -> Bool {
+        guard let session, let value = history?.set, value != savedSet, !stale else { return !stale }
+        guard !saving else { return false }
+        saving = true; defer { saving = false }
+        do {
+            revision = try await session.saveMediaCardSet(accountId: account.id, appId: app.id, set: value, expected: revision)
+            savedSet = value
+            if let position = saved.firstIndex(where: { $0.set.id == value.id }) { saved[position] = .init(revision: revision, set: value) }
+            return true
+        } catch let failure as MediaCardFailure {
+            stale = failure == .stale || failure == .missing; status = failure.message; statusError = true; return false
+        } catch { status = "Changes could not be saved on this Mac. They stay here; try again before leaving."; statusError = true; return false }
+    }
+
+    private func loadScreenshots(_ set: MediaCardSet) async {
+        guard let session else { return }
+        for shot in set.cards.compactMap(\.screenshot) where screenshots[shot.hash] == nil {
+            do {
+                let bytes = try await session.mediaCardScreenshot(accountId: account.id, appId: app.id, hash: shot.hash)
+                screenshots[shot.hash] = try await ScreenshotRenderer.loadAsync(bytes)
+            } catch is CancellationError { return } catch { previewIssue = "A saved screenshot could not be opened. Choose it again on the cards that show an empty frame." }
+        }
+    }
+
+    private func chooseScreenshot() {
+        guard !busy, let session else { return }
+        let panel = NSOpenPanel(); panel.allowedContentTypes = [.png, .jpeg]; panel.allowsMultipleSelection = false; panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        working = true
+        Task {
+            defer { working = false }
+            let scoped = url.startAccessingSecurityScopedResource(); defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let size = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+                guard size.isRegularFile == true, (size.fileSize ?? 0) <= ScreenshotEditing.maximumSourceBytes else { throw ScreenshotEditFailure.bytes }
+                let bytes = try Data(contentsOf: url)
+                let shot = try await session.stageMediaCardScreenshot(accountId: account.id, appId: app.id, bytes: bytes, name: url.lastPathComponent)
+                screenshots[shot.hash] = try await ScreenshotRenderer.loadAsync(bytes)
+                change("screenshot") { $0.screenshot = shot; $0.zoom = $0.layout == .focus ? 1.6 : 1; $0.x = 0.5; $0.y = 0.5 }
+                status = "Screenshot added to card \((index ?? 0) + 1)."; statusError = false
+            } catch {
+                status = (error as? ScreenshotEditFailure)?.message ?? "The screenshot could not be added. Choose a PNG or JPEG up to 80 MB."; statusError = true
+            }
+        }
+    }
+
+    private func renderPreview() async {
+        guard let set = opened, let card = current else { return }
+        if let shot = card.screenshot, screenshots[shot.hash] == nil { return }
+        do {
+            let image = try await MediaCardRenderer.previewAsync(card, width: set.width, height: set.height, screenshot: card.screenshot.flatMap { screenshots[$0.hash] })
+            try Task.checkCancellation()
+            preview = image; previewIssue = ""
+        } catch is CancellationError {} catch { previewIssue = (error as? MediaCardFailure)?.message ?? MediaCardFailure.render.message }
+    }
+
+    private func exportCards(_ cards: [(Int, MediaCard)], in set: MediaCardSet) async throws -> [(Int, Data)] {
+        var result: [(Int, Data)] = []
+        for (position, card) in cards {
+            do { result.append((position, try await MediaCardRenderer.exportAsync(card, width: set.width, height: set.height, screenshot: card.screenshot.flatMap { screenshots[$0.hash] }))) }
+            catch let failure as MediaCardFailure { throw CardExportFailure(position: position, failure: failure) }
+        }
+        return result
+    }
+
+    private func saveToLibrary(all: Bool) async {
+        guard let session, let set = opened, let index, !busy else { return }
+        guard await save() else { return }
+        working = true; defer { working = false }
+        let chosen = all ? Array(set.cards.enumerated()) : [(index, set.cards[index])]
+        do {
+            // Every card is rendered and checked before any file is saved, so a set is never added halfway.
+            let files = try await exportCards(chosen, in: set)
+            for (position, data) in files {
+                _ = try await session.stageCreatedLibraryImage(accountId: account.id, appId: app.id, bytes: data, fileName: MediaCards.fileName(set: set, index: position), referenceName: "\(MediaCards.trimmed(set.name)) \(position + 1)")
+            }
+            if all { change("library", set: { $0.savedCards = $0.cards }) }
+            status = (files.count == 1 ? "1 card" : "\(files.count) cards") + " saved to Asset Library on this Mac. Next, add them in Release step 2, Text and Screenshots."; statusError = false
+        } catch let failure as CardExportFailure {
+            selectedId = set.cards[failure.position].id
+            status = "Card \(failure.position + 1): \(failure.failure.message) Nothing was saved."; statusError = true
+        } catch { status = (error as? PublishFailure)?.message ?? "The cards could not be saved to Asset Library."; statusError = true }
+    }
+
+    private func exportPNG() async {
+        guard let set = opened, let index, !busy else { return }
+        working = true; defer { working = false }
+        do {
+            guard let data = try await exportCards([(index, set.cards[index])], in: set).first?.1 else { return }
+            let panel = NSSavePanel(); panel.allowedContentTypes = [.png]; panel.nameFieldStringValue = MediaCards.fileName(set: set, index: index)
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            let scoped = url.startAccessingSecurityScopedResource(); defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            try data.write(to: url, options: .atomic)
+            status = "Card \(index + 1) exported as a PNG."; statusError = false
+        } catch let failure as CardExportFailure { status = "Card \(failure.position + 1): \(failure.failure.message)"; statusError = true }
+        catch { status = "The PNG could not be saved."; statusError = true }
+    }
+}
+
+private struct CardExportFailure: Error { let position: Int; let failure: MediaCardFailure }
+
+private struct PreviewRequest: Equatable { let card: MediaCard?, width: Int, height: Int, loaded: Bool }
+
+/// A small rendering of one card, about the size it appears in App Store search results.
+private struct MediaCardThumbnail: View {
+    let card: MediaCard, width: Int, height: Int
+    let screenshot: DecodedScreenshot?
+    @State private var image: ScreenshotPreview?
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 6).fill(StorebenchTheme.color("color-surface-sunken"))
+            if let image { Image(decorative: image.image, scale: 1).resizable().clipShape(RoundedRectangle(cornerRadius: 6)) }
+        }
+        .aspectRatio(Double(width) / Double(height), contentMode: .fit)
+        .accessibilityHidden(true)
+        .task(id: PreviewRequest(card: card, width: width, height: height, loaded: screenshot != nil)) {
+            if card.screenshot != nil, screenshot == nil { return }
+            if let result = try? await MediaCardRenderer.previewAsync(card, width: width, height: height, screenshot: screenshot, edge: 360), !Task.isCancelled { image = result }
+        }
+    }
+}

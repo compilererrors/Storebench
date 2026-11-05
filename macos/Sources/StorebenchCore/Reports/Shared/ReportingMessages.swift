@@ -1,0 +1,123 @@
+import Foundation
+
+/// Fixed public reporting guidance. Saved diagnostics never supply UI text.
+public enum ReportingMessages {
+    public static let appleAgreement = "Apple requires updated terms before this API request can continue. Account Holder: check the banner in your Apple Developer account, then in App Store Connect click Business at the top and open the Agreements tab."
+    public static let values: [String: String] = [
+        "SB-IMPORT-AUTH": "Apple could not authenticate the saved API connection. Open Apple accounts and test the connection. Check the Key ID, .p8 file and whether the key is active in App Store Connect (Users and Access → Integrations for a team key, or your name → Edit Profile for an individual key). No revision was saved.",
+        "SB-IMPORT-ACCESS": "Apple did not allow access to part of this app. Test the connection in Apple accounts, then in App Store Connect check the key's role (Users and Access → Integrations), your app access (Users and Access → People) and agreements (Business → Agreements). A revoked key can also cause this response. No revision was saved.",
+        "SB-IMPORT-AGREEMENT": "Apple requires updated terms before this API request can continue. Account Holder: check the banner in your Apple Developer account, then in App Store Connect click Business at the top and open the Agreements tab. Then retry the import. No revision was saved.",
+        "SB-IMPORT-KEYCHAIN": "The saved API key could not be read from Mac Keychain. Open Apple accounts and choose Retry Keychain access. Reconnect the original key if its saved item is missing. No revision was saved.",
+        "SB-IMPORT-LIMIT": "Apple is limiting requests. Try again later. No revision was saved.",
+        "SB-IMPORT-DOWNLOAD": "The import failed before a revision was saved. Check the account connection and try again.",
+        "SB-IMPORT-INTERRUPTED": "The previous import stopped. Open History to check the latest saved revision, then choose Sync app material if it is missing. Earlier saved revisions are kept.",
+        "SB-IMPORT-STATUS": "Import status could not be verified. Refresh import status to check the existing job before starting again. Open History to check for a saved revision. Saved revisions are kept.",
+        "SB-IMPORT-BUSY": "An import or archive operation is active for this app. Wait for it to finish, then retry.",
+        "SB-IMPORT-REQUEST": "Choose a configured app and retry the import request.",
+        "SB-APPLE-AUTH": "Apple could not authenticate this API connection. Open Apple accounts and test the connection. Check that the Key ID, key type and .p8 file match and that the key is active in App Store Connect (Users and Access → Integrations for a team key, or your name → Edit Profile for an individual key). Storebench renews request tokens automatically; this response alone does not prove the key expired.",
+        "SB-APPLE-ACCESS": "Apple did not allow this request. Open Apple accounts and test the connection, then in App Store Connect check the key's role (Users and Access → Integrations), your access to this app (Users and Access → People) and agreements (Business → Agreements). A revoked key can also cause this response. A successful connection test does not confirm permission for every feature.",
+        "SB-APPLE-AGREEMENT": "Apple requires updated terms before this API request can continue. Account Holder: check the banner in your Apple Developer account, then in App Store Connect click Business at the top and open the Agreements tab. Return here and retry the download.",
+        "SB-APPLE-KEYCHAIN": "The saved API key could not be read from Mac Keychain. Open Apple accounts, expand Keychain access and choose Retry Keychain access. Respond to the macOS prompt. Reconnect the original key if its saved item is missing.",
+        "SB-SYNC-STATUS": "Sync status could not be verified. Refresh status before starting again. Previously saved data is kept.",
+        "SB-SYNC-NETWORK": "Storebench could not be reached. Check that the app or local server is running, then refresh sync status. A download you already started may still be running.",
+        "SB-SYNC-TIMEOUT": "Storebench took too long to return sync status. Refresh status to check the existing job before starting again. Previously saved data is kept.",
+        "SB-SYNC-INTERRUPTED": "Sync was interrupted. Retry unfinished items. Previously saved data is kept; no publishing is requested by sync.",
+        "SB-SYNC-CONNECTION": "Set up a reporting connection in Sales first. Use Reporter or a Team API key with a saved vendor number, then run Sync again.",
+        "SB-SYNC-FISCAL-PERIOD": "Choose and download a fiscal period and region in Finance once. Review and save the report, then run Sync again. Later syncs reuse that selection without guessing Apple's fiscal dates.",
+        "SB-SYNC-BUSY": "Another download is using this view. Open it to follow progress, then retry this item.",
+        "SB-SYNC-PRICING": "Current Apple prices could not be refreshed. Open Pricing to check the account connection and try again.",
+        "SB-SYNC-SALES-NO-ROWS": "Some Sales reports have no rows for this app, but its in-app purchases could not be verified, so those days are not counted as without sales. Import the app information from Apple, then sync again. Previously saved reports are kept.",
+        "SB-PUBLISH-PREPARE": "The review could not be prepared. Read the explanation in App Store changes, check the selected action and Apple connection, then retry. Preparation does not send changes to Apple.",
+        "SB-PUBLISH-PREPARE-TIMEOUT": "Preparing the review took too long. Check for a macOS Keychain prompt or connection problem. Check Publishing history for a saved review before retrying. No publishing was requested.",
+        "SB-PUBLISH-APPROVAL": "The approval result could not be confirmed. Check Publishing history and the current Apple state before retrying. An approved request may have reached Apple.",
+        "SB-PUBLISH-STATUS": "Publishing status could not be read. Check your connection and open the saved review from Publishing history. Do not repeat an approval while its result is unknown.",
+        "SB-PUBLISH-RESPONSE": "The publishing response could not be verified. Check Publishing history before preparing a new review. Never approve an incomplete review.",
+        "SB-KEYWORDS-FORMAT": "Check the keyword ideas: use one term per row, a supported listing language, valid territory, status and source. Import a matching Storebench notebook CSV or JSON.",
+        "SB-KEYWORDS-SCOPE": "This keyword notebook belongs to another app or account. Open the matching app before importing.",
+        "SB-KEYWORDS-DUPLICATE": "A keyword is repeated for the same language and territory, or two ideas share an ID. Keep one idea per term, language and territory before saving.",
+        "SB-KEYWORDS-STALE": "The saved keyword notebook changed. Compare with the latest save, choose which values to keep, and review again before saving.",
+        "SB-KEYWORDS-STORAGE": "The keyword notebook could not be read or saved. Check local disk space and access, then retry. Existing files have not been replaced.",
+        "SB-KEYWORDS-LIMIT": "The keyword notebook exceeds the limit of 2,000 ideas or 8 MB per import. Reduce the number of ideas or shorten notes. Nothing has been replaced.",
+        "SB-REVIEWS-FORMAT": "The review file or response is invalid. Use a Storebench reviews CSV or JSON export with valid IDs, dates, territories and ratings from 1 to 5.",
+        "SB-REVIEWS-SCOPE": "The reviews belong to another app or account. Select the matching app before importing.",
+        "SB-REVIEWS-STALE": "Saved reviews changed while this request was running. Refresh the review or download again before replacing the snapshot.",
+        "SB-REVIEWS-STORAGE": "Reviews could not be read or saved locally. Check disk space and storage access. Existing files have not been replaced.",
+        "SB-REVIEWS-DOWNLOAD": "The reviews download could not finish. Retry; saved reviews remain available. Any completed save is kept.",
+        "SB-REVIEWS-ACCESS": "Check this app's API connection and permission to read customer reviews in Settings → Apple accounts. Reporter tokens cannot fetch reviews.",
+        "SB-REVIEWS-INTEGRITY": "Review pages contain conflicting IDs, invalid territory links or an unexpected download location. Retry the download; no partial snapshot was saved.",
+        "SB-REVIEWS-LIMIT": "This review response exceeds the supported page or file size limits. The previous snapshot is kept. Report this code without sharing review text or credentials.",
+        "SB-REPORT-LOCK": "The local job lock could not be verified. Stop other Storebench processes using this workspace, then retry. Existing reports are kept. See Help → Local storage, backup and recovery.",
+        "SB-FINANCE-REQUEST": "Choose a reporting source, Apple fiscal year, period 1–12 and report region. Download 1, 3 or 12 periods. Fiscal periods are not calendar months.",
+        "SB-FINANCE-ACCESS": "Check Finance reporting permissions and the selected vendor. Use your connected Reporter token without a Team key, or a Team API key with Finance access. File import remains available.",
+        "SB-FINANCE-CONNECTION": "The saved reporting connection could not be read. Reconnect Reporter or check local storage access. Saved financial reports and file import remain available.",
+        "SB-FINANCE-NETWORK": "The financial report connection failed or timed out. Check your network and retry the selected fiscal period. Saved financial history is unchanged.",
+        "SB-FINANCE-SERVICE": "Apple temporarily refused or could not serve the financial report request. Wait and retry the selected fiscal period. Saved financial history is unchanged.",
+        "SB-FINANCE-RESPONSE": "Apple returned a financial reporting response Storebench could not validate. Read the reporting connection, check the selected account and region, then retry or import an original report file.",
+        "SB-REPORT-NETWORK": "The report connection failed or timed out. Check your network and retry the selected reporting days. Saved reports are unchanged.",
+        "SB-REPORT-SERVICE": "Apple temporarily refused or could not serve the report request. Wait and retry. Saved reports are unchanged.",
+        "SB-REPORTER-RESPONSE": "Apple returned a Reporter response Storebench could not validate. Read the reporting connection, check the selected account and retry, or import an original report file.",
+        "SB-FINANCE-DOWNLOAD": "The financial download could not finish. Retry or import complete report files. Saved financial history is unchanged.",
+        "SB-FINANCE-REVIEW": "The downloaded financial review is unavailable, expired or changed. Download again or refresh its review. Saved financial history is unchanged.",
+        "SB-FINANCE-PERIOD": "The returned financial periods are incomplete, in the future or repeated for different requests. Nothing was added to financial history. Check Apple's fiscal calendar and retry.",
+        "SB-ANALYTICS-REQUEST": "Check the report, detail level and granularity. Choose 1, 7 or 30 processing days ending today or earlier (UTC). Standard Downloads supports daily reports only.",
+        "SB-ANALYTICS-ACCESS": "Check the selected app and Analytics API permissions. Admin can create report requests; Admin, Sales and Reports, or Finance can download available reports. Reporter tokens are for Sales and Finance, not Analytics.",
+        "SB-ANALYTICS-SETUP": "Analytics report generation has not been requested for this app. Choose Set Up Reports, prepare the review in App Store changes and approve it. Apple normally prepares the first reports within 1–2 days. Check availability in Analytics, then run Sync again. Connecting Reporter alone does not enable Analytics.",
+        "SB-ANALYTICS-INACTIVE": "The checked Analytics requests stopped generating reports after inactivity. Set up ongoing reports in App Store changes to resume generation, then check availability in Analytics and run Sync again. Previously saved reports remain available.",
+        "SB-ANALYTICS-REPORT-MISSING": "The request exists, but Apple has not listed the selected report and detail level yet. Choose Check Reports or try another request. New generation normally takes 1–2 days; existing requests do not need to be recreated.",
+        "SB-ANALYTICS-PERIOD": "Reports exist, but their processing dates fall outside your selected period. Choose Check Reports, then Use Latest Period. Processing dates can differ from the activity dates inside a report.",
+        "SB-ANALYTICS-NOT-READY": "The earlier download found no matching Analytics data. Choose Check Reports for the precise cause and available processing dates. Missing reports are not zero activity.",
+        "SB-ANALYTICS-NO-INSTANCES": "Apple lists this report but has not returned any instances for the selected granularity. First generation normally takes 1–2 days. Weekly reports arrive on Fridays and monthly reports on the fifth. Retry later; missing reports are not zero activity.",
+        "SB-ANALYTICS-SEGMENTS-PENDING": "Apple lists a report instance but has not returned its files yet. Retry later. Complete report instances downloaded before it were saved; nothing else changed.",
+        "SB-ANALYTICS-DOWNLOAD": "The Analytics download could not finish or its result is unconfirmed. Retry or import report files. Any completed save is kept.",
+        "SB-ANALYTICS-INTEGRITY": "Analytics report parts could not be verified. Refresh the report list and retry. Checksum, size, complete segments and download locations must all match before reports are saved.",
+        "SB-ANALYTICS-LIMIT": "This Analytics download exceeds the supported batch size. Choose a shorter processing period or import complete report instances separately.",
+        "SB-FINANCE-FORMAT": "Choose an unedited Apple financial report or a Storebench financial JSON export. Check complete files, report regions, fiscal dates, signed units and currency amounts. Sales and tax reports use different formats.",
+        "SB-FINANCE-SCOPE": "The report has no supported direct app transactions for this app. Select the correct app. In-app products and subscriptions need their own verified app mapping.",
+        "SB-FINANCE-OVERLAP": "Financial files overlap in the same dataset. Import the exact period and region to replace it, remove the conflicting report, or select non-overlapping regional files.",
+        "SB-FINANCE-STALE": "The financial reports or selected files changed. Refresh the view or preview the import again before saving.",
+        "SB-FINANCE-STORAGE": "Financial reports could not be read or saved locally. Check disk space and storage access. Existing files have not been replaced.",
+        "SB-ANALYTICS-FORMAT": "Choose an Apple Downloads or Discovery and Engagement report, or a Storebench Analytics JSON export. Check report type, detail level, granularity and processing date.",
+        "SB-ANALYTICS-SEGMENTS": "Select all segments from one report instance exactly once and confirm the segment count. Do not mix instances or processing dates.",
+        "SB-ANALYTICS-SCOPE": "The Analytics report has no rows for this app. Check the selected app; missing rows are not zero activity.",
+        "SB-ANALYTICS-STALE": "The saved reports or selected files changed. Refresh the view or preview the import again before saving.",
+        "SB-ANALYTICS-STORAGE": "Analytics reports could not be read or saved locally. Check disk space and local storage access. Existing files have not been replaced.",
+        "SB-REPORT-REQUEST": "Check the app, vendor number and report source. Choose 1, 7 or 30 completed reporting days ending before today in Pacific Time (PT).",
+        "SB-REPORT-FORMAT": "The report format or encoding is unsupported. Import an unedited Apple Summary Sales Report.",
+        "SB-REPORT-PERIOD": "The downloaded report does not match the requested day. No reports in this batch were saved.",
+        "SB-REPORT-SIZE": "The report exceeds the size limit. Choose a shorter period or a smaller file.",
+        "SB-REPORT-STORAGE": "Reports could not be saved locally. Check available disk space and local storage access.",
+        "SB-REPORT-OVERLAP": "A report overlaps an existing period. Replace that exact period or remove it first.",
+        "SB-REPORT-ACCESS": "Check reporting permissions and reconnect the reporting account.",
+        "SB-REPORT-UNAVAILABLE": "Apple has no downloadable report for this vendor and period. Missing reports are not zero sales. Check the account, vendor and completed dates; recent reports may still be processing and older ones may have expired. This response alone does not show an invalid key or missing setup.",
+        "SB-REPORT-DOWNLOAD": "The download could not finish. Retry or import a report file.",
+        "SB-REPORT-JOB": "The background download was interrupted or its status is unavailable. Retry; any completed save is kept.",
+        "SB-REPORT-UNCONFIRMED": "The result could not be confirmed. Retry; any completed save is kept.",
+        "SB-REPORTER-RUNTIME-DOWNLOAD": "The private Java runtime could not be downloaded. Retry or import a report file.",
+        "SB-REPORTER-RUNTIME-INSTALL": "The private Java runtime could not be installed. Check local disk space and access.",
+        "SB-REPORTER-INSTALL": "Apple's Reporter tool could not be installed. Check local disk space and access.",
+        "SB-REPORTER-WORKSPACE": "Temporary reporting files could not be prepared or read. Check local storage.",
+        "SB-REPORTER-CONNECTION": "Reporting access was verified, but the connection could not be saved locally. Retry.",
+        "SB-REPORTER-SETUP": "Reporter setup failed. Follow the on-screen instructions or import a report file.",
+        "SB-REPORTER-DOWNLOAD": "Apple's Reporter tool could not be downloaded. Retry or import a report file.",
+        "SB-REPORTER-KEYCHAIN": "Reporter credentials could not be accessed in Keychain. Open Settings, Apple accounts, and choose Retry Keychain access. Reconnect Reporter if the saved token is missing.",
+        "SB-REPORTER-CHANGED": "The selected reporting account or vendor changed while this download was waiting. Reload, check the connection and retry. Saved reports are kept.",
+        "SB-REPORTER-BUSY": "The reporting connection is busy or its local lock is unavailable. Wait for the current connection change to finish and retry. If this persists, check local storage access. Saved reports are kept.",
+        "SB-SESSION-EXPIRED": "Sign in to Storebench again, then retry.",
+        "SB-SETTINGS-SAVE": "The display preference could not be saved. Check local storage and retry.",
+    ]
+    public static func normalized(_ code: String?) -> String { code.flatMap { values[$0] != nil ? $0 : nil } ?? "SB-REPORT-UNCONFIRMED" }
+    /// Support is reserved for Storebench's own local state failures, never report availability or API responses.
+    public static func supportAvailable(_ code: String?) -> Bool {
+        guard let code else { return false }
+        return ["SB-REPORT-STORAGE", "SB-ANALYTICS-STORAGE", "SB-FINANCE-STORAGE", "SB-REVIEWS-STORAGE", "SB-KEYWORDS-STORAGE", "SB-SETTINGS-SAVE", "SB-PUBLISH-STATUS", "SB-PUBLISH-RESPONSE"].contains(code)
+    }
+    public static func message(_ code: String) -> String { values[normalized(code)]! }
+    /// Fixed public text only. Never accept an upstream error, account, report, path or log.
+    public static func issueDetails(_ code: String) -> String { issueDetails(code, reply: nil) }
+    /// `reply` is a `ReplyDiagnostics` summary: the form of Apple's reply, never its content.
+    public static func issueDetails(_ code: String, reply: String?) -> String {
+        let safe = normalized(code)
+        let shape = reply.map { "What Apple sent: \($0.prefix(200))\n" } ?? ""
+        return "Storebench error: \(safe)\n\(message(safe))\n\(shape)\nSteps to reproduce (remove private information):\n"
+    }
+}
