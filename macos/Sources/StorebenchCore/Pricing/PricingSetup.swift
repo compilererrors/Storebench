@@ -246,9 +246,10 @@ extension WorkspaceSession {
 
     /// Pricing as it opens: Apple's answers warmed earlier in this session, or read again when `fresh`. Each review still reads Apple itself.
     public func pricingSetupState(account: Account, appId: String, fresh: Bool) async throws -> PricingSetupState {
-        if fresh { await invalidateAppleReads() }
-        let client = try readClient(for: account)
-        return try await AppStoreReadCache.rereadingAfterInvalidation { try await pricingSetupState(account: account, appId: appId, client: client) }
+        return try await AppStoreReadCache.$refreshedSince.withValue(fresh ? .now : AppStoreReadCache.refreshedSince) {
+            let client = try readClient(for: account)
+            return try await AppStoreReadCache.rereadingAfterInvalidation { try await pricingSetupState(account: account, appId: appId, client: client) }
+        }
     }
 
     /// Reads the app price, products, subscription groups and which products have prices. Nothing is written.

@@ -15,13 +15,17 @@ struct ReleaseBuildStep: View {
     var createFirst: String? = nil
     @State private var builds: [TestFlightBuild]?
     @State private var attachedId: String?
+    /// False while only the first page of the version's builds is read; the rest follow it.
+    @State private var complete = true
     @State private var failure = ""
     @State private var status = ""
+    @State private var readAt: Date?
     @State private var review: PublishReview?
     @State private var preparing = false
     @State private var publishing = false
     /// False while remembered builds show and App Store Connect is read again.
     @State private var confirmed = false
+    @State private var loadId = UUID()
     @Environment(\.pageScroll) private var pageScroll
     @Environment(\.navigationPresentation) private var presentation
     /// Shared with the background preparation, which reads builds without a version.
@@ -34,7 +38,10 @@ struct ReleaseBuildStep: View {
     var body: some View {
         Card(title: "Build for \(plan.targetVersion)", subtitle: "Upload the build with Xcode or Transporter. It appears here once Apple has processed it, usually within 30 minutes. Then add it to the version.") {
             StorebenchLoadState(state: builds != nil ? .ready : failure.isEmpty ? .loading("Reading builds from App Store Connect…") : .failed(failure, retry: { await load() })) {
-                if matching.isEmpty {
+                StorebenchReadAge(readAt: readAt, reading: !confirmed)
+                if matching.isEmpty && !complete {
+                    StorebenchLoadingStatus(message: "Reading more builds for version \(plan.targetVersion)…", surface: false)
+                } else if matching.isEmpty {
                     Text("No processed build for version \(plan.targetVersion) yet. Upload it, wait for processing, then refresh.")
                         .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
                 } else {
@@ -43,6 +50,9 @@ struct ReleaseBuildStep: View {
                     }.storebenchFormColumn()
                     attachment
                 }
+                // A first page names only the newest builds; an older one is not reported missing before the rest is read.
+                StorebenchTextSlot(text: complete || matching.isEmpty ? "" : "The newest builds are shown. Older builds for version \(plan.targetVersion) are still being read.",
+                                   height: 20, font: .sbCaption, color: StorebenchTheme.muted, live: true)
                 StorebenchFeedback(text: status, height: 40, error: !status.isEmpty)
                 StorebenchActionGroup(alignment: .leading) {
                     // Once its review is prepared, Send to Apple in the review below is the one next action.
@@ -64,6 +74,7 @@ struct ReleaseBuildStep: View {
         .id("release-build")
         .storebenchWorking(preparing || publishing)
         .task(id: "\(plan.token)/\(versionId ?? "")") { await load(); await followUploads() }
+        .onDisappear { loadId = UUID() }
         .onChange(of: matching.map(\.id)) { chooseDefault() }
         .onChange(of: addRequests) { Task { await addBuild() } }
         // Export compliance comes right after choosing the build, before Add Build and its review.
@@ -109,8 +120,8 @@ struct ReleaseBuildStep: View {
     }
     /// The build Apple already has for the version comes first, then the first valid one.
     private func chooseDefault() {
-        guard selectedBuildId == nil || selected == nil else { return }
-        selectedBuildId = matching.first(where: { $0.id == attachedId })?.id ?? matching.first(where: { $0.processingState == "VALID" })?.id ?? matching.first?.id
+        let next = ReleaseWizard.chosenBuild(selectedBuildId, matching: matching, attachedId: attachedId, complete: complete)
+        if next != selectedBuildId { selectedBuildId = next }
     }
     /// How often the step checks App Store Connect while a build for the version is uploading or processing.
     static let uploadCheck: Duration = .seconds(60)
@@ -119,7 +130,8 @@ struct ReleaseBuildStep: View {
         while !Task.isCancelled {
             do { try await Task.sleep(for: Self.uploadCheck) } catch { return }
             let waiting = builds != nil && (matching.isEmpty || matching.contains { $0.processingState == "PROCESSING" })
-            if waiting, !preparing, !publishing, review == nil { await load(latest: true) }
+            // A background check waits behind the reads the open screen needs.
+            if waiting, !preparing, !publishing, review == nil { await ScreenReads.ahead { await load(latest: true) } }
         }
     }
     /// Apple can show a sent export compliance answer on the build a few seconds later, so the build is read again until it does.
@@ -133,21 +145,34 @@ struct ReleaseBuildStep: View {
     }
     /// `fresh` clears the shared reads, as Refresh Builds does; `latest` reads this step's builds from Apple without them.
     private func load(fresh: Bool = false, latest: Bool = false) async {
-        guard let session else { return }
-        if fresh { await session.invalidateAppleReads() }
-        failure = ""; if !latest { confirmed = false }
-        if !fresh, builds == nil, let saved = presentation?.rememberedRead(buildsKey, as: RememberedBuilds.self) {
-            builds = saved.builds; attachedId = saved.versionId == versionId ? saved.attachedId : nil; chooseDefault()
+        await ScreenReads.reading(fresh: fresh) {
+            guard let session else { return }
+            let ticket = UUID(); loadId = ticket
+            failure = ""; if !latest { confirmed = false }
+            if !fresh, builds == nil, let saved = presentation?.rememberedRead(buildsKey, as: RememberedBuilds.self) {
+                // A remembered list cannot establish that a chosen build is missing; wait for the new read before replacing it.
+                builds = saved.builds; attachedId = saved.versionId == versionId ? saved.attachedId : nil; complete = false; chooseDefault()
+                readAt = presentation?.rememberedReadAt(buildsKey)
+            }
+            // The version's first page of builds and its attached build show first; any older builds for the version follow.
+            var shown = false
+            do {
+                let first = try await session.releaseBuildPage(account: account, appId: app.id, versionId: versionId, platform: plan.platform, version: plan.targetVersion, latest: latest)
+                try Task.checkCancellation(); guard loadId == ticket else { return }; show(first); shown = true
+                guard !first.complete else { return }
+                let every = try await session.releaseBuildPage(account: account, appId: app.id, versionId: versionId, platform: plan.platform, version: plan.targetVersion, all: true, latest: latest)
+                try Task.checkCancellation(); guard loadId == ticket else { return }; show(every)
+            } catch {
+                // A background check that fails keeps the builds on screen; Refresh Builds reports the problem.
+                guard loadId == ticket, !Task.isCancelled, !latest else { return }
+                if shown { status = "Older builds for version \(plan.targetVersion) could not be read. Refresh Builds reads them again."; return }
+                builds = nil; failure = AppInformation.loadMessage(error, subject: "builds")
+            }
         }
-        do {
-            let (read, attached) = try await session.releaseBuilds(account: account, appId: app.id, versionId: versionId, latest: latest)
-            try Task.checkCancellation(); builds = read; attachedId = attached; confirmed = true; chooseDefault()
-            presentation?.rememberRead(RememberedBuilds(builds: read, versionId: versionId, attachedId: attached), buildsKey)
-        } catch {
-            // A background check that fails keeps the builds on screen; Refresh Builds reports the problem.
-            guard !Task.isCancelled, !latest else { return }
-            builds = nil; failure = AppInformation.loadMessage(error, subject: "builds")
-        }
+    }
+    private func show(_ page: ReleaseBuildPage) {
+        builds = page.builds; attachedId = page.attachedId; complete = page.complete; confirmed = true; readAt = Date(); chooseDefault()
+        presentation?.rememberRead(RememberedBuilds(builds: page.builds, versionId: versionId, attachedId: page.attachedId, complete: page.complete), buildsKey)
     }
     private func addBuild() async {
         guard !preparing, !publishing, let versionId, let selectedBuildId, selectedBuildId != attachedId else { return }
@@ -159,6 +184,8 @@ struct ReleaseBuildStep: View {
 }
 
 /// The builds last read for an app, and the build Apple had for the version they were read with.
+/// `complete` is false for a first page of the version's builds; nil for a list read without that limit.
 struct RememberedBuilds: Codable, Sendable {
     let builds: [TestFlightBuild], versionId: String?, attachedId: String?
+    var complete: Bool? = nil
 }

@@ -138,9 +138,14 @@ extension WorkspaceSession {
     public func archivedHistory(accountId: String, appId: String) throws -> [ArchivedRevision] {
         try requireHistoryScope(accountId: accountId, appId: appId)
         let prefix = "\(accountId):\(appId):"
+        // Revisions parsed before and unchanged since are reused from memory, as single revision reads do.
         return try storeAccess { store in try store.documents(namespace: "revisions", prefix: prefix).compactMap { document in
             let id = String(document.key.dropFirst(prefix.count))
-            return try? ArchivedRevision(JSONText.parse(document.payload), accountId: accountId, appId: appId, id: id, documentRevision: document.revision)
+            let key = JSONText.array([.string("archived"), .string(document.key), .number(Double(document.revision))]).stringify()
+            if let cached = archivedRevisions.value(for: key), cached.payload == document.payload { return cached.value }
+            guard let value = try? ArchivedRevision(JSONText.parse(document.payload), accountId: accountId, appId: appId, id: id, documentRevision: document.revision) else { return nil }
+            archivedRevisions.insert((document.payload, value), for: key, cost: document.payload.count * 3)
+            return value
         }.sorted { $0.importedAt > $1.importedAt } }
     }
     public func compareArchivedRevisions(accountId: String, appId: String, beforeId: String, afterId: String) throws -> [RevisionComparison.Change] {

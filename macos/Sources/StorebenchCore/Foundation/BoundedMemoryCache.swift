@@ -10,6 +10,8 @@ struct BoundedMemoryCache<Key: Hashable, Value> {
     private(set) var capacity: Int, byteLimit: Int
     init(capacity: Int, byteLimit: Int) { self.capacity = max(0, capacity); self.byteLimit = max(0, byteLimit) }
     init(_ limit: CachePolicy.Limit) { self.init(capacity: limit.count, byteLimit: limit.bytes) }
+    /// The value without marking it recently used, for reads that cannot change state, such as drawing a view.
+    func peek(_ key: Key) -> Value? { entries[key]?.value }
     mutating func value(for key: Key) -> Value? {
         guard let entry = entries[key] else { return nil }
         order.removeAll { $0 == key }; order.append(key); return entry.value

@@ -108,7 +108,7 @@ struct ConnectedAppCard: View {
                 StorebenchWorkflowCard(description: "\(row.account.name) · Apple ID \(row.app.id)\n\(row.historyLabel)", feedback: "", heading: {
                     StorebenchWorkflowHeading(title: row.name)
                 }, action: {
-                    Button { openApp(nil) } label: { StorebenchLabel("Open app", icon: "right", size: 14) }
+                    Button { openApp(nil) } label: { StorebenchLabel("Open App", icon: "right", size: 14) }
                         .buttonStyle(StorebenchButtonStyle(.quiet, stretch: true)).storebenchWorking(working)
                         .opacity(unavailable || session == nil ? 0 : 1).allowsHitTesting(!unavailable && session != nil).accessibilityHidden(unavailable || session == nil)
                 })

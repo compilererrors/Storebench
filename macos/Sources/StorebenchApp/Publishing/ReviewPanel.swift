@@ -357,7 +357,7 @@ struct AppleProblemsView: View {
                     StorebenchHeader {
                         Text(answered ? area.title : "\(area.title) · \(items.count) \(items.count == 1 ? "item" : "items")").font(.sbHeadline).fixedSize(horizontal: false, vertical: true)
                     } actions: {
-                        if let fix, let check = area.check { Button(area.action) { fix(check) }.buttonStyle(StorebenchButtonStyle(fixed?[area]?.done == true ? .secondary : .primary)) }
+                        if let fix, let check = area.check { Button(area.action) { fix(check) }.buttonStyle(StorebenchButtonStyle(fixed?[area]?.done == true ? .secondary : .primary)).help(area.actionHelp) }
                     }
                     if !answered {
                         // Apple's own reason for each item, with the field it names; its code stays for support.

@@ -12,6 +12,7 @@ struct SalesAnalysisView: View {
     @State private var query = ""
     @State private var order = "default"
     @State private var measure = "auto"
+    @State private var indexed = false
     @State private var page = 1
     @State private var pageSize = 20
     @State private var minimum = "30"
@@ -19,7 +20,7 @@ struct SalesAnalysisView: View {
     @State private var share = "40"
     @State private var exportStatus = ""
     @State private var saving = false
-    private struct Choices: Equatable { var query, order, measure, minimum, countryMinimum, share: String; var page, pageSize: Int }
+    private struct Choices: Equatable { var query, order, measure, minimum, countryMinimum, share: String; var page, pageSize: Int; var indexed = false }
     private var criteria: SalesPresentation.Criteria? { try? .init(purchases: minimum, country: countryMinimum, share: share) }
     private var context: ReportMoney.Context { money ?? .init(currency: "USD") }
     private struct Input: Equatable, Sendable { let reports: [SalesPresentation.Period], range: SalesPresentation.Range, criteria: SalesPresentation.Criteria }
@@ -45,8 +46,8 @@ struct SalesAnalysisView: View {
             guard !Task.isCancelled, input == expected else { return }; prepared = next
             if let next { presentation?.rememberRead(next, preparedKey) }
         }
-        .historyValue("sales-analysis", Binding(get: { Choices(query: query, order: order, measure: measure, minimum: minimum, countryMinimum: countryMinimum, share: share, page: page, pageSize: pageSize) }, set: { value in
-            query = value.query; order = value.order; measure = value.measure; minimum = value.minimum; countryMinimum = value.countryMinimum; share = value.share; page = value.page; pageSize = value.pageSize
+        .historyValue("sales-analysis", Binding(get: { Choices(query: query, order: order, measure: measure, minimum: minimum, countryMinimum: countryMinimum, share: share, page: page, pageSize: pageSize, indexed: indexed) }, set: { value in
+            query = value.query; order = value.order; measure = value.measure; indexed = value.indexed; minimum = value.minimum; countryMinimum = value.countryMinimum; share = value.share; page = value.page; pageSize = value.pageSize
         }))
     }
     @ViewBuilder private var content: some View {
@@ -113,12 +114,24 @@ struct SalesAnalysisView: View {
         Fact(title: "Paid app purchases", value: String(a.paid)); Fact(title: "Refunded paid units", value: count(a.refunds), info: "Units Apple reports as refunded in the selected Sales reports. A refund can concern an earlier purchase."); Fact(title: "Free app downloads", value: count(a.free)); Fact(title: "Countries with purchases", value: String(a.rows.filter { $0.paid > 0 }.count))
     }
     private func trend(_ analysis: SalesPresentation.Analysis) -> some View {
-        let chart = ReportCharts.sales(analysis, measure: SalesPresentation.Measure(rawValue: measure))
+        let estimateKey = ReportCharts.salesEstimateKey
+        let options = ReportCharts.salesMeasures.map { (key: $0.rawValue, title: ReportCharts.salesLabel($0)) } + (money == nil ? [] : [(key: estimateKey, title: "Estimated proceeds · \(context.currency)")])
+        let chosen = ChartMeasures.chosen(measure, allowed: options.map(\.key), fallback: [ReportCharts.sales(analysis).measure.rawValue])
+        let charts = chosen.compactMap { SalesPresentation.Measure(rawValue: $0) }.map { ReportCharts.sales(analysis, measure: $0) }
+        let estimate = chosen.contains(estimateKey) ? ReportCharts.salesEstimate(analysis.coverage?.periods ?? [], context: context) : nil
+        let reported = chosen.flatMap { key in key == estimateKey ? [estimate].compactMap { $0 } : charts.first { $0.measure.rawValue == key }?.series ?? [] }
+        let onlyEstimate = estimate != nil && charts.isEmpty
         return Card(title: "Sales over time", subtitle: "One point per saved report period. Unknown detail values break the line and remain available for inspection.") {
-            StorebenchPicker("Measure", selection: $measure) { SelectionOption("Automatic", value: "auto"); selectionOptions(ReportCharts.salesMeasures) { SelectionOption(ReportCharts.salesLabel($0), value: $0.rawValue) } }.storebenchFormColumn()
+            ChartMeasureToggles(options: options, chosen: chosen) { measure = $0 }
+            ChartScalePicker(indexed: $indexed)
             Text("Free downloads, refunds and in-app purchases need Apple’s original report rows.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
-            Text("\(chart.totalLabel): \(chart.total.map(AsoProgress.count) ?? "—")").font(.sbHeadline).frame(minHeight: 36, alignment: .topLeading)
-            SavedReportChart(series: chart.series, note: chart.note, emptyText: "No saved reports in this range. Missing reports are not zero sales.")
+            if charts.count == 1, estimate == nil, !indexed { Text("\(charts[0].totalLabel): \(charts[0].total.map(AsoProgress.count) ?? "—")").font(.sbHeadline).frame(minHeight: 36, alignment: .topLeading) }
+            if estimate != nil, !charts.isEmpty, !indexed {
+                Text("Units and proceeds share one axis here. Choose Indexed to compare their shape.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
+            }
+            SavedReportChart(series: indexed ? SavedTimeSeries.indexed(reported) : reported, format: { value in
+                indexed ? AsoProgress.count(value.rounded()) : onlyEstimate ? ReportMoney.label(String(format: "%.*f", locale: Locale(identifier: "en_US_POSIX"), ReportMoney.fractionDigits(context.currency), value), currency: context.currency) : AsoProgress.count(value)
+            }, note: charts.compactMap(\.note).first, emptyText: chosen.isEmpty ? "Choose at least one measure. Missing reports are not zero sales." : "No saved reports in this range. Missing reports are not zero sales.")
             Text(analysis.comparable ? "The latest two periods are adjacent and have equal length." : "Trend suggestions require adjacent reports of equal length.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
         }
     }
@@ -139,11 +152,14 @@ struct SalesAnalysisView: View {
     private func comparison(_ selected: SalesPresentation.Selection) -> some View {
         Card(title: "Previous period", subtitle: previous.map { "\($0.range.beginDate) through \($0.range.endDate). Percentages require complete coverage in both ranges." } ?? "A preceding date range is unavailable.") {
             if let previous {
-                comparisonRow("Paid purchases", String(selected.analysis.paid), String(previous.analysis.paid), selected.complete && previous.complete)
-                comparisonRow("Refunded paid units", selected.analysis.refunds.map(String.init), previous.analysis.refunds.map(String.init), selected.complete && previous.complete)
-                comparisonRow("Free downloads", selected.analysis.free.map(String.init), previous.analysis.free.map(String.init), selected.complete && previous.complete)
+                // Without any saved report in the previous range its figures are unknown, not zero.
+                let saved = previous.coveredDays > 0
+                if !saved { Text("No reports are saved for the previous period, so its figures are unknown.").foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true) }
+                comparisonRow("Paid purchases", String(selected.analysis.paid), saved ? String(previous.analysis.paid) : nil, selected.complete && previous.complete)
+                comparisonRow("Refunded paid units", selected.analysis.refunds.map(String.init), saved ? previous.analysis.refunds.map(String.init) : nil, selected.complete && previous.complete)
+                comparisonRow("Free downloads", selected.analysis.free.map(String.init), saved ? previous.analysis.free.map(String.init) : nil, selected.complete && previous.complete)
                 let currentMoney = ReportMoney.convert(selected.analysis.proceeds, context: context), beforeMoney = ReportMoney.convert(previous.analysis.proceeds, context: context)
-                comparisonRow("Estimated proceeds · \(context.currency)", money == nil ? nil : currentMoney.amount, money == nil ? nil : beforeMoney.amount,
+                comparisonRow("Estimated proceeds · \(context.currency)", money == nil ? nil : currentMoney.amount, money == nil || !saved ? nil : beforeMoney.amount,
                               money != nil && selected.complete && previous.complete && selected.analysis.moneyComplete && previous.analysis.moneyComplete && selected.analysis.productsComplete && previous.analysis.productsComplete && currentMoney.complete && beforeMoney.complete)
             }
         }

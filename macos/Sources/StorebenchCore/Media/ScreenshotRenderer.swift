@@ -42,6 +42,10 @@ public enum ScreenshotRenderer {
         return try await withTaskCancellationHandler(operation: { let value = try await owned.value; try Task.checkCancellation(); return value }, onCancel: { owned.cancel() })
     }
     public static func loadAsync(_ data: Data) async throws -> DecodedScreenshot { try await run { try load(data) } }
+    /// A smaller decode whose longest side is at most `maximumEdge`, for drawing thumbnails. It keeps the original proportions.
+    public static func loadAsync(_ data: Data, maximumEdge: Int) async throws -> DecodedScreenshot {
+        try await run { DecodedScreenshot(image: try decode(data, maximumEdge: max(1, min(ScreenshotEditing.maximumSide, maximumEdge)))) }
+    }
     public static func thumbnailAsync(_ data: Data, maximumEdge: Int = 240) async throws -> ScreenshotPreview {
         try await run { ScreenshotPreview(image: try decode(data, maximumEdge: max(1, min(1024, maximumEdge)))) }
     }

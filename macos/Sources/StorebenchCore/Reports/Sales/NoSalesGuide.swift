@@ -72,9 +72,17 @@ public enum NoSalesStrategy: Equatable, Sendable {
         case .reduce(let amount, let base):
             guard amount.range(of: #"^\d+(?:\.\d{1,2})?$"#, options: .regularExpression) != nil, let value = PricingMath.decimal(amount), !value.isNaN, value > 0, Self.code(base) else { throw NoSalesFailure.invalid }
         case .model(let method, let price, let base):
-            guard ["fx", "same", "ppp", "bigmac"].contains(method), Self.code(base), (try? PricingMath.desired(price)) != nil else { throw NoSalesFailure.invalid }
+            guard PricingMethod(rawValue: method).map(PricingMethod.builtIn.contains) == true, Self.code(base), (try? PricingMath.desired(price)) != nil else { throw NoSalesFailure.invalid }
         }
     }
+    /// One choice in the guide: a reduction of the current price, or a built-in pricing method.
+    public struct Choice: Sendable, Identifiable { public let id, name, explanation: String }
+    /// Every choice the guide offers: the two reductions of the current price, then every built-in pricing method, with the names and
+    /// explanations every other price form uses.
+    public static let choices: [Choice] = [
+        Choice(id: "percent", name: "Percentage reduction", explanation: "Reduces the current Apple price by this percentage."),
+        Choice(id: "reduce", name: "Fixed reduction in guide currency", explanation: "Converts the reduction to each local currency, then subtracts it from the current Apple price."),
+    ] + PricingMethod.builtIn.map { Choice(id: $0.rawValue, name: $0.name, explanation: $0.explanation) }
     static func code(_ text: String) -> Bool { text.range(of: "^[A-Z]{3}$", options: .regularExpression) != nil }
     var base: String? { switch self { case .percent: nil; case .reduce(_, let base), .model(_, _, let base): base } }
 }
@@ -145,10 +153,10 @@ public enum NoSalesGuide {
         guard Set(codes).isSubset(of: Set(context.eligible(maxSales: maxSales).map(\.territory))) else { throw NoSalesFailure.selection }
         var models: [ModelPrice] = []
         if case .model(let method, let price, let base) = strategy {
-            var profile = context.profile; profile.method = method; profile.guideTerritory = base; profile.rounding = "down"; profile.percentages = [:]
+            var profile = context.profile; profile.method = method; profile.guideTerritory = base; profile.rounding = PricingRounding.down.rawValue; profile.percentages = [:]; profile.mix = nil; profile.floor = nil; profile.ceiling = nil; profile.index = [:]
             let currency = countries.first { $0.code == base }?.currency ?? context.prices.first { $0.territory == base }?.currency ?? ""
             guard !currency.isEmpty else { throw NoSalesFailure.model }
-            models = try PricingModels.calculate(profile, base: price, countries: countries, guideCurrency: currency, rates: rates, points: points, index: index, pointsUnavailable: pointsUnavailable)
+            models = try PricingModels.calculate(profile, base: price, countries: countries, guideCurrency: currency, rates: rates, points: points, indexes: index.map { [IndexSnapshot(method: method, date: $0.date, source: $0.source, values: $0.values)] } ?? [], pointsUnavailable: pointsUnavailable)
         }
         var rows: [NoSalesReduction] = [], skipped: [NoSalesSkipped] = []
         for code in codes {
@@ -265,7 +273,7 @@ extension WorkspaceSession {
         }
         switch strategy {
         case .percent: break
-        case .reduce(_, let base), .model("fx", _, let base):
+        case .reduce(_, let base), .model(PricingMethod.fx.rawValue, _, let base):
             guard let currency = catalog.first(where: { $0.code == base })?.currency, !currency.isEmpty else { throw NoSalesFailure.model }
             let quotes = Array(Set(codes.compactMap { code in
                 if case .model = strategy { return catalog.first { $0.code == code }?.currency }
@@ -275,8 +283,8 @@ extension WorkspaceSession {
             rates = loaded.rates
             if !loaded.missing.isEmpty { warnings.append("Some exchange rates are unavailable; affected countries are skipped.") }
             if !loaded.stale.isEmpty { warnings.append("Some rates use a dated local cache. Check the country details.") }
-        case .model(let method, _, _) where method == "ppp" || method == "bigmac":
-            index = try? await pricingIndex(method: method, catalog: catalog, sources: sources)
+        case .model(let key, _, _) where PricingMethod(rawValue: key)?.usesIndex == true:
+            index = try? await pricingIndex(method: PricingMethod(rawValue: key)!, catalog: catalog, sources: sources)
             if index == nil { warnings.append("Index data is unavailable; affected countries are skipped.") }
         default: break
         }

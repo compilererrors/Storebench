@@ -18,6 +18,7 @@ struct OverviewSection: View {
             AppSyncCard(account: account, app: app, session: session, changed: materialChanged, openSource: openSource)
             MaterialImportCard(account: account, app: app, session: session, changed: materialChanged, onlyWhenNeeded: true)
             AppLiveVersionsView(account: account, app: app, session: session, plan: snapshot?.plan, openCancellation: openCancellation)
+            ReleaseStatusCard(account: account, app: app, session: session)
             Card(title: "Saved on this Mac", subtitle: "This app's App Store text and screenshots that Storebench has saved: synced versions and drafts.", actions: AnyView(
                 StorebenchBusyButton(title: "Refresh", loadingTitle: "Reading…", busy: reading || deleting) { Task { await load() } }.help("Refresh what is saved on this Mac").accessibilityLabel("Refresh what is saved on this Mac")
             )) {
@@ -110,12 +111,14 @@ struct AppLiveVersionsView: View {
     @State private var failed = false
     @Environment(\.navigationPresentation) private var history
     private var readKey: String { "apple-versions/\(account.id)/\(app.id)" }
+    @State private var readAt: Date?
     private var available: Bool { !reading && !failed && entries != nil }
     var body: some View {
         Card(title: "Versions at Apple", subtitle: "Read directly from App Store Connect. Local drafts are listed separately below.", help: "versions", actions: AnyView(
             StorebenchBusyButton(title: "Sync Versions", loadingTitle: "Syncing Versions…", busy: reading) { Task { await load(fresh: true) } }
                 .help("Reads the versions and their states from App Store Connect. Nothing is sent to Apple; changes are sent in App Store changes.")
         )) {
+            StorebenchReadAge(readAt: entries == nil || failed ? nil : readAt, reading: reading)
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     // Versions last read stay listed while they are read again; Cancel Submission waits for Apple's current answer.
@@ -146,7 +149,7 @@ struct AppLiveVersionsView: View {
                 StorebenchTextSlot(text: "Version draft: \(plan.label). " + planStatus(plan), height: 64, font: .sbCallout, color: StorebenchTheme.muted)
             }
         }.task {
-            if entries == nil { entries = history?.rememberedRead(readKey, as: [AppOverviewVersions.Entry].self) }
+            if entries == nil { entries = history?.rememberedRead(readKey, as: [AppOverviewVersions.Entry].self); readAt = history?.rememberedReadAt(readKey) }
             await load()
         }.trackUnsavedChanges(false, busy: reading)
     }
@@ -161,12 +164,13 @@ struct AppLiveVersionsView: View {
             : "Apple has this version as \(target.state). Its text and media are with Apple; edits on this Mac stay saved here."
     }
     private func load(fresh: Bool = false) async {
-        guard let session, !reading, !Task.isCancelled else { return }; let id = UUID(); readId = id; reading = true; defer { if readId == id { reading = false } }
-        if fresh { await session.invalidateAppleReads() }
-        do {
-            let values = try await session.currentAppVersions(account: account, appId: app.id, client: try await session.readClient(for: account))
-            try Task.checkCancellation(); guard readId == id else { return }; entries = values.map(AppOverviewVersions.Entry.init); failed = false
-            history?.rememberRead(entries ?? [], readKey)
-        } catch is CancellationError { } catch { if readId == id { failed = true } }
+        await ScreenReads.reading(fresh: fresh) {
+            guard let session, !reading, !Task.isCancelled else { return }; let id = UUID(); readId = id; reading = true; defer { if readId == id { reading = false } }
+            do {
+                let values = try await session.currentAppVersions(account: account, appId: app.id, client: try await session.readClient(for: account))
+                try Task.checkCancellation(); guard readId == id else { return }; entries = values.map(AppOverviewVersions.Entry.init); failed = false; readAt = Date()
+                history?.rememberRead(entries ?? [], readKey)
+            } catch is CancellationError { } catch { if readId == id { failed = true } }
+        }
     }
 }

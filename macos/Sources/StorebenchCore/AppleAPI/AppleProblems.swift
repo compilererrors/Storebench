@@ -29,16 +29,25 @@ public struct AppleProblem: Sendable, Equatable {
             case .other: "Other"
             }
         }
+        /// The command's full meaning for its hover help, where the shared button width shortens the label.
+        public var actionHelp: String {
+            switch self {
+            case .reviewInformation: "Open App Review Information"
+            case .listing: "Open Release step 2, Text and Screenshots"
+            case .exportCompliance: "Answer Export Compliance"
+            default: action
+            }
+        }
         /// The command that opens where it is answered. App Privacy and Tax Category are answered with an Apple ID in App Store changes.
         public var action: String {
             switch self {
             case .ageRating: "Answer Age Ratings"
-            case .reviewInformation: "Open App Review Information"
+            case .reviewInformation: "Open App Review"
             case .appConfiguration: "Open App Information"
             case .copyright: "Open Copyright"
-            case .listing: "Open Text and Screenshots"
+            case .listing: "Open Release Step 2"
             case .build: "Open Build"
-            case .exportCompliance: "Answer Export Compliance"
+            case .exportCompliance: "Answer Compliance"
             case .pricing: "Open Pricing"
             case .availability: "Open Availability"
             case .accessibility: "Open Accessibility"

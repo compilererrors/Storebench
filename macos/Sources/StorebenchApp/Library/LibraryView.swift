@@ -63,8 +63,10 @@ struct LibraryView: View {
             model.registerWindowReads(navigationPresentation)
             navigationPresentation.persist = { [weak session] key, data, date, epoch in Task { await session?.saveViewRead(key: key, data: data, readAt: date, epoch: epoch) } }
             let clears = navigationPresentation.clearCount, epoch = await session.viewReadEpoch
-            navigationPresentation.preload(await session.savedViewReads(), epoch: epoch, clearCount: clears)
+            // The open app's saved reads come first, so its page shows at once; every other saved read follows in the background.
+            if let app = selected?.1.id { navigationPresentation.preload(await session.savedViewReads(containing: "/" + app), epoch: epoch, clearCount: clears) }
             savedReadsSession = ObjectIdentifier(session)
+            navigationPresentation.preload(await session.savedViewReads(), epoch: epoch, clearCount: clears)
         }
         // Each opened app is counted, then the apps worth preparing are read ahead, the open one first.
         .task(id: "\(String(describing: savedReadsSession))/\(selection ?? "")", priority: .utility) { await prepareApps() }

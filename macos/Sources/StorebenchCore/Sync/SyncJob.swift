@@ -146,7 +146,7 @@ public struct SyncJob: Identifiable, Sendable, Equatable, PersistentReportJob {
     public enum Mode: String, Sendable, CaseIterable {
         case all, retry, refresh
         public var title: String {
-            switch self { case .all: "Sync new data"; case .retry: "Retry unfinished"; case .refresh: "Download all again" }
+            switch self { case .all: "Sync New Data"; case .retry: "Retry Unfinished"; case .refresh: "Download All Again" }
         }
         public var help: String {
             switch self {

@@ -13,7 +13,7 @@ struct NoSalesGuideView: View {
     @State private var qualify = "none"
     @State private var limit = "2"
     @State private var chosen: Set<String>?
-    @State private var method = "ppp"
+    @State private var method = PricingMethod.ppp.rawValue
     @State private var base = ""
     @State private var basePrice = ""
     @State private var reduction = "1"
@@ -35,17 +35,7 @@ struct NoSalesGuideView: View {
     private var dirty: Bool { step >= 3 && !saved }
     private var unavailable: Bool { busy || blocked || stale }
     private var validStrategy: Bool { do { try strategy.validate(); return true } catch { return false } }
-    private var methods: [(String, String)] { [("fx", "Fixed base-country price"), ("reduce", "Fixed reduction in base currency"), ("bigmac", "Big Mac Index"), ("ppp", "Purchasing power parity"), ("percent", "Percentage reduction"), ("same", "Same amount in every currency")] }
-    private var hint: String {
-        switch method {
-        case "fx": "Convert a base-country price using dated exchange rates."
-        case "reduce": "Convert the reduction to each local currency before subtracting it."
-        case "bigmac": "Scale the base price by the local Big Mac price ratio."
-        case "ppp": "Scale the base price by the World Bank purchasing-power ratio."
-        case "same": "Use the same numeral in each currency. An exact Apple price point is required."
-        default: "Reduce the current Apple price by this percentage."
-        }
-    }
+    private var hint: String { NoSalesStrategy.choices.first { $0.id == method }?.explanation ?? "" }
 
     var body: some View {
         Card(title: "Prices for countries with no or few purchases", subtitle: "Step \(step) of 4 · Review reductions against complete saved reports. Only local drafts are saved.", help: "no-sales-pricing") {
@@ -116,13 +106,13 @@ struct NoSalesGuideView: View {
     }
     private var methodStep: some View {
         VStack(alignment: .leading, spacing: 10) {
-            StorebenchPicker("Price reduction strategy", selection: $method) { selectionOptions(methods) { SelectionOption($0.1, value: $0.0) } }.storebenchFormColumn()
+            StorebenchPicker("Price reduction strategy", selection: $method) { selectionOptions(NoSalesStrategy.choices) { SelectionOption($0.name, value: $0.id) } }.storebenchFormColumn()
             Text(hint + " Only positive results below the current price and every existing local override can be saved.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).frame(maxWidth: .infinity, minHeight: 44, alignment: .topLeading)
             if method == "percent" { StorebenchTextField("Reduction (%)", text: $percent).storebenchFormColumn() }
             else {
                 StorebenchFormGrid {
-                    StorebenchPicker("Base country", selection: Binding(get: { base }, set: { code in base = code; basePrice = context?.prices.first { $0.territory == code }?.customerPrice ?? "" })) { selectionOptions(catalog) { SelectionOption("\($0.name) (\($0.currency))", value: $0.code) } }
-                    StorebenchTextField(method == "reduce" ? "Reduction in base currency" : "Base country price", text: method == "reduce" ? $reduction : $basePrice)
+                    StorebenchPicker("Guide country", selection: Binding(get: { base }, set: { code in base = code; basePrice = context?.prices.first { $0.territory == code }?.customerPrice ?? "" })) { selectionOptions(catalog) { SelectionOption("\($0.name) (\($0.currency))", value: $0.code) } }
+                    StorebenchTextField(method == "reduce" ? "Reduction in guide currency" : "Guide price", text: method == "reduce" ? $reduction : $basePrice)
                 }
                 Text("Your shared pricing profile stays unchanged.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
             }

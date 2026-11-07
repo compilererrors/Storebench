@@ -49,7 +49,15 @@ public enum SalesCalendar {
             let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
             return months[Int(day.dropFirst(5).prefix(2))! - 1] + " " + String(Int(day.suffix(2))!)
         }
-        guard let first = days.first, let last = days.last else { return "" }
-        return days.count > 4 ? "\(short(first.date)) – \(short(last.date)) (\(days.count) days)" : days.map { short($0.date) }.joined(separator: ", ")
+        guard days.count > 4 else { return days.map { short($0.date) }.joined(separator: ", ") }
+        // Each run of consecutive days is one range, so a range never spans days that are not in the list.
+        var runs: [[Day]] = []
+        for day in days {
+            if let last = runs.last?.last, let before = PeriodDates.number(last.date), let number = PeriodDates.number(day.date), number == before + 1 { runs[runs.count - 1].append(day) }
+            else { runs.append([day]) }
+        }
+        let shown = runs.prefix(4).map { $0.count == 1 ? short($0[0].date) : "\(short($0[0].date)) – \(short($0.last!.date)) (\($0.count) days)" }
+        let rest = runs.dropFirst(4).reduce(0) { $0 + $1.count }
+        return shown.joined(separator: ", ") + (rest == 0 ? "" : ", and \(rest) more \(rest == 1 ? "day" : "days")")
     }
 }

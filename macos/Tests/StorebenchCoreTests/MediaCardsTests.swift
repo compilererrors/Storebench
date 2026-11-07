@@ -1,3 +1,4 @@
+import CoreText
 import Foundation
 import ImageIO
 import Testing
@@ -33,8 +34,59 @@ import Testing
         #expect(focusScreen.top + focusScreen.height <= Double(target.height) + 0.5)
         let only = MediaCards.placement(card(.textOnly, shot: nil), width: target.width, height: target.height)
         #expect(only.screen == nil && only.text != nil)
+        // The text area is kept before any text is written, so typing never moves the screenshot.
         var untitled = card(.textAbove); untitled.title = ""; untitled.subtitle = ""
-        #expect(MediaCards.placement(untitled, width: target.width, height: target.height).text == nil)
+        #expect(MediaCards.placement(untitled, width: target.width, height: target.height) == above)
+    }
+
+    @Test func everyCardTypePlacesALandscapeScreenshotSoTextFitsAndCropsRunPastTheEdge() throws {
+        let mac = try #require(MediaCards.targets.first { $0.type == "APP_DESKTOP" && $0.width > $0.height })
+        let h = Double(mac.height), wide = (3680, 2234)
+        for layout in [MediaCard.Layout.textAbove, .textBelow] {
+            var value = card(layout, shot: wide); value.style.screenshotWidth = 0.6
+            let placement = MediaCards.placement(value, width: mac.width, height: mac.height)
+            let text = try #require(placement.text), screen = try #require(placement.screen)
+            // Text and screenshot sit together in the middle, with the same space above and below them.
+            let first = min(text.top, screen.top), last = max(text.top + text.height, screen.top + screen.height)
+            #expect(abs(first - (h - last)) < 1 && (layout == .textAbove ? text.top + text.height < screen.top : screen.top + screen.height < text.top))
+            #expect(!placement.limited && abs(screen.width / screen.height - 3680.0 / 2234.0) < 0.001)
+        }
+        let bottom = try #require(MediaCards.placement(card(.bleedBottom, shot: wide), width: mac.width, height: mac.height).screen)
+        #expect(bottom.top + bottom.height >= h + bottom.height * 0.1 - 0.5)
+        let topPlacement = MediaCards.placement(card(.bleedTop, shot: wide), width: mac.width, height: mac.height)
+        let top = try #require(topPlacement.screen), topText = try #require(topPlacement.text)
+        #expect(top.top <= -top.height * 0.1 + 0.5 && topText.top > top.top + top.height && topText.top + topText.height <= h + 0.5)
+        // A tall screenshot on a phone card is limited by its height, and says so.
+        #expect(MediaCards.placement(card(.textAbove), width: target.width, height: target.height).limited)
+    }
+
+    @Test func textSizeReportsWhenSpaceForTextMakesItSmaller() throws {
+        var value = card(.textAbove); value.body = String(repeating: "synthetic words ", count: 6)
+        value.style.textSize = 1.5; value.style.textSpace = 0.12
+        let squeezed = try #require(MediaCardRenderer.textShare(value, width: target.width, height: target.height))
+        value.style.textSpace = 0.5; value.style.textSize = 0.6
+        let roomy = try #require(MediaCardRenderer.textShare(value, width: target.width, height: target.height))
+        #expect(squeezed < 1 && roomy == 1)
+    }
+
+    @Test func typefacesUseTheMacsDesignsAnInstalledFamilyOrAFontFile() throws {
+        func name(_ style: MediaCardStyle, file: Data? = nil) -> String { CTFontCopyPostScriptName(MediaCardRenderer.font(style, .body, 40, file: file)) as String }
+        var style = MediaCardStyle()
+        let names = [MediaCardStyle.Typeface.standard, .rounded, .serif, .monospaced].map { face -> String in style.typeface = face; return name(style) }
+        #expect(Set(names).count == 4)
+        style.typeface = .installed; style.fontFamily = "Helvetica"
+        #expect(name(style).hasPrefix("Helvetica"))
+        let url = try #require(CTFontCopyAttribute(CTFontCreateWithName("Helvetica" as CFString, 12, nil), kCTFontURLAttribute) as? URL)
+        let data = try Data(contentsOf: url)
+        #expect(MediaCardRenderer.fontFamily(data) == "Helvetica" && MediaCardRenderer.fontFamily(Data("not a font".utf8)) == nil)
+        style.typeface = .file; style.fontFile = .init(hash: String(repeating: "b", count: 64), name: "Synthetic.ttc", family: "Helvetica")
+        #expect(name(style, file: data).hasPrefix("Helvetica"))
+        var value = card(.textOnly, shot: nil); value.style = style
+        #expect(throws: MediaCardFailure.font) { try MediaCardRenderer.render(value, width: target.width, height: target.height, screenshot: nil) }
+        #expect(throws: Never.self) { try MediaCardRenderer.render(value, width: target.width, height: target.height, screenshot: nil, font: data) }
+        style.fontFile = nil
+        var missing = card(.textOnly, shot: nil); missing.style = style
+        #expect(throws: MediaCardFailure.invalid) { try MediaCards.validate(missing) }
     }
 
     @Test func textShrinksToFitOrFailsInsteadOfClipping() throws {
@@ -75,6 +127,25 @@ import Testing
         #expect(MediaCards.drag(value, width: target.width, height: target.height, startX: 1, startY: 1, deltaX: 100, deltaY: 100) == value)
         let fitted = MediaCards.drag(card(.textAbove), width: target.width, height: target.height, startX: screen.left + 10, startY: Double(target.height) / 2, deltaX: 100, deltaY: 100)
         #expect(fitted.x == 0.5 && fitted.y == 0.5)
+    }
+
+    @Test func aFinishedFileLoadAppliesOnlyToTheCardItWasChosenFor() throws {
+        var set = MediaCardSet(name: "Synthetic set", target: target)
+        let a = set.cards[0].id, b = try set.addCard(after: a).id
+        // A screenshot is chosen for card A; card B is selected and moved first while the file loads.
+        let load = MediaCardLoad(setId: set.id, cardId: a, kind: .screenshot)
+        var newest = [load.key: load.ticket]
+        set.cards.swapAt(0, 1)
+        #expect(load.position(in: set, newest: newest) == 1 && set.cards[1].id == a && set.cards[0].id == b)
+        // A newer choice for card A replaces the older one; a font choice for A is a separate kind.
+        let newer = MediaCardLoad(setId: set.id, cardId: a, kind: .screenshot), font = MediaCardLoad(setId: set.id, cardId: a, kind: .font)
+        newest[newer.key] = newer.ticket; newest[font.key] = font.ticket
+        #expect(load.position(in: set, newest: newest) == nil && newer.position(in: set, newest: newest) == 1 && font.position(in: set, newest: newest) == 1)
+        // Another open set, a closed editor or a removed card take nothing.
+        let other = MediaCardSet(name: "Other synthetic set", target: target)
+        #expect(newer.position(in: other, newest: newest) == nil && newer.position(in: nil, newest: newest) == nil)
+        _ = set.removeCard(a)
+        #expect(newer.position(in: set, newest: newest) == nil && font.position(in: set, newest: newest) == nil)
     }
 
     @Test func validationRejectsUnknownSizesColorsLimitsAndDuplicates() throws {
@@ -131,6 +202,24 @@ import Testing
         #expect(colors.count == 1 && colors[0].hasPrefix("#") && colors[0].count == 7)
     }
 
+    @Test func fontFilesAreCheckedSavedEncryptedAndReadOnlyForCardsThatUseThem() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let account = try #require(try await session.accounts().first)
+        let url = try #require(CTFontCopyAttribute(CTFontCreateWithName("Helvetica" as CFString, 12, nil), kCTFontURLAttribute) as? URL)
+        let data = try Data(contentsOf: url)
+        await #expect(throws: MediaCardFailure.font) { try await session.stageMediaCardFont(accountId: account.id, appId: app, bytes: Data("not a font".utf8), name: "x.ttf") }
+        let file = try await session.stageMediaCardFont(accountId: account.id, appId: app, bytes: data, name: "Synthetic\nFont.ttc")
+        #expect(file.family == "Helvetica" && file.name == "SyntheticFont.ttc")
+        await #expect(throws: MediaCardFailure.missing) { try await session.mediaCardFont(accountId: account.id, appId: app, hash: file.hash) }
+        var set = MediaCardSet(name: "Synthetic fonts", target: target)
+        set.cards[0].layout = .textOnly; set.cards[0].title = "Synthetic title"; set.cards[0].style.typeface = .file; set.cards[0].style.fontFile = file
+        _ = try await session.saveMediaCardSet(accountId: account.id, appId: app, set: set, expected: 0)
+        #expect(try await session.mediaCardFont(accountId: account.id, appId: app, hash: file.hash) == data)
+        // A card saved before fonts existed decodes with the system typeface.
+        let old = try JSONDecoder().decode(MediaCardStyle.self, from: Data(##"{"fill":"gradient","color":"#2f4fd8","secondColor":"#7b3fe4","angle":160,"titleColor":"#ffffff","subtitleColor":"#e8ecff","bodyColor":"#d9e0ff","typeface":"rounded","alignment":"center","textSize":1,"textSpace":0.26,"margin":6,"screenshotWidth":0.82,"cornerRadius":7,"borderWidth":0,"borderColor":"#111827","shadow":true}"##.utf8))
+        #expect(old.typeface == .rounded && old.fontFamily == nil && old.fontFile == nil)
+    }
+
     @Test func cardSetsSaveOnTheLoadedRevisionAndLibraryCopiesStayLocal() async throws {
         let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
         let account = try #require(try await session.accounts().first)
@@ -153,14 +242,100 @@ import Testing
         await #expect(throws: (any Error).self) { try await session.mediaCardSets(accountId: account.id, appId: "1999999999") }
 
         let png = try MediaCardRenderer.export(set.cards[0], width: set.width, height: set.height, screenshot: try ScreenshotRenderer.load(bytes))
-        let file = try await session.stageCreatedLibraryImage(accountId: account.id, appId: app, bytes: png, fileName: MediaCards.fileName(set: set, index: 0), referenceName: "Synthetic launch 1")
+        func image(_ position: Int, _ bytes: Data) -> WorkspaceSession.CreatedLibraryImage {
+            .init(sourceId: set.cards[position].id, bytes: bytes, fileName: MediaCards.fileName(set: set, index: position), referenceName: "Synthetic launch \(position + 1)")
+        }
+        let file = try #require(try await session.stageCreatedLibraryImages(accountId: account.id, appId: app, setId: set.id, images: [image(0, png)]).files.first)
         #expect(file.category == .listing && file.width == 1320 && file.height == 2868 && !file.hasAlpha && file.fileName == "Synthetic-launch-01.png")
         #expect(try await session.assetLibraryFiles(accountId: account.id, appId: app).contains(file))
-        await #expect(throws: (any Error).self) { try await session.stageCreatedLibraryImage(accountId: account.id, appId: app, bytes: try AssetLibraryTests().png(alpha: true), fileName: "x.png", referenceName: "") }
+
+        // A batch with one unusable image saves none of them.
+        try set.addCard(after: set.cards[0].id); set.cards[1].layout = .textOnly; set.cards[1].title = "Second synthetic card"
+        let secondPNG = try MediaCardRenderer.export(set.cards[1], width: set.width, height: set.height, screenshot: nil)
+        let before = try await session.assetLibraryFiles(accountId: account.id, appId: app)
+        await #expect(throws: (any Error).self) {
+            try await session.stageCreatedLibraryImages(accountId: account.id, appId: app, setId: set.id, images: [image(1, secondPNG), image(0, try AssetLibraryTests().png(alpha: true))])
+        }
+        #expect(try await session.assetLibraryFiles(accountId: account.id, appId: app) == before)
+        // Saving the same cards again keeps the existing entries; a changed card adds only itself; a removed entry is saved again.
+        let all = try await session.stageCreatedLibraryImages(accountId: account.id, appId: app, setId: set.id, images: [image(0, png), image(1, secondPNG)])
+        #expect(all.added == 1 && all.files[0] == file && all.files.count == 2)
+        let retry = try await session.stageCreatedLibraryImages(accountId: account.id, appId: app, setId: set.id, images: [image(0, png), image(1, secondPNG)])
+        let library = try await session.assetLibraryFiles(accountId: account.id, appId: app)
+        #expect(retry.added == 0 && retry.files == all.files && library.count == before.count + 1)
+        set.cards[1].title = "Changed synthetic card"
+        let changed = try await session.stageCreatedLibraryImages(accountId: account.id, appId: app, setId: set.id,
+            images: [image(0, png), image(1, try MediaCardRenderer.export(set.cards[1], width: set.width, height: set.height, screenshot: nil))])
+        #expect(changed.added == 1 && changed.files[0] == file && changed.files[1] != all.files[1])
+        try await session.removeAssetLibraryFile(accountId: account.id, appId: app, id: file.id)
+        let restored = try await session.stageCreatedLibraryImages(accountId: account.id, appId: app, setId: set.id, images: [image(0, png)])
+        #expect(restored.added == 1 && restored.files[0].id != file.id && restored.files[0].hash == file.hash)
+        await #expect(throws: (any Error).self) { try await session.stageCreatedLibraryImages(accountId: account.id, appId: app, setId: set.id, images: [image(0, png), image(0, png)]) }
 
         await #expect(throws: MediaCardFailure.stale) { try await session.deleteMediaCardSet(accountId: account.id, appId: app, id: set.id, expected: 1) }
         try await session.deleteMediaCardSet(accountId: account.id, appId: app, id: set.id, expected: 2)
         #expect(try await session.mediaCardSets(accountId: account.id, appId: app).isEmpty)
         await #expect(throws: MediaCardFailure.missing) { try await session.deleteMediaCardSet(accountId: account.id, appId: app, id: set.id, expected: 2) }
+    }
+}
+
+@Suite struct MediaCardImagesTests {
+    init() throws { _ = try TestIsolation.require() }
+
+    @Test func thumbnailsUseSmallDecodesAndFullSizeScreenshotsStayWithinTheBudget() async throws {
+        let bytes = try AssetLibraryTests().png(width: 1290, height: 2796)
+        let small = try await ScreenshotRenderer.loadAsync(bytes, maximumEdge: MediaCardImages.thumbnailEdge)
+        #expect(max(small.width, small.height) == MediaCardImages.thumbnailEdge && abs(Double(small.width) / Double(small.height) - 1290.0 / 2796.0) < 0.01)
+        let full = try await ScreenshotRenderer.loadAsync(bytes)
+        var images = MediaCardImages()
+        images.keepThumbnail(small, "a")
+        #expect(images.thumbnail("a")?.width == small.width && images.full("a") == nil)
+        // A card with only a full-size decode still draws its thumbnail from it.
+        images.keepFull(full, "b")
+        #expect(images.thumbnail("b")?.width == 1290)
+        // Each full decode is about 14 MB, so at most six fit; the selected one, used last, is kept.
+        for key in ["c", "d", "e", "f", "g"] { images.keepFull(full, key) }
+        images.touch("b")
+        images.keepFull(full, "h")
+        #expect(images.fullCount <= MediaCardImages.fullBudget.count && images.fullBytes <= MediaCardImages.fullBudget.bytes)
+        #expect(images.full("b") != nil && images.full("c") == nil && images.full("h") != nil)
+        images.removeAll()
+        #expect(images.fullCount == 0 && images.thumbnail("a") == nil)
+    }
+
+    @Test func aScreenshotLargerThanTheWholeBudgetStillReachesThePreview() async throws {
+        // 6,000 × 5,000 px decodes to 120,000,000 bytes, more than the 96 MiB budget but within the 40-megapixel limit.
+        let bytes = try AssetLibraryTests().png(width: 6_000, height: 5_000)
+        let full = try await ScreenshotRenderer.loadAsync(bytes)
+        var images = MediaCardImages()
+        images.keepFull(full, "large")
+        #expect(images.full("large") == nil && images.fullBytes == 0 && images.fullCount == 0)
+        var card = MediaCardSet(name: "Synthetic set", target: MediaCards.defaultTarget).cards[0]
+        card.screenshot = .init(hash: String(repeating: "a", count: 64), name: "large.png", width: 6_000, height: 5_000)
+        // A cache miss leaves the decoded result with the render operation, rather than looking it up again.
+        let shown = try await MediaCardRenderer.previewAsync(card, width: MediaCards.defaultTarget.width, height: MediaCards.defaultTarget.height, screenshot: full, font: nil)
+        let missing = try await MediaCardRenderer.previewAsync(card, width: MediaCards.defaultTarget.width, height: MediaCards.defaultTarget.height, screenshot: nil)
+        #expect(shown.image.dataProvider?.data as Data? != missing.image.dataProvider?.data as Data?)
+        #expect(images.fullBytes == 0)
+    }
+
+    @Test func evictionDuringAnotherExportDoesNotRemoveThePreviewsOwnedScreenshot() async throws {
+        let full = try await ScreenshotRenderer.loadAsync(try AssetLibraryTests().png(width: 1290, height: 2796))
+        var images = MediaCardImages()
+        images.keepFull(full, "selected")
+        let selected = try #require(images.full("selected"))
+        var card = try MediaCardsTests().card(.textAbove, shot: (1290, 2796))
+        for index in 0..<MediaCardImages.fullBudget.count { images.keepFull(full, "export-\(index)") }
+        #expect(images.full("selected") == nil && images.fullBytes <= MediaCardImages.fullBudget.bytes)
+        let target = MediaCards.defaultTarget
+        let exported = try await MediaCardRenderer.exportAsync(card, width: target.width, height: target.height, screenshot: full)
+        let preview = try await MediaCardRenderer.previewAsync(card, width: target.width, height: target.height, screenshot: selected)
+        let expected = try await MediaCardRenderer.previewAsync(card, width: target.width, height: target.height, screenshot: full)
+        #expect(preview.image.dataProvider?.data as Data? == expected.image.dataProvider?.data as Data?)
+        let exportedImage = try await ScreenshotRenderer.loadAsync(exported)
+        #expect(exportedImage.width == target.width && exportedImage.height == target.height)
+        card.screenshot = nil
+        let placeholder = try await MediaCardRenderer.previewAsync(card, width: target.width, height: target.height, screenshot: nil)
+        #expect(preview.image.dataProvider?.data as Data? != placeholder.image.dataProvider?.data as Data?)
     }
 }

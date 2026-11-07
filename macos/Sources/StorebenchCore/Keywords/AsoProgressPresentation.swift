@@ -46,9 +46,57 @@ extension AsoProgress {
         guard row.dateKnown, !row.baseline else { return nil }
         return impact(points, date: row.date, days: days, today: today)
     }
+    /// What a chart marker stands for: the most search-relevant field a listing change changed, or your own note.
+    public enum MarkerKind: String, CaseIterable, Sendable {
+        case keywords, names, screenshots, text, note
+        public var title: String {
+            switch self {
+            case .keywords: "Keywords"
+            case .names: "Name or subtitle"
+            case .screenshots: "Screenshots"
+            case .text: "Description or promotional text"
+            case .note: "Your note"
+            }
+        }
+    }
+    public static func markerKind(_ row: AsoProgressRow) -> MarkerKind {
+        let fields = row.changes.map(\.field)
+        if fields.contains("keywords") { return .keywords }
+        if fields.contains(where: { $0 == "name" || $0 == "subtitle" }) { return .names }
+        if fields.contains(where: { $0.hasPrefix("screenshots") }) { return .screenshots }
+        return .text
+    }
+    /// The names of the fields a row changed, in order, with every screenshot set as Screenshots.
+    public static func changedFields(_ row: AsoProgressRow) -> [String] {
+        var names: [String] = []
+        for change in row.changes {
+            let name = change.field.hasPrefix("screenshots") ? "Screenshots" : AsoComparison.fieldName(change.field)
+            if !names.contains(name) { names.append(name) }
+        }
+        return names
+    }
+    /// Chart markers for dated listing changes and notes inside the range. Each marker opens its version or note.
+    public static func markers(_ rows: [AsoProgressRow], notes: [ChartNote], range: PeriodDateRange?) -> [SavedTimeSeries.Marker] {
+        let changes = rows.filter(\.dateKnown).map { row in
+            SavedTimeSeries.Marker(date: row.date, label: "\(row.version) \(row.isUpdate ? "update" : "release observed"): \(changedFields(row).joined(separator: ", "))",
+                                   kind: markerKind(row).rawValue, target: row.id)
+        }
+        let noted = notes.filter { range?.contains($0.date) ?? true }.map { SavedTimeSeries.Marker(date: $0.date, label: "Note: \($0.text)", kind: MarkerKind.note.rawValue, target: "note:\($0.id)") }
+        return (changes + noted).sorted { ($0.date, $0.target ?? "") < ($1.date, $1.target ?? "") }
+    }
+    /// True when the next newer change falls inside this row's after window.
     public static func overlaps(_ row: AsoProgressRow, newer: AsoProgressRow?, days: Int) -> Bool {
         guard let newer, let first = PeriodDates.number(row.date), let second = PeriodDates.number(newer.date) else { return false }
         return second - first <= days
+    }
+    /// Other dated listing changes inside a row's before or after window, oldest first. Every change counts, whichever language or
+    /// field the view shows, because any of them can move the same measures.
+    public static func overlapping(_ row: AsoProgressRow, among all: [AsoProgressRow], days: Int) -> [AsoProgressRow] {
+        guard row.dateKnown, let day = PeriodDates.number(row.date) else { return [] }
+        return all.filter { other in
+            guard other.id != row.id, other.dateKnown, !other.baseline, !other.changes.isEmpty, let date = PeriodDates.number(other.date) else { return false }
+            return abs(date - day) <= days
+        }.sorted { ($0.date, $0.id) < ($1.date, $1.id) }
     }
     public struct Bucket: Sendable, Equatable {
         public let start, end: String, value: Double, days: Int
@@ -113,5 +161,26 @@ extension AsoProgress {
         }
         let value = signed(impact.change!, digits: 1) + "/day", detail = [percent, "\(min(impact.beforeDays, impact.afterDays)) of \(window)"].filter { !$0.isEmpty }.joined(separator: " · ")
         return Description(value: value, title: "\(label): \(value) on average per reported day\(percent.isEmpty ? "" : " (\(percent))"); \(coverage).", detail: detail)
+    }
+}
+
+extension AsoProgress {
+    /// What the ASO Progress page draws from: listing versions for the chosen language and fields, the changes inside the date range,
+    /// their markers with your notes, and the chart series. It is prepared away from the main thread whenever the data or a choice changes.
+    public struct Presentation: Sendable, Equatable {
+        public let rows: [AsoProgressRow], changed: [AsoProgressRow]
+        public let markers: [SavedTimeSeries.Marker], series: [SavedTimeSeries.Series]
+        public static let empty = Presentation(rows: [], changed: [], markers: [], series: [])
+    }
+    public static func presentation(baseRows: [AsoProgressRow], locale: String, fields: FieldFilter, range: PeriodDateRange?, notes: [ChartNote],
+                                    measures: [String], points: [String: [AsoPoint]], granularity: Granularity, indexed: Bool) -> Presentation {
+        let rows = filteredRows(baseRows, locale: locale, fields: fields.fields), changed = changedRows(rows, range: range)
+        let series = measures.map { metric in
+            let bucketed = buckets((points[metric] ?? []).filter { range?.contains($0.date) ?? true }, granularity: granularity)
+            let values = indexed ? AsoProgress.indexed(bucketed.map(\.value)) : bucketed.map(\.value)
+            return SavedTimeSeries.Series(key: metric, label: metrics.first { $0.key == metric }?.title ?? metric,
+                                          points: bucketed.enumerated().map { index, bucket in .init(start: bucket.start, end: bucket.end, value: values[index]) })
+        }
+        return Presentation(rows: rows, changed: changed, markers: markers(changed, notes: notes, range: range), series: series)
     }
 }

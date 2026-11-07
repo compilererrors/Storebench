@@ -179,11 +179,12 @@ struct ReviewInformationView: View {
         })
     }
     private func load(_ versionId: String? = nil, fresh: Bool = false) async {
-        guard !busy, let session else { return }; working = true; defer { working = false }
-        if fresh { await session.invalidateAppleReads() }
-        do { let snapshot = try await session.reviewInformationSnapshot(account: account, appId: app.id, versionId: versionId, client: try await session.readClient(for: account)); try Task.checkCancellation(); editor.load(snapshot); layout = snapshot.layout; review = nil; status = ""; remember(versionId) }
-        catch is CancellationError { }
-        catch { status = "App Review Information could not be read. Your current inputs remain here. Retry the read or choose another version." }
+        await ScreenReads.reading(fresh: fresh) {
+            guard !busy, let session else { return }; working = true; defer { working = false }
+            do { let snapshot = try await session.reviewInformationSnapshot(account: account, appId: app.id, versionId: versionId, client: try await session.readClient(for: account)); try Task.checkCancellation(); editor.load(snapshot); layout = snapshot.layout; review = nil; status = ""; remember(versionId) }
+            catch is CancellationError { }
+            catch { status = "App Review Information could not be read. Your current inputs remain here. Retry the read or choose another version." }
+        }
     }
     /// Keeps the editor as last read or saved, never with unsaved inputs, under the requested and the shown version.
     private func remember(_ requested: String?) {

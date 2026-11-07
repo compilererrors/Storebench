@@ -56,7 +56,10 @@ extension WorkspaceSession {
     }
     public var availableLocales: [String] { StoreLocales.codes.filter { code in version?.localizations.contains { $0.locale.utf8.elementsEqual(code.utf8) } != true } }
 
-    public init(planEditor: ReleasePlanEditor, session: WorkspaceSession) throws {
+    /// Whether each language gets its screenshot and preview editors. Quick Release edits text only and leaves them out.
+    public let includesMedia: Bool
+    public init(planEditor: ReleasePlanEditor, session: WorkspaceSession, media: Bool = true) throws {
+        includesMedia = media
         guard planEditor.loaded, let plan = planEditor.plan else { throw ReleaseFailure.sourceUnavailable }
         self.planEditor = planEditor; self.session = session; versionId = plan.baseVersionId
         scope = .init(accountId: plan.accountId, appId: plan.appId, revisionId: plan.sourceRevisionId)
@@ -89,18 +92,37 @@ extension WorkspaceSession {
             status = "The planned listing could not be confirmed. Read the saved listing again; existing edits are kept."
         }
     }
+    public typealias Translate = TextTranslator
     /// Adds a language without replacing any existing editor or accepting another writer's baseline.
-    public func addLanguage(_ locale: String, copyFrom: String? = nil) async -> Bool {
+    /// With a translator, the copied wording is translated first, outside every draft lock.
+    public func addLanguage(_ locale: String, copyFrom: String? = nil, translate: Translate? = nil) async -> Bool {
         guard active, !busy, matchesPlan, planEditor.ready, !planEditor.dirty, !catalogFailed, revision != nil, !Task.isCancelled,
               availableLocales.contains(where: { $0.utf8.elementsEqual(locale.utf8) }) else { return false }
         // Copying requires every source/destination editor to have a confirmed save.
         if copyFrom != nil, !workflow.ready { status = "Save all pending listing changes before copying a saved language."; return false }
+        // A language that so far only has App Information text gains version text and media; its editor is rebuilt from the saved draft.
+        if let existing = languages.first(where: { $0.locale.utf8.elementsEqual(locale.utf8) }), existing.text.dirty || existing.text.busy || existing.text.needsComparison {
+            status = "Save the \(StoreLocales.name(locale)) App Information text before adding this language to the version."; return false
+        }
         let ticket = UUID(); operation = ticket; adding = true
         defer { if owns(ticket) { operation = nil; adding = false } }
         do {
-            _ = try await session.addLanguage(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId, versionId: versionId, locale: locale, copyFrom: copyFrom)
+            var translation: LanguageTranslation?
+            if let translate, let copyFrom {
+                let request = try await session.translationRequest(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId, versionId: versionId, sourceLocale: copyFrom)
+                guard owns(ticket), !Task.isCancelled else { return false }
+                do { translation = try request.translation(try await translate(request.segments)) }
+                catch { guard owns(ticket) else { return false }; status = LanguageFailure.translationFailed.message; return false }
+                guard owns(ticket), !Task.isCancelled else { return false }
+            }
+            let added = try await session.addLanguage(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId, versionId: versionId, locale: locale, copyFrom: copyFrom, translation: translation)
             guard owns(ticket), !Task.isCancelled else { return true }
-            try await refresh(ticket); status = "Language added on this Mac. Existing editor inputs are kept."; return true
+            try await refresh(ticket, added: (locale, added))
+            status = translation == nil ? "Language added on this Mac. Existing editor inputs are kept."
+                : "Language added on this Mac with translated text. The name and links are copied unchanged; read each translated field before sending it."
+            return true
+        } catch LanguageFailure.sourceChanged {
+            guard owns(ticket) else { return false }; status = LanguageFailure.sourceChanged.message; return false
         } catch {
             guard owns(ticket) else { return false }
             status = (error as? LanguageFailure)?.message ?? "The language could not be confirmed. Existing edits are kept; read the saved listing again."
@@ -135,7 +157,9 @@ extension WorkspaceSession {
         for language in languages { _ = language.text.reconcile(receipt) }
     }
     private func owns(_ ticket: UUID) -> Bool { active && operation == ticket }
-    private func refresh(_ ticket: UUID) async throws {
+    /// Reads the planned listing. `added` is this editor's own confirmed language addition: only that locale may gain
+    /// its new version section and media, and only when its editor has nothing unsaved. Any other change in structure is stale.
+    private func refresh(_ ticket: UUID, added: (locale: String, localizationId: String)? = nil) async throws {
         guard matchesPlan, let token = planEditor.expected else { throw ReleaseTextFailure.stale }
         let source = try await session.versionListingMaterial(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId, versionId: versionId, planToken: token)
         try Task.checkCancellation()
@@ -146,18 +170,23 @@ extension WorkspaceSession {
             if !codes.contains(where: { $0.utf8.elementsEqual(code.utf8) }) { codes.append(code) }
         }
         guard !codes.isEmpty else { throw ReleaseTextFailure.invalid }
-        var additions: [Language] = []
+        var additions: [Language] = [], replaced: [String] = []
         do {
             for code in codes {
                 let selections = try LanguageEditorState.selections(revision: source, versionId: versionId, locale: code)
+                let localizations = Set(version.localizations.filter { $0.locale.utf8.elementsEqual(code.utf8) }.map(\.id))
                 if let existing = languages.first(where: { $0.locale.utf8.elementsEqual(code.utf8) }) {
-                    guard let editor = existing.text.editor, editor.selections.count == selections.count,
-                          selections.allSatisfy({ next in editor.selections.contains { $0.id.utf8.elementsEqual(next.id.utf8) && $0.scope == next.scope } }),
-                          Set(existing.media.map(\.localizationId)) == Set(version.localizations.filter { $0.locale.utf8.elementsEqual(code.utf8) }.map(\.id)) else { throw ReleaseTextFailure.stale }
-                    continue
+                    guard let editor = existing.text.editor else { throw ReleaseTextFailure.stale }
+                    func held(_ next: LanguageDrafts.Selection) -> Bool { editor.selections.contains { $0.id.utf8.elementsEqual(next.id.utf8) && $0.scope == next.scope } }
+                    if editor.selections.count == selections.count, selections.allSatisfy(held), !includesMedia || Set(existing.media.map(\.localizationId)) == localizations { continue }
+                    let grown = selections.filter { !held($0) }
+                    guard let added, added.locale.utf8.elementsEqual(code.utf8), !existing.text.dirty, existing.media.isEmpty,
+                          editor.selections.count + 1 == selections.count, grown.count == 1, grown[0].scope == .version,
+                          grown[0].id.utf8.elementsEqual(added.localizationId.utf8), localizations == [added.localizationId] else { throw ReleaseTextFailure.stale }
+                    replaced.append(code)
                 }
                 let text = try LanguageDraftEditor(scope: scope, revision: source, versionId: versionId, locale: code, session: session, workflow: workflow)
-                let media = version.localizations.filter { $0.locale.utf8.elementsEqual(code.utf8) }.map {
+                let media = !includesMedia ? [] : version.localizations.filter { $0.locale.utf8.elementsEqual(code.utf8) }.map {
                     MediaListingEditor(scope: scope, localization: $0, platform: version.platform, session: session, workflow: workflow)
                 }
                 let added = Language(locale: code, text: text, media: media); additions.append(added)
@@ -165,7 +194,13 @@ extension WorkspaceSession {
                 try Task.checkCancellation(); guard owns(ticket), text.editor != nil else { throw DraftFailure.invalid }
             }
             guard languages.allSatisfy({ old in codes.contains { old.locale.utf8.elementsEqual($0.utf8) } }), owns(ticket), matchesPlan,
-                  token.utf8.elementsEqual((planEditor.expected ?? "").utf8) else { throw ReleaseTextFailure.stale }
+                  token.utf8.elementsEqual((planEditor.expected ?? "").utf8),
+                  replaced.allSatisfy({ code in languages.first { $0.locale.utf8.elementsEqual(code.utf8) }?.text.dirty == false }) else { throw ReleaseTextFailure.stale }
+            for code in replaced {
+                guard let index = languages.firstIndex(where: { $0.locale.utf8.elementsEqual(code.utf8) }),
+                      let next = additions.firstIndex(where: { $0.locale.utf8.elementsEqual(code.utf8) }) else { continue }
+                let old = languages[index]; languages[index] = additions.remove(at: next); old.text.retire()
+            }
             languages += additions; revision = source; self.version = version
         } catch {
             for added in additions { added.text.retire(); added.media.forEach { $0.retire() } }; throw error

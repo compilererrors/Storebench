@@ -4,6 +4,16 @@ import SwiftUI
 /// The chart, top lists and activity breakdown each own their measure selection.
 struct AnalyticsActivityView: View {
     let periods: [AnalyticsPeriod], kind: String
+    /// The chosen activity dates; nil shows every saved date.
+    var range: PeriodDateRange? = nil
+    /// Which activity dates the figures cover, so they can be compared with the same dates in App Store Connect.
+    private var coverageText: String {
+        guard let coverage = AnalyticsPresentation.coverage(periods, range: range) else { return "No saved activity in these dates. Missing reports are unknown, not zero." }
+        let days = "\(coverage.from) through \(coverage.to) · \(coverage.savedDays) of \(coverage.requestedDays) days saved."
+        let compare = " App Store Connect totals cover its own date range, so compare the same dates."
+        guard range == nil || !coverage.complete else { return days + compare }
+        return days + " Days without a saved report are unknown, not zero." + compare + " For earlier dates, choose Download Reports… and more processing days; dates before Apple started generating reports need a historical snapshot."
+    }
     var openLocalizations: (() -> Void)? = nil
     var filters: AnyView? = nil
     var actions: AnyView? = nil
@@ -61,7 +71,7 @@ struct AnalyticsActivityView: View {
             Card(title: "Saved Analytics analysis", subtitle: Self.analysisSubtitle, actions: actions) {
                 filters
                 StorebenchFeedback(text: prepared.input == input ? "" : "Updating Analytics… Figures below still use the previous measure and scale.", height: 26)
-                StorebenchCardSection(title: "Activity summary") { StorebenchMetricGrid { metrics(summary) } }
+                StorebenchCardSection(title: "Activity summary", description: coverageText) { StorebenchMetricGrid { metrics(summary) } }
                 activityCard(summary, metric: prepared.input.metric)
                 StorebenchCardSection(title: "Activity over time", description: "Each point is one complete saved activity period in UTC. Missing intervals break the line. Indexed lines have an average of 100.") {
                     StorebenchMetricGrid(maximumColumns: 4, minimumWidth: 180) {

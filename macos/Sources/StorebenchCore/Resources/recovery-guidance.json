@@ -3,27 +3,27 @@
   "guidance": {
     "SB-APPLE-AUTH": {
       "status": "Check API key",
-      "action": "Check API key",
+      "action": "Check API Key",
       "path": "/settings/accounts?recovery=auth",
       "global": true,
-      "guide": "Connection guide",
+      "guide": "Connection Guide",
       "guideHref": "/settings/help#apple-connection"
     },
     "SB-APPLE-ACCESS": {
       "status": "Check access",
-      "action": "Check access",
+      "action": "Check Access",
       "path": "/settings/accounts?recovery=access",
       "global": true,
-      "guide": "Connection guide",
+      "guide": "Connection Guide",
       "guideHref": "/settings/help#apple-connection"
     },
     "SB-APPLE-AGREEMENT": {
       "status": "Apple setup needed",
-      "action": "Set up Apple",
+      "action": "Set Up Apple",
       "path": "https://developer.apple.com/account/",
       "global": true,
       "opensNewTab": true,
-      "guide": "Setup guide",
+      "guide": "Setup Guide",
       "guideHref": "/settings/help#apple-setup"
     },
     "SB-APPLE-KEYCHAIN": {
@@ -31,32 +31,32 @@
       "action": "Check Keychain",
       "path": "/settings/accounts?recovery=keychain",
       "global": true,
-      "guide": "Connection guide",
+      "guide": "Connection Guide",
       "guideHref": "/settings/help#apple-connection"
     },
     "SB-IMPORT-AUTH": {
       "status": "Check API key",
-      "action": "Check API key",
+      "action": "Check API Key",
       "path": "/settings/accounts?recovery=auth",
       "global": true,
-      "guide": "Connection guide",
+      "guide": "Connection Guide",
       "guideHref": "/settings/help#apple-connection"
     },
     "SB-IMPORT-ACCESS": {
       "status": "Check access",
-      "action": "Check access",
+      "action": "Check Access",
       "path": "/settings/accounts?recovery=access",
       "global": true,
-      "guide": "Connection guide",
+      "guide": "Connection Guide",
       "guideHref": "/settings/help#apple-connection"
     },
     "SB-IMPORT-AGREEMENT": {
       "status": "Apple setup needed",
-      "action": "Set up Apple",
+      "action": "Set Up Apple",
       "path": "https://developer.apple.com/account/",
       "global": true,
       "opensNewTab": true,
-      "guide": "Setup guide",
+      "guide": "Setup Guide",
       "guideHref": "/settings/help#apple-setup"
     },
     "SB-IMPORT-KEYCHAIN": {
@@ -64,14 +64,14 @@
       "action": "Check Keychain",
       "path": "/settings/accounts?recovery=keychain",
       "global": true,
-      "guide": "Connection guide",
+      "guide": "Connection Guide",
       "guideHref": "/settings/help#apple-connection"
     },
     "SB-IMPORT-INTERRUPTED": {
       "status": "Check saved import",
       "action": "Check History",
       "path": "/history",
-      "guide": "Import recovery guide",
+      "guide": "Import Recovery Guide",
       "guideHref": "/settings/help#import-recovery",
       "kind": "retry"
     },
@@ -79,7 +79,7 @@
       "status": "Check saved import",
       "action": "Check History",
       "path": "/history",
-      "guide": "Import recovery guide",
+      "guide": "Import Recovery Guide",
       "guideHref": "/settings/help#import-recovery",
       "kind": "retry"
     },
@@ -87,7 +87,7 @@
       "status": "Import in progress",
       "action": "Check History",
       "path": "/history",
-      "guide": "Import recovery guide",
+      "guide": "Import Recovery Guide",
       "guideHref": "/settings/help#import-recovery",
       "kind": "retry"
     },
@@ -95,7 +95,7 @@
       "status": "Retry import",
       "action": "Check History",
       "path": "/history",
-      "guide": "Import recovery guide",
+      "guide": "Import Recovery Guide",
       "guideHref": "/settings/help#import-recovery",
       "kind": "retry"
     },
@@ -103,7 +103,7 @@
       "status": "Try later",
       "action": "Check History",
       "path": "/history",
-      "guide": "Import recovery guide",
+      "guide": "Import Recovery Guide",
       "guideHref": "/settings/help#import-recovery",
       "kind": "retry"
     },
@@ -111,119 +111,119 @@
       "status": "Check saved import",
       "action": "Check History",
       "path": "/history",
-      "guide": "Import recovery guide",
+      "guide": "Import Recovery Guide",
       "guideHref": "/settings/help#import-recovery",
       "kind": "retry"
     },
     "SB-SYNC-STATUS": {
       "status": "Check sync status",
-      "action": "Open app",
+      "action": "Open App",
       "path": "",
-      "guide": "Sync recovery guide",
+      "guide": "Sync Recovery Guide",
       "guideHref": "/settings/help#sync-recovery",
       "kind": "retry"
     },
     "SB-SYNC-NETWORK": {
       "status": "Check sync status",
-      "action": "Open app",
+      "action": "Open App",
       "path": "",
-      "guide": "Sync recovery guide",
+      "guide": "Sync Recovery Guide",
       "guideHref": "/settings/help#sync-recovery",
       "kind": "retry"
     },
     "SB-SYNC-TIMEOUT": {
       "status": "Check sync status",
-      "action": "Open app",
+      "action": "Open App",
       "path": "",
-      "guide": "Sync recovery guide",
+      "guide": "Sync Recovery Guide",
       "guideHref": "/settings/help#sync-recovery",
       "kind": "retry"
     },
     "SB-SYNC-INTERRUPTED": {
-      "status": "Retry unfinished",
-      "action": "Open app",
+      "status": "Retry Unfinished",
+      "action": "Open App",
       "path": "",
-      "guide": "Sync recovery guide",
+      "guide": "Sync Recovery Guide",
       "guideHref": "/settings/help#sync-recovery",
       "kind": "retry"
     },
     "SB-SYNC-BUSY": {
       "status": "Download in progress",
-      "action": "Open app",
+      "action": "Open App",
       "path": "",
-      "guide": "Sync recovery guide",
+      "guide": "Sync Recovery Guide",
       "guideHref": "/settings/help#sync-recovery",
       "kind": "retry"
     },
     "SB-REPORT-LOCK": {
       "status": "Check local storage",
-      "action": "Storage settings",
+      "action": "Storage Settings",
       "path": "/settings",
       "global": true,
-      "guide": "Storage guide",
+      "guide": "Storage Guide",
       "guideHref": "/settings/help#storage"
     },
     "SB-REPORT-JOB": {
       "status": "Check sync status",
-      "action": "Open app",
+      "action": "Open App",
       "path": "",
-      "guide": "Sync recovery guide",
+      "guide": "Sync Recovery Guide",
       "guideHref": "/settings/help#sync-recovery",
       "kind": "retry"
     },
     "SB-REPORT-UNCONFIRMED": {
       "status": "Check sync status",
-      "action": "Open app",
+      "action": "Open App",
       "path": "",
-      "guide": "Sync recovery guide",
+      "guide": "Sync Recovery Guide",
       "guideHref": "/settings/help#sync-recovery",
       "kind": "retry"
     },
     "SB-REPORT-DOWNLOAD": {
       "status": "Check reports",
-      "action": "Check reports",
+      "action": "Check Reports",
       "path": "/sales#sales-reports",
-      "guide": "Sales guide",
+      "guide": "Sales Guide",
       "guideHref": "/settings/help#sales",
       "kind": "retry"
     },
     "SB-REPORT-UNAVAILABLE": {
       "status": "Report not available",
-      "action": "Check period",
+      "action": "Check Period",
       "path": "/sales#sales-reports",
-      "guide": "Availability guide",
+      "guide": "Availability Guide",
       "guideHref": "/settings/help#report-availability",
       "kind": "availability"
     },
     "SB-REPORT-REQUEST": {
       "status": "Check report selection",
-      "action": "Check reports",
+      "action": "Check Reports",
       "path": "/sales#sales-reports",
-      "guide": "Sales guide",
+      "guide": "Sales Guide",
       "guideHref": "/settings/help#sales",
       "kind": "input"
     },
     "SB-REPORT-FORMAT": {
       "status": "Check report file",
-      "action": "Check reports",
+      "action": "Check Reports",
       "path": "/sales#sales-reports",
-      "guide": "Sales guide",
+      "guide": "Sales Guide",
       "guideHref": "/settings/help#sales",
       "kind": "input"
     },
     "SB-REPORT-SIZE": {
       "status": "Choose a smaller report",
-      "action": "Check reports",
+      "action": "Check Reports",
       "path": "/sales#sales-reports",
-      "guide": "Sales guide",
+      "guide": "Sales Guide",
       "guideHref": "/settings/help#sales",
       "kind": "input"
     },
     "SB-REPORT-OVERLAP": {
       "status": "Review saved periods",
-      "action": "Check reports",
+      "action": "Check Reports",
       "path": "/sales#sales-reports",
-      "guide": "Sales guide",
+      "guide": "Sales Guide",
       "guideHref": "/settings/help#sales",
       "kind": "input"
     },
@@ -231,7 +231,7 @@
       "status": "Retry Analytics",
       "action": "Open Analytics",
       "path": "/analytics",
-      "guide": "Analytics guide",
+      "guide": "Analytics Guide",
       "guideHref": "/settings/help#analytics",
       "kind": "retry"
     },
@@ -239,7 +239,7 @@
       "status": "Retry financial download",
       "action": "Open Finance",
       "path": "/finance#financial-download",
-      "guide": "Finance guide",
+      "guide": "Finance Guide",
       "guideHref": "/settings/help#finance",
       "kind": "retry"
     },
@@ -247,31 +247,31 @@
       "status": "Retry reviews",
       "action": "Open Reviews",
       "path": "/reviews",
-      "guide": "Reviews guide",
+      "guide": "Reviews Guide",
       "guideHref": "/settings/help#reviews",
       "kind": "retry"
     },
     "SB-ANALYTICS-ACCESS": {
       "status": "Check access",
-      "action": "Check access",
+      "action": "Check Access",
       "path": "/settings/accounts?recovery=access",
       "global": true,
-      "guide": "Connection guide",
+      "guide": "Connection Guide",
       "guideHref": "/settings/help#apple-connection"
     },
     "SB-REVIEWS-ACCESS": {
       "status": "Check access",
-      "action": "Check access",
+      "action": "Check Access",
       "path": "/settings/accounts?recovery=access",
       "global": true,
-      "guide": "Connection guide",
+      "guide": "Connection Guide",
       "guideHref": "/settings/help#apple-connection"
     },
     "SB-REPORT-ACCESS": {
       "status": "Check reporting access",
-      "action": "Check reports",
+      "action": "Check Reports",
       "path": "/sales#sales-reports",
-      "guide": "Reporter setup guide",
+      "guide": "Reporter Setup Guide",
       "guideHref": "/settings/help#reporter",
       "kind": "setup",
       "opensConnection": true
@@ -280,7 +280,7 @@
       "status": "Check financial access",
       "action": "Open Finance",
       "path": "/finance#financial-download",
-      "guide": "Finance guide",
+      "guide": "Finance Guide",
       "guideHref": "/settings/help#finance",
       "kind": "setup",
       "opensConnection": true
@@ -289,7 +289,7 @@
       "status": "Connect financial reports",
       "action": "Open Finance",
       "path": "/finance#financial-download",
-      "guide": "Finance guide",
+      "guide": "Finance Guide",
       "guideHref": "/settings/help#finance",
       "kind": "setup"
     },
@@ -297,7 +297,7 @@
       "status": "Check fiscal period",
       "action": "Open Finance",
       "path": "/finance#financial-download",
-      "guide": "Finance guide",
+      "guide": "Finance Guide",
       "guideHref": "/settings/help#finance",
       "kind": "input"
     },
@@ -305,7 +305,7 @@
       "status": "Refresh downloaded review",
       "action": "Open Finance",
       "path": "/finance#financial-download",
-      "guide": "Finance guide",
+      "guide": "Finance Guide",
       "guideHref": "/settings/help#finance",
       "kind": "input"
     },
@@ -313,7 +313,7 @@
       "status": "Check fiscal calendar",
       "action": "Open Finance",
       "path": "/finance#financial-download",
-      "guide": "Finance guide",
+      "guide": "Finance Guide",
       "guideHref": "/settings/help#finance",
       "kind": "input"
     },
@@ -321,7 +321,7 @@
       "status": "Check financial report file",
       "action": "Open Finance",
       "path": "/finance#financial-download",
-      "guide": "Finance guide",
+      "guide": "Finance Guide",
       "guideHref": "/settings/help#finance",
       "kind": "input"
     },
@@ -329,7 +329,7 @@
       "status": "Check app and report",
       "action": "Open Finance",
       "path": "/finance#financial-download",
-      "guide": "Finance guide",
+      "guide": "Finance Guide",
       "guideHref": "/settings/help#finance",
       "kind": "input"
     },
@@ -337,7 +337,7 @@
       "status": "Review saved fiscal periods",
       "action": "Open Finance",
       "path": "/finance#financial-download",
-      "guide": "Finance guide",
+      "guide": "Finance Guide",
       "guideHref": "/settings/help#finance",
       "kind": "input"
     },
@@ -345,39 +345,39 @@
       "status": "Review latest saved reports",
       "action": "Open Finance",
       "path": "/finance#financial-download",
-      "guide": "Finance guide",
+      "guide": "Finance Guide",
       "guideHref": "/settings/help#finance",
       "kind": "input"
     },
     "SB-ANALYTICS-REPORT-MISSING": {
       "status": "Waiting for report type",
-      "action": "Check available reports",
+      "action": "Check Available Reports",
       "path": "/analytics#analytics-download",
-      "guide": "Analytics guide",
+      "guide": "Analytics Guide",
       "guideHref": "/settings/help#analytics",
       "kind": "availability"
     },
     "SB-ANALYTICS-PERIOD": {
       "status": "Choose available period",
-      "action": "Check available reports",
+      "action": "Check Available Reports",
       "path": "/analytics#analytics-download",
-      "guide": "Analytics guide",
+      "guide": "Analytics Guide",
       "guideHref": "/settings/help#analytics",
       "kind": "availability"
     },
     "SB-ANALYTICS-NO-INSTANCES": {
       "status": "Waiting for reports",
-      "action": "Check available reports",
+      "action": "Check Available Reports",
       "path": "/analytics#analytics-download",
-      "guide": "Analytics guide",
+      "guide": "Analytics Guide",
       "guideHref": "/settings/help#analytics",
       "kind": "availability"
     },
     "SB-ANALYTICS-SEGMENTS-PENDING": {
       "status": "Waiting for report files",
-      "action": "Check available reports",
+      "action": "Check Available Reports",
       "path": "/analytics#analytics-download",
-      "guide": "Analytics guide",
+      "guide": "Analytics Guide",
       "guideHref": "/settings/help#analytics",
       "kind": "availability"
     },
@@ -385,7 +385,7 @@
       "status": "Check Analytics selection",
       "action": "Open Analytics",
       "path": "/analytics",
-      "guide": "Analytics guide",
+      "guide": "Analytics Guide",
       "guideHref": "/settings/help#analytics",
       "kind": "input"
     },
@@ -393,7 +393,7 @@
       "status": "Check Analytics file",
       "action": "Open Analytics",
       "path": "/analytics",
-      "guide": "Analytics guide",
+      "guide": "Analytics Guide",
       "guideHref": "/settings/help#analytics",
       "kind": "input"
     },
@@ -401,7 +401,7 @@
       "status": "Select complete report files",
       "action": "Open Analytics",
       "path": "/analytics",
-      "guide": "Analytics guide",
+      "guide": "Analytics Guide",
       "guideHref": "/settings/help#analytics",
       "kind": "input"
     },
@@ -409,7 +409,7 @@
       "status": "Check app and report",
       "action": "Open Analytics",
       "path": "/analytics",
-      "guide": "Analytics guide",
+      "guide": "Analytics Guide",
       "guideHref": "/settings/help#analytics",
       "kind": "input"
     },
@@ -417,7 +417,7 @@
       "status": "Review latest saved reports",
       "action": "Open Analytics",
       "path": "/analytics",
-      "guide": "Analytics guide",
+      "guide": "Analytics Guide",
       "guideHref": "/settings/help#analytics",
       "kind": "input"
     },
@@ -425,7 +425,7 @@
       "status": "Choose a shorter period",
       "action": "Open Analytics",
       "path": "/analytics",
-      "guide": "Analytics guide",
+      "guide": "Analytics Guide",
       "guideHref": "/settings/help#analytics",
       "kind": "input"
     },
@@ -433,7 +433,7 @@
       "status": "Check review file",
       "action": "Open Reviews",
       "path": "/reviews",
-      "guide": "Reviews guide",
+      "guide": "Reviews Guide",
       "guideHref": "/settings/help#reviews",
       "kind": "input"
     },
@@ -441,7 +441,7 @@
       "status": "Check review app",
       "action": "Open Reviews",
       "path": "/reviews",
-      "guide": "Reviews guide",
+      "guide": "Reviews Guide",
       "guideHref": "/settings/help#reviews",
       "kind": "input"
     },
@@ -449,7 +449,7 @@
       "status": "Review latest saved reviews",
       "action": "Open Reviews",
       "path": "/reviews",
-      "guide": "Reviews guide",
+      "guide": "Reviews Guide",
       "guideHref": "/settings/help#reviews",
       "kind": "input"
     },
@@ -457,7 +457,7 @@
       "status": "Check keyword ideas",
       "action": "Open Keyword Ideas",
       "path": "/keywords",
-      "guide": "Keyword guide",
+      "guide": "Keyword Guide",
       "guideHref": "/settings/help#keywords",
       "kind": "input"
     },
@@ -465,7 +465,7 @@
       "status": "Check keyword ideas",
       "action": "Open Keyword Ideas",
       "path": "/keywords",
-      "guide": "Keyword guide",
+      "guide": "Keyword Guide",
       "guideHref": "/settings/help#keywords",
       "kind": "input"
     },
@@ -473,7 +473,7 @@
       "status": "Check keyword ideas",
       "action": "Open Keyword Ideas",
       "path": "/keywords",
-      "guide": "Keyword guide",
+      "guide": "Keyword Guide",
       "guideHref": "/settings/help#keywords",
       "kind": "input"
     },
@@ -481,7 +481,7 @@
       "status": "Check keyword ideas",
       "action": "Open Keyword Ideas",
       "path": "/keywords",
-      "guide": "Keyword guide",
+      "guide": "Keyword Guide",
       "guideHref": "/settings/help#keywords",
       "kind": "input"
     },
@@ -489,110 +489,110 @@
       "status": "Check keyword ideas",
       "action": "Open Keyword Ideas",
       "path": "/keywords",
-      "guide": "Keyword guide",
+      "guide": "Keyword Guide",
       "guideHref": "/settings/help#keywords",
       "kind": "input"
     },
     "SB-PUBLISH-PREPARE": {
       "status": "Review publishing requirements",
-      "action": "Open App Store changes",
+      "action": "Open App Store Changes",
       "path": "/publish",
-      "guide": "Publishing guide",
+      "guide": "Publishing Guide",
       "guideHref": "/settings/help#publishing",
       "kind": "input"
     },
     "SB-PUBLISH-PREPARE-TIMEOUT": {
       "status": "Check prepared reviews",
-      "action": "Open App Store changes",
+      "action": "Open App Store Changes",
       "path": "/publish",
-      "guide": "Approval recovery guide",
+      "guide": "Approval Recovery Guide",
       "guideHref": "/settings/help#publish-approval",
       "kind": "retry"
     },
     "SB-REPORTER-RUNTIME-DOWNLOAD": {
       "status": "Check reporting setup",
-      "action": "Connect reports",
+      "action": "Connect Reports",
       "path": "/sales#sales-reports",
-      "guide": "Reporter setup guide",
+      "guide": "Reporter Setup Guide",
       "guideHref": "/settings/help#reporter",
       "kind": "setup",
       "opensConnection": true
     },
     "SB-REPORTER-RUNTIME-INSTALL": {
       "status": "Check local storage",
-      "action": "Storage settings",
+      "action": "Storage Settings",
       "path": "/settings",
       "global": true,
-      "guide": "Reporter setup guide",
+      "guide": "Reporter Setup Guide",
       "guideHref": "/settings/help#reporter"
     },
     "SB-REPORTER-DOWNLOAD": {
       "status": "Check reporting setup",
-      "action": "Connect reports",
+      "action": "Connect Reports",
       "path": "/sales#sales-reports",
-      "guide": "Reporter setup guide",
+      "guide": "Reporter Setup Guide",
       "guideHref": "/settings/help#reporter",
       "kind": "setup",
       "opensConnection": true
     },
     "SB-REPORTER-INSTALL": {
       "status": "Check local storage",
-      "action": "Storage settings",
+      "action": "Storage Settings",
       "path": "/settings",
       "global": true,
-      "guide": "Reporter setup guide",
+      "guide": "Reporter Setup Guide",
       "guideHref": "/settings/help#reporter"
     },
     "SB-REPORTER-WORKSPACE": {
       "status": "Check local storage",
-      "action": "Storage settings",
+      "action": "Storage Settings",
       "path": "/settings",
       "global": true,
-      "guide": "Storage guide",
+      "guide": "Storage Guide",
       "guideHref": "/settings/help#storage"
     },
     "SB-REPORTER-CONNECTION": {
       "status": "Reconnect reports",
-      "action": "Connect reports",
+      "action": "Connect Reports",
       "path": "/sales#sales-reports",
-      "guide": "Reporter setup guide",
+      "guide": "Reporter Setup Guide",
       "guideHref": "/settings/help#reporter",
       "kind": "setup",
       "opensConnection": true
     },
     "SB-REPORTER-SETUP": {
       "status": "Check reporting setup",
-      "action": "Connect reports",
+      "action": "Connect Reports",
       "path": "/sales#sales-reports",
-      "guide": "Reporter setup guide",
+      "guide": "Reporter Setup Guide",
       "guideHref": "/settings/help#reporter",
       "kind": "setup",
       "opensConnection": true
     },
     "SB-REPORTER-CHANGED": {
       "status": "Check selected reporting account",
-      "action": "Connect reports",
+      "action": "Connect Reports",
       "path": "/sales#sales-reports",
-      "guide": "Reporter setup guide",
+      "guide": "Reporter Setup Guide",
       "guideHref": "/settings/help#reporter",
       "kind": "setup",
       "opensConnection": true
     },
     "SB-REPORTER-BUSY": {
       "status": "Wait for reporting connection",
-      "action": "Connect reports",
+      "action": "Connect Reports",
       "path": "/sales#sales-reports",
-      "guide": "Reporter setup guide",
+      "guide": "Reporter Setup Guide",
       "guideHref": "/settings/help#reporter",
       "kind": "retry",
       "opensConnection": true
     },
     "SB-SESSION-EXPIRED": {
       "status": "Sign in again",
-      "action": "Sign in again",
+      "action": "Sign In Again",
       "path": "/login",
       "global": true,
-      "guide": "Storage guide",
+      "guide": "Storage Guide",
       "guideHref": "/settings/help#storage"
     },
     "SB-REPORTER-KEYCHAIN": {
@@ -600,60 +600,60 @@
       "action": "Check Keychain",
       "path": "/settings/accounts?recovery=keychain",
       "global": true,
-      "guide": "Connection guide",
+      "guide": "Connection Guide",
       "guideHref": "/settings/help#apple-connection"
     },
     "SB-SYNC-PRICING": {
       "status": "Check prices",
-      "action": "Check prices",
+      "action": "Check Prices",
       "path": "/pricing",
       "global": false,
-      "guide": "Connection guide",
+      "guide": "Connection Guide",
       "guideHref": "/settings/help#apple-connection"
     },
     "SB-SYNC-SALES-NO-ROWS": {
       "status": "Check reports",
-      "action": "Check reports",
+      "action": "Check Reports",
       "path": "/sales#sales-reports",
-      "guide": "Sales guide",
+      "guide": "Sales Guide",
       "guideHref": "/settings/help#sales",
       "kind": "availability"
     },
     "SB-ANALYTICS-SETUP": {
       "status": "Setup needed",
-      "action": "Set up Analytics",
+      "action": "Set Up Analytics",
       "path": "/publish?scope=analytics-ongoing",
-      "guide": "Analytics guide",
+      "guide": "Analytics Guide",
       "guideHref": "/settings/help#analytics"
     },
     "SB-ANALYTICS-INACTIVE": {
       "status": "Setup needed",
       "action": "Resume Analytics",
       "path": "/publish?scope=analytics-ongoing",
-      "guide": "Analytics guide",
+      "guide": "Analytics Guide",
       "guideHref": "/settings/help#analytics"
     },
     "SB-SYNC-FISCAL-PERIOD": {
       "status": "Choose period",
-      "action": "Choose fiscal period",
+      "action": "Choose Fiscal Period",
       "path": "/finance#financial-download",
       "focus": "finance-download-period",
-      "guide": "Finance guide",
+      "guide": "Finance Guide",
       "guideHref": "/settings/help#finance"
     },
     "SB-SYNC-CONNECTION": {
       "status": "Connect reports",
-      "action": "Connect reports",
+      "action": "Connect Reports",
       "path": "/sales#sales-reports",
-      "guide": "Sales guide",
+      "guide": "Sales Guide",
       "guideHref": "/settings/help#sales",
       "opensConnection": true
     },
     "SB-REPORT-PERIOD": {
       "status": "Check reports",
-      "action": "Check reports",
+      "action": "Check Reports",
       "path": "/sales#sales-reports",
-      "guide": "Sales guide",
+      "guide": "Sales Guide",
       "guideHref": "/settings/help#sales",
       "kind": "retry"
     },
@@ -661,7 +661,7 @@
       "status": "Retry reviews",
       "action": "Open Reviews",
       "path": "/reviews",
-      "guide": "Reviews guide",
+      "guide": "Reviews Guide",
       "guideHref": "/settings/help#reviews",
       "kind": "retry"
     },
@@ -669,7 +669,7 @@
       "status": "Choose a smaller review file",
       "action": "Open Reviews",
       "path": "/reviews",
-      "guide": "Reviews guide",
+      "guide": "Reviews Guide",
       "guideHref": "/settings/help#reviews",
       "kind": "input"
     },
@@ -677,23 +677,23 @@
       "status": "Retry Analytics",
       "action": "Open Analytics",
       "path": "/analytics",
-      "guide": "Analytics guide",
+      "guide": "Analytics Guide",
       "guideHref": "/settings/help#analytics",
       "kind": "retry"
     },
     "SB-ANALYTICS-NOT-READY": {
       "status": "Waiting for reports",
-      "action": "Check available reports",
+      "action": "Check Available Reports",
       "path": "/analytics#analytics-download",
-      "guide": "Analytics guide",
+      "guide": "Analytics Guide",
       "guideHref": "/settings/help#analytics",
       "kind": "availability"
     },
     "SB-PUBLISH-APPROVAL": {
       "status": "Check publishing history",
-      "action": "Open App Store changes",
+      "action": "Open App Store Changes",
       "path": "/publish",
-      "guide": "Publishing guide",
+      "guide": "Publishing Guide",
       "guideHref": "/settings/help#publishing",
       "kind": "retry"
     },
@@ -701,7 +701,7 @@
       "status": "Retry financial download",
       "action": "Open Finance",
       "path": "/finance#financial-download",
-      "guide": "Finance guide",
+      "guide": "Finance Guide",
       "guideHref": "/settings/help#finance",
       "kind": "retry"
     },
@@ -709,7 +709,7 @@
       "status": "Retry financial download",
       "action": "Open Finance",
       "path": "/finance#financial-download",
-      "guide": "Finance guide",
+      "guide": "Finance Guide",
       "guideHref": "/settings/help#finance",
       "kind": "retry"
     },
@@ -717,31 +717,31 @@
       "status": "Retry financial download",
       "action": "Open Finance",
       "path": "/finance#financial-download",
-      "guide": "Finance guide",
+      "guide": "Finance Guide",
       "guideHref": "/settings/help#finance",
       "kind": "retry"
     },
     "SB-REPORT-NETWORK": {
       "status": "Check reports",
-      "action": "Check reports",
+      "action": "Check Reports",
       "path": "/sales#sales-reports",
-      "guide": "Sales guide",
+      "guide": "Sales Guide",
       "guideHref": "/settings/help#sales",
       "kind": "retry"
     },
     "SB-REPORT-SERVICE": {
       "status": "Check reports",
-      "action": "Check reports",
+      "action": "Check Reports",
       "path": "/sales#sales-reports",
-      "guide": "Sales guide",
+      "guide": "Sales Guide",
       "guideHref": "/settings/help#sales",
       "kind": "retry"
     },
     "SB-REPORTER-RESPONSE": {
       "status": "Check reporting setup",
-      "action": "Connect reports",
+      "action": "Connect Reports",
       "path": "/sales#sales-reports",
-      "guide": "Reporter setup guide",
+      "guide": "Reporter Setup Guide",
       "guideHref": "/settings/help#reporter",
       "kind": "setup",
       "opensConnection": true
@@ -749,9 +749,9 @@
   },
   "financeUnavailable": {
     "status": "Report not available",
-    "action": "Check fiscal period",
+    "action": "Check Fiscal Period",
     "path": "/finance#financial-download",
-    "guide": "Finance guide",
+    "guide": "Finance Guide",
     "guideHref": "/settings/help#finance",
     "kind": "availability",
     "focus": "finance-download-period",

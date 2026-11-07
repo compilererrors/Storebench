@@ -146,7 +146,8 @@ public final class AppStoreConnectClient: NSObject, URLSessionTaskDelegate, Send
             try accessCheck()
             request.timeoutInterval = Self.readTimeout(attempt)
             let result: BoundedResponse.Result
-            do { result = try await pool.read(request, maximumBytes: maxBytes) } catch where Self.retriesConnection(error, attempt: attempt) { continue }
+            let current = request, pool = pool
+            do { result = try await AppleReadAdmission.shared(for: origin.host).run { try await pool.read(current, maximumBytes: maxBytes) } } catch where Self.retriesConnection(error, attempt: attempt) { continue }
             try accessCheck()
             let data = result.data, http = result.response
             if [429, 500, 502, 503, 504].contains(http.statusCode), attempt < 2 {
@@ -170,6 +171,16 @@ public final class AppStoreConnectClient: NSObject, URLSessionTaskDelegate, Send
     /// The newest uploaded build with its icons: an app without a version on the App Store has no App Store icon yet.
     func latestBuildIconResources(appId: String) async throws -> [Resource] {
         try await page("/v1/builds?filter[app]=" + appId + "&sort=-uploadedDate&limit=1&include=icons").included ?? []
+    }
+
+    /// The first page of a list with its `included` resources, and whether Apple has more after it. Its bytes are shared with the
+    /// first page `listWithIncluded` reads for the same path.
+    public func firstPageWithIncluded(_ path: String) async throws -> (data: [Resource], included: [Resource], more: Bool) {
+        guard path.hasPrefix("/v1/") || path.hasPrefix("/v2/"), let initial = URLComponents(string: path) else { throw Failure.invalidPath }
+        let page = try await page(path)
+        guard let link = page.links?.next else { return (page.data.resources, page.included ?? [], false) }
+        _ = try nextCursor(link, initial: initial, current: nil)
+        return (page.data.resources, page.included ?? [], true)
     }
 
     /// Every page of a list with its `included` resources, following only Apple's cursor on the same path and query.
@@ -230,7 +241,7 @@ public final class AppStoreConnectClient: NSObject, URLSessionTaskDelegate, Send
             let account = token.account
             let key = JSONText.array([.string(origin.absoluteString), .string(account.id), .string(account.keyId),
                 .string(account.issuerId ?? ""), .string(account.keyType), .string(readCacheScope), .string(path)]).sha256
-            data = try await readCache.read(key) { try await self.pageBytes(path) }
+            data = try await readCache.read(key, host: origin.host) { try await self.pageBytes(path) }
         } else { data = try await pageBytes(path) }
         try accessCheck(); try Task.checkCancellation()
         guard let page = try? JSONDecoder().decode(Page.self, from: data) else { throw Failure.unreadableResponse }
@@ -247,7 +258,8 @@ public final class AppStoreConnectClient: NSObject, URLSessionTaskDelegate, Send
             try accessCheck()
             request.timeoutInterval = Self.readTimeout(attempt)
             let result: BoundedResponse.Result
-            do { result = try await pool.read(request, maximumBytes: 4_000_000) } catch where Self.retriesConnection(error, attempt: attempt) { continue }
+            let current = request, pool = pool
+            do { result = try await AppleReadAdmission.shared(for: origin.host).run { try await pool.read(current, maximumBytes: 4_000_000) } } catch where Self.retriesConnection(error, attempt: attempt) { continue }
             try accessCheck()
             let data = result.data, http = result.response
             AppleRequestBudget.record(http, keyId: token.account.keyId)

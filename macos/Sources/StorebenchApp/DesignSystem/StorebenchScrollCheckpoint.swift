@@ -79,9 +79,13 @@ struct NavigationPresentationContext {
     /// The last result this window read for `key`, shown at once while the view reads again in the background.
     @MainActor func rememberedRead<Value>(_ key: String, as type: Value.Type = Value.self) -> Value? { store.remembered(read: key, as: type)?.value }
     @MainActor func rememberRead<Value>(_ value: Value, _ key: String) { store.remember(value, read: key) }
+    /// When the read a view shows from `rememberedRead` was taken, for its "Last read" line.
+    @MainActor func rememberedReadAt(_ key: String) -> Date? { store.readAt(key) }
     /// Encodable reads are also saved in the encrypted database, so they show at once after the next launch too.
     @MainActor func rememberedRead<Value: Decodable>(_ key: String, as type: Value.Type = Value.self) -> Value? { store.remembered(read: key, as: type)?.value }
     @MainActor func rememberRead<Value: Codable & Sendable>(_ value: Value, _ key: String) { store.remember(value, read: key) }
+    /// The remembered read, decoding one saved by an earlier launch away from the main thread.
+    @MainActor func rememberedDecodedRead<Value: Decodable & Sendable>(_ key: String, as type: Value.Type = Value.self) async -> Value? { await store.rememberedDecoded(read: key, as: type)?.value }
 }
 private struct NavigationPresentationKey: EnvironmentKey { static let defaultValue: NavigationPresentationContext? = nil }
 extension EnvironmentValues {

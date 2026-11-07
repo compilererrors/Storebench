@@ -22,6 +22,7 @@ struct AsoDiffView: View {
     @State private var onlyChanged = false
     @State private var choices = ViewPeriods()
     @State private var timelineMetric = "impressions"
+    @State private var timelineIndexed = false
     @State private var timelineId = ""
     @State private var analytics: [AnalyticsPeriod] = []
     @State private var status = ""
@@ -100,7 +101,9 @@ struct AsoDiffView: View {
             Text("Imported \(snapshot.savedAt) · \(snapshot.fields.count) saved ASO fields")
         }.font(.sbCaption).textSelection(.enabled).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
     }
-    private var timelinePoints: [AsoPoint] { AsoComparison.points(timelineMetric, analytics: analytics, sales: outcomeSales) }
+    /// The measures drawn together on the timeline, in the order chosen.
+    private var timelineMetrics: [String] { ChartMeasures.chosen(timelineMetric, allowed: metrics.map(\.key), fallback: [AsoComparison.graphMetric(analytics: analytics, sales: outcomeSales)]) }
+    private var timelinePoints: [AsoPoint] { timelineMetrics.flatMap { AsoComparison.points($0, analytics: analytics, sales: outcomeSales) } }
     private var latestDate: String { (timelinePoints.map(\.date) + snapshots.map { String($0.at.prefix(10)) }).max() ?? "" }
     private var visibleSnapshots: [AsoSnapshot] {
         let range = try? choices.range(.asoDiffRange).resolve(latest: latestDate)
@@ -108,18 +111,24 @@ struct AsoDiffView: View {
     }
     private var timeline: some View {
         let range = try? choices.range(.asoDiffRange).resolve(latest: latestDate)
-        let points = timelinePoints.filter { range?.contains($0.date) ?? true }
+        let chosen = timelineMetrics
+        let reported = chosen.map { key in
+            SavedTimeSeries.Series(key: key, label: metrics.first { $0.key == key }?.title ?? key,
+                                   points: AsoComparison.points(key, analytics: analytics, sales: outcomeSales).filter { range?.contains($0.date) ?? true }.map { .init(start: $0.date, end: $0.date, value: $0.value) })
+        }
+        let most = reported.map(\.points.count).max() ?? 0
         let visible = visibleSnapshots, selected = visible.first { $0.id == timelineId } ?? visible.last
         return VStack(alignment: .leading, spacing: 20) {
             Card(title: "ASO changes and activity over time", subtitle: "Saved daily reports with observations of released versions. Observation dates do not establish the exact publication date or an ASO effect.") {
-                StorebenchPicker("Graph metric", selection: $timelineMetric) { selectionOptions(metrics) { SelectionOption("\($0.title) · \(AsoComparison.points($0.key, analytics: analytics, sales: outcomeSales).count) daily dates", value: $0.key) } }
+                ChartMeasureToggles(options: metrics.map { (key: $0.key, title: "\($0.title) · \(AsoComparison.points($0.key, analytics: analytics, sales: outcomeSales).count) daily dates") }, chosen: chosen) { timelineMetric = $0 }
+                ChartScalePicker(indexed: $timelineIndexed)
                 PeriodRangeField(choice: choices.rangeBinding(.asoDiffRange, session: session), latest: latestDate, title: "Time range")
                 PeriodPreferencesNotice(periods: choices)
-                if points.isEmpty { Text("No daily reports in this range. Version dates remain available; missing reports are not zero activity.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
-                SavedReportChart(series: [.init(key: timelineMetric, label: metrics.first { $0.key == timelineMetric }?.title ?? timelineMetric,
-                                              points: points.map { .init(start: $0.date, end: $0.date, value: $0.value) })],
-                                 markers: visible.map { .init(date: String($0.at.prefix(10)), label: "\($0.version) \($0.dateCreated ? "created" : "saved")", active: $0.id == selected?.id) })
-                if points.count == 1 { Text("One daily report cannot form a trend. Download more report dates to extend the line.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted) }
+                if most == 0 { Text("No daily reports in this range. Version dates remain available; missing reports are not zero activity.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
+                SavedReportChart(series: timelineIndexed ? SavedTimeSeries.indexed(reported) : reported,
+                                 markers: visible.map { .init(date: String($0.at.prefix(10)), label: "\($0.version) \($0.dateCreated ? "created" : "saved")", active: $0.id == selected?.id) },
+                                 format: { timelineIndexed ? AsoProgress.count($0.rounded()) : AsoProgress.count($0) })
+                if most == 1 { Text("One daily report cannot form a trend. Download more report dates to extend the line.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted) }
                 Text("Gaps mean missing daily reports, not zero activity. Select a saved version below to inspect its fields.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
                 if !visible.isEmpty {
                     StorebenchPicker("Inspect version on timeline", selection: Binding(get: { selected?.id ?? "" }, set: { timelineId = $0 })) {

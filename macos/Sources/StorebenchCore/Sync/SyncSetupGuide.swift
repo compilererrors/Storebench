@@ -36,13 +36,13 @@ public enum SyncSetupGuide {
         return [reportsStep(reports), analyticsStep(analytics), fiscalStep(fiscal), syncStep(synced ? .done : .todo)]
     }
     static func reportsStep(_ state: State) -> Step {
-        Step(id: "reports", title: "Connect Sales and Finance reports", detail: "Paste a Reporter token from App Store Connect, or save a vendor number for a team key. Done once in Sales.", action: "Connect Reports", source: "sales", state: state)
+        Step(id: "reports", title: "Connect Sales and Trends and financial reports", detail: "Paste a Reporter token from App Store Connect (Trends → Sales and Trends Reports → About Reports (?) → Generate Reporter Token), or save a vendor number for a team key. Done once, in Sales and Trends.", action: "Connect Reports", source: "sales", state: state)
     }
     static func analyticsStep(_ state: State) -> Step {
         Step(id: "analytics", title: "Turn on Analytics reports", detail: "Ask Apple to start preparing Analytics reports for this app. Apple takes a day or two to deliver the first ones.", action: "Set Up Analytics", source: "downloads", state: state)
     }
     static func fiscalStep(_ state: State) -> Step {
-        Step(id: "fiscal", title: "Choose Financial report periods", detail: "Pick which fiscal months to download in Financial Reports. Apple's fiscal months differ from calendar months.", action: "Choose Periods", source: "finance", state: state)
+        Step(id: "fiscal", title: "Choose Financial report periods", detail: "Pick which fiscal months to download in Payments and Financial Reports. Apple's fiscal months differ from calendar months.", action: "Choose Periods", source: "finance", state: state)
     }
     static func syncStep(_ state: State) -> Step {
         Step(id: "sync", title: "Sync app data", detail: "Downloads every source that is set up. Sources that still need setup are skipped and keep their saved data.", action: "Sync", source: nil, state: state)

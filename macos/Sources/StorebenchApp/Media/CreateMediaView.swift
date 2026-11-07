@@ -21,10 +21,16 @@ struct CreateMediaView: View {
     @State private var creating = false
     @State private var newName = ""
     @State private var newTarget = MediaCards.defaultTarget.id
-    @State private var screenshots: [String: DecodedScreenshot] = [:]
+    @State private var images = MediaCardImages()
+    /// Font files used by the open set's cards, by content hash.
+    @State private var fonts: [String: Data] = [:]
+    @State private var loads: [String: UUID] = [:]
     @State private var preview: ScreenshotPreview?
     @State private var previewIssue = ""
     @State private var dragStart: MediaCard?
+    @State private var translateTo = ""
+    @State private var translationTargets: [String] = []
+    @State private var translation: ListingTranslationRequest?
     @FocusState private var canvasFocused: Bool
     @Environment(\.workspaceHeight) private var viewportHeight
     @Environment(\.confirmDestructive) private var confirm
@@ -44,9 +50,17 @@ struct CreateMediaView: View {
                 cardsCard(set)
                 editorCard(set, card: current, index: index)
                 saveCard(set)
+                translateCard(set)
             }
         }
         .task { await load() }
+        .task(id: textLanguage) {
+            let source = textLanguage, found = await ListingTranslation.translatableTargets(from: source, among: StoreLocales.codes)
+            guard !Task.isCancelled, source == textLanguage else { return }
+            translationTargets = found
+            if !found.contains(translateTo) { translateTo = found.first ?? "" }
+        }
+        .listingTranslation(translation) { request, translate in await translateSet(request, translate) } finished: { translation = nil }
         .task(id: history?.set) {
             // Each change is saved on this Mac shortly after editing pauses.
             guard dirty, !stale else { return }
@@ -54,7 +68,8 @@ struct CreateMediaView: View {
             guard !Task.isCancelled else { return }
             _ = await save()
         }
-        .task(id: PreviewRequest(card: current, width: opened?.width ?? 0, height: opened?.height ?? 0, loaded: current?.screenshot.map { screenshots[$0.hash] != nil } ?? true)) { await renderPreview() }
+        // The preview loads its selected screenshot at full size; other cards draw from small decodes.
+        .task(id: PreviewRequest(card: current, width: opened?.width ?? 0, height: opened?.height ?? 0, loaded: (current?.screenshot.map { images.full($0.hash) != nil } ?? true) && (current.map { font($0) != nil || $0.style.typeface != .file } ?? true))) { await renderPreview() }
         .trackUnsavedChanges(dirty, busy: busy || saving, onSave: { await save() })
     }
 
@@ -68,8 +83,8 @@ struct CreateMediaView: View {
                 StorebenchSetupStep(number: step.number, title: step.title, detail: step.needed.first ?? step.detail, done: step.done) {
                     if step.id == .release, let openReleaseStep {
                         StorebenchActionGroup {
-                            Button("Open Text and Screenshots") { openReleaseStep(ReleaseWizard.phase(containing: "local:") ?? "listing") }.buttonStyle(StorebenchButtonStyle(step.current ? .primary : .secondary))
-                                .help("Open Release step 2, where screenshots are chosen from Asset Library")
+                            Button("Open Release Step 2") { openReleaseStep(ReleaseWizard.phase(containing: "local:") ?? "listing") }.buttonStyle(StorebenchButtonStyle(step.current ? .primary : .secondary))
+                                .help("Open Release step 2, Text and Screenshots, where screenshots are chosen from Asset Library")
                         }
                     }
                 }
@@ -131,7 +146,7 @@ struct CreateMediaView: View {
                     ForEach(Array(set.cards.enumerated()), id: \.element.id) { position, card in
                         Button { select(card.id) } label: {
                             VStack(spacing: StorebenchTheme.space(1)) {
-                                MediaCardThumbnail(card: card, width: set.width, height: set.height, screenshot: card.screenshot.flatMap { screenshots[$0.hash] })
+                                MediaCardThumbnail(card: card, width: set.width, height: set.height, screenshot: card.screenshot.flatMap { images.thumbnail($0.hash) }, font: font(card))
                                     .frame(height: 150)
                                     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(card.id == current?.id ? StorebenchTheme.accent : StorebenchTheme.border, lineWidth: card.id == current?.id ? 3 : 1))
                                 Text("\(position + 1)").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
@@ -159,15 +174,17 @@ struct CreateMediaView: View {
     // MARK: Editing one card
 
     private func editorCard(_ set: MediaCardSet, card: MediaCard, index: Int) -> some View {
-        Card(title: "Card \(index + 1)", subtitle: "Changes appear in the preview and are saved on this Mac. Undo and Redo cover every change in this set.") {
+        // The settings scroll on their own beside the preview, so the card stays in view while it changes.
+        let height = min(760, max(480, viewportHeight - 220))
+        return Card(title: "Card \(index + 1)", subtitle: "Changes appear in the preview and are saved on this Mac. Undo and Redo cover every change in this set. Scroll the settings to keep the preview in view.") {
             StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 320) {
                 VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
-                    canvas(set, card: card).padding(16).frame(height: min(620, max(360, viewportHeight * 0.62)))
+                    canvas(set, card: card).padding(16).frame(height: height - 96 - StorebenchTheme.gap * 2)
                         .background(StorebenchTheme.nav, in: RoundedRectangle(cornerRadius: 12))
                     StorebenchTextSlot(text: previewIssue, height: 48, font: .sbCallout, color: StorebenchTheme.color("color-danger"), live: true)
                     StorebenchTextSlot(text: "Drag the screenshot to move the crop after zooming in. Arrow keys move it, + and − zoom, Delete removes the card.", height: 48, font: .sbCaption, color: StorebenchTheme.muted)
                 }
-                controls(card)
+                ScrollView(.vertical) { controls(card).padding(.trailing, StorebenchTheme.space(3)) }.frame(height: height)
             }
         }
     }
@@ -233,6 +250,9 @@ struct CreateMediaView: View {
                 }
                 StorebenchSliderField(title: "Zoom", value: field(\.zoom, "zoom"), range: 1...4, step: 0.01, percentage: true)
                 StorebenchSliderField(title: "Screenshot width", value: style(\.screenshotWidth, "screenshotWidth"), range: 0.4...1, step: 0.01, percentage: true)
+                StorebenchTextSlot(text: opened.map { MediaCards.placement(card, width: $0.width, height: $0.height).limited } == true
+                                   ? "The screenshot is as tall as its space allows, so a larger width does not make it bigger. Lower Space for text or the margin to give it more room." : "",
+                                   height: 34, font: .sbCaption, color: StorebenchTheme.muted, live: true)
                 StorebenchSliderField(title: "Corner radius (%)", value: style(\.cornerRadius, "cornerRadius"), range: 0...20, step: 0.5)
                 StorebenchSliderField(title: "Border width (%)", value: style(\.borderWidth, "borderWidth"), range: 0...6, step: 0.1)
                 StorebenchColorField("Border Color", selection: color(\.borderColor, "borderColor"))
@@ -250,9 +270,10 @@ struct CreateMediaView: View {
                 Text("Body Text · \(card.body.utf16.count)/\(MediaCards.bodyLimit)")
                 StorebenchTextArea(text: text(\.body, MediaCards.bodyLimit, lines: true), height: StorebenchTheme.textarea(rows: 3)).accessibilityLabel("Body text")
                 Text("Short text reads best: about 4 to 8 words in the title. Long text is reduced until it fits; if it still does not fit, the preview says so.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
-                StorebenchChoicePicker("Typeface", selection: style(\.typeface, "typeface"), options: MediaCardStyle.Typeface.allCases.map { ($0, $0.label) })
+                typefaceControls(card)
                 StorebenchChoicePicker("Alignment", selection: style(\.alignment, "alignment"), options: MediaCardStyle.Alignment.allCases.map { ($0, $0.label) })
                 StorebenchSliderField(title: "Text size", value: style(\.textSize, "textSize"), range: 0.6...1.5, step: 0.01, percentage: true)
+                StorebenchTextSlot(text: textSizeNote(card), height: 34, font: .sbCaption, color: StorebenchTheme.muted, live: true)
                 if card.layout.usesScreenshot { StorebenchSliderField(title: "Space for text", value: style(\.textSpace, "textSpace"), range: 0.12...0.5, step: 0.01, percentage: true) }
                 StorebenchMetricGrid(maximumColumns: 3, minimumWidth: 140) {
                     StorebenchColorField("Title Color", selection: color(\.titleColor, "titleColor"))
@@ -261,6 +282,34 @@ struct CreateMediaView: View {
                 }
             }.padding(.top, 8)
         }
+    }
+
+    /// The typeface choice, with the installed family or the font file when one of those is chosen.
+    @ViewBuilder private func typefaceControls(_ card: MediaCard) -> some View {
+        StorebenchChoicePicker("Typeface", selection: Binding(get: { card.style.typeface }, set: { value in
+            if value == .file && card.style.fontFile == nil { chooseFont(); return }
+            change("typeface") { $0.style.typeface = value; if value == .installed && $0.style.fontFamily == nil { $0.style.fontFamily = MediaCardRenderer.installedFamilies.first { $0 == "Avenir Next" } ?? MediaCardRenderer.installedFamilies.first } }
+        }), options: MediaCardStyle.Typeface.allCases.map { ($0, $0.label) })
+        if card.style.typeface == .installed {
+            StorebenchSearchPicker("Font Family", selection: Binding(get: { card.style.fontFamily ?? "" }, set: { value in change("fontFamily") { $0.style.fontFamily = value } }),
+                                   hint: "Fonts installed on this Mac. A card set opened on another Mac needs the same font.") {
+                MediaCardRenderer.installedFamilies.map { SelectionOption($0, value: $0) }
+            }
+        }
+        if card.style.typeface == .file || card.style.fontFile != nil {
+            StorebenchTextSlot(text: card.style.fontFile.map { "\($0.family) · \($0.name)" } ?? "No font file chosen.", height: 34, font: .sbCallout, color: StorebenchTheme.muted)
+            StorebenchActionGroup {
+                Button(card.style.fontFile == nil ? "Choose Font File…" : "Replace Font File…") { chooseFont() }
+                    .help("Add a TrueType or OpenType font file. It is saved encrypted on this Mac with the card set.")
+            }
+        }
+    }
+    /// Says when Space for text makes the text smaller than the chosen size.
+    private func textSizeNote(_ card: MediaCard) -> String {
+        guard let set = opened, [card.title, card.subtitle, card.body].contains(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { return "" }
+        guard let share = MediaCardRenderer.textShare(card, width: set.width, height: set.height, font: font(card)) else { return "" }
+        guard share < 0.995 else { return "" }
+        return "Shown at \(Int((share * card.style.textSize * 100).rounded())) % so the text fits its space. Raise Space for text or shorten the text to show it larger."
     }
 
     private func backgroundControls(_ card: MediaCard) -> some View {
@@ -300,11 +349,70 @@ struct CreateMediaView: View {
         }
     }
 
+    // MARK: Other languages
+
+    /// The language the open set's text is written in. Sets made before a language was chosen are treated as American English.
+    private var textLanguage: String { opened?.language ?? "en-US" }
+
+    private func translateCard(_ set: MediaCardSet) -> some View {
+        Card(title: "Other Languages", subtitle: "Make a copy of this card set in another language. Apple’s translation runs on this Mac and translates every title, subtitle and body text. The copy keeps the same background, layout and screenshots, so replace screenshots that show text from your app in another language.", help: "media") {
+            StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 260) {
+                StorebenchPicker("Card Text Language", selection: Binding(get: { textLanguage }, set: { value in change("language", set: { $0.language = value }) })) {
+                    selectionOptions(StoreLocales.codes) { SelectionOption(StoreLocales.name($0), value: $0) }
+                }
+                StorebenchPicker("Translate To", selection: $translateTo) {
+                    selectionOptions(translationTargets) { SelectionOption(StoreLocales.name($0), value: $0) }
+                }
+            }
+            Text(translationTargets.isEmpty ? "This Mac cannot translate \(StoreLocales.name(textLanguage)). Translation needs macOS 15 or later and a language Apple’s translation supports."
+                 : "The new card set is named after this one and the language. macOS asks before it downloads a language it does not have yet.")
+                .font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
+            StorebenchActionGroup {
+                Button(translation == nil ? "Translate Card Set" : "Translating…") {
+                    guard !translateTo.isEmpty else { return }
+                    Task {
+                        if dirty, !(await save()) { return }
+                        translation = ListingTranslationRequest(source: textLanguage, target: translateTo)
+                    }
+                }.help("Create a translated copy of this card set").storebenchWorking(translateTo.isEmpty || MediaCardTranslation.segments(set).isEmpty || translation != nil)
+            }.storebenchWorking(busy || stale)
+        }
+    }
+
+    /// Creates the translated set as a new saved set and opens it. The open set is left unchanged.
+    private func translateSet(_ request: ListingTranslationRequest, _ translate: TextTranslator) async {
+        guard let session, let source = opened, request.source == textLanguage, !busy, !stale else { return }
+        working = true; defer { working = false }
+        do {
+            let texts = MediaCardTranslation.segments(source)
+            let translated: [String]
+            do { translated = try await translate(texts) } catch { throw MediaCardFailure.translation }
+            let copy = try MediaCardTranslation.translated(source, to: request.target, translations: translated)
+            guard opened == source, savedSet == source else { status = "This card set changed while it was being translated. Translate it again."; statusError = true; return }
+            let next = try await session.saveMediaCardSet(accountId: account.id, appId: app.id, set: copy, expected: 0)
+            saved = try await session.mediaCardSets(accountId: account.id, appId: app.id)
+            show(.init(revision: next, set: copy))
+            status = "\(copy.name) created. Read each card’s text and replace screenshots that show another language, then save the cards to Asset Library."; statusError = false
+        } catch let failure as MediaCardFailure { status = failure.message; statusError = true }
+        catch { status = "The translated card set could not be saved. This card set is unchanged."; statusError = true }
+    }
+
     // MARK: Bindings
 
     private func change(_ key: String, _ body: (inout MediaCard) -> Void) {
         guard !stale, let index else { return }
         history?.change(key, now: ProcessInfo.processInfo.systemUptime) { body(&$0.cards[index]) }
+    }
+    /// Applies a finished file load to the card it was chosen for. Returns the card's position, or nil when it no longer applies.
+    private func finish(_ load: MediaCardLoad, _ key: String, _ body: (inout MediaCard) -> Void) -> Int? {
+        guard !stale, let position = load.position(in: opened, newest: loads) else { return nil }
+        loads[load.key] = nil
+        history?.change(key, now: ProcessInfo.processInfo.systemUptime) { body(&$0.cards[position]) }
+        return position
+    }
+    private func start(_ kind: MediaCardLoad.Kind) -> MediaCardLoad? {
+        guard let set = opened, let card = current else { return nil }
+        let load = MediaCardLoad(setId: set.id, cardId: card.id, kind: kind); loads[load.key] = load.ticket; return load
     }
     private func change(_ key: String, set body: (inout MediaCardSet) -> Void) {
         guard !stale else { return }
@@ -350,7 +458,7 @@ struct CreateMediaView: View {
         return String(format: "#%02x%02x%02x", Int(Double((rgb >> 16) & 255) * 0.62), Int(Double((rgb >> 8) & 255) * 0.62), Int(Double(rgb & 255) * 0.62))
     }
     private func suggestions(_ card: MediaCard) -> [String]? {
-        card.screenshot.flatMap { screenshots[$0.hash] }.map { MediaCardColors.suggestions($0) }
+        card.screenshot.flatMap { images.thumbnail($0.hash) }.map { MediaCardColors.suggestions($0) }
     }
 
     // MARK: Actions
@@ -373,6 +481,7 @@ struct CreateMediaView: View {
         } catch { status = "Card sets could not be opened. Your saved files are unchanged."; statusError = true }
     }
     private func show(_ value: WorkspaceSession.SavedMediaCardSet) {
+        if value.set.id != opened?.id { images.removeAll() }
         history = MediaCardHistory(value.set); savedSet = value.set; revision = value.revision; stale = false
         selectedId = value.set.cards.first?.id ?? ""; preview = nil; previewIssue = ""
         Task { await loadScreenshots(value.set) }
@@ -431,20 +540,63 @@ struct CreateMediaView: View {
         } catch { status = "Changes could not be saved on this Mac. They stay here; try again before leaving."; statusError = true; return false }
     }
 
+    /// Reads the open set's screenshots as small decodes for the thumbnails, the selected card's first, then its font files.
+    /// Full-size decodes are made only for the selected card and for exports.
     private func loadScreenshots(_ set: MediaCardSet) async {
         guard let session else { return }
-        for shot in set.cards.compactMap(\.screenshot) where screenshots[shot.hash] == nil {
+        let shots = set.cards.compactMap(\.screenshot), first = current?.screenshot?.hash
+        for shot in shots.sorted(by: { ($0.hash == first ? 0 : 1) < ($1.hash == first ? 0 : 1) }) where images.thumbnail(shot.hash) == nil {
             do {
                 let bytes = try await session.mediaCardScreenshot(accountId: account.id, appId: app.id, hash: shot.hash)
-                screenshots[shot.hash] = try await ScreenshotRenderer.loadAsync(bytes)
+                images.keepThumbnail(try await ScreenshotRenderer.loadAsync(bytes, maximumEdge: MediaCardImages.thumbnailEdge), shot.hash)
             } catch is CancellationError { return } catch { previewIssue = "A saved screenshot could not be opened. Choose it again on the cards that show an empty frame." }
+        }
+        for file in set.cards.compactMap(\.style.fontFile) where fonts[file.hash] == nil {
+            do { fonts[file.hash] = try await session.mediaCardFont(accountId: account.id, appId: app.id, hash: file.hash) }
+            catch is CancellationError { return } catch { previewIssue = MediaCardFailure.font.message }
+        }
+    }
+    /// The full-size screenshot of a card, decoded when it is not kept; nil when it cannot be read.
+    @discardableResult private func loadFull(_ card: MediaCard?) async -> DecodedScreenshot? {
+        guard let shot = card?.screenshot, let session else { return nil }
+        if let kept = images.full(shot.hash) { images.touch(shot.hash); return kept }
+        do {
+            let image = try await ScreenshotRenderer.loadAsync(try await session.mediaCardScreenshot(accountId: account.id, appId: app.id, hash: shot.hash))
+            images.keepFull(image, shot.hash); return image
+        } catch is CancellationError { return nil } catch { previewIssue = "A saved screenshot could not be opened. Choose it again on the cards that show an empty frame."; return nil }
+    }
+    /// The font file a card draws with, once it is read.
+    private func font(_ card: MediaCard) -> Data? { card.style.typeface == .file ? card.style.fontFile.flatMap { fonts[$0.hash] } : nil }
+
+    private func chooseFont() {
+        guard !busy, let session else { return }
+        let panel = NSOpenPanel(); panel.allowedContentTypes = [.font]; panel.allowsMultipleSelection = false; panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url, let load = start(.font) else { return }
+        working = true
+        Task {
+            defer { working = false }
+            let scoped = url.startAccessingSecurityScopedResource(); defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                guard (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map({ $0 <= WorkspaceSession.maximumFontBytes }) ?? false else { throw MediaCardFailure.font }
+                let bytes = try Data(contentsOf: url)
+                let file = try await session.stageMediaCardFont(accountId: account.id, appId: app.id, bytes: bytes, name: url.lastPathComponent)
+                fonts[file.hash] = bytes
+                guard let position = finish(load, "typeface", { $0.style.typeface = .file; $0.style.fontFile = file }) else {
+                    if loads[load.key] == load.ticket { loads[load.key] = nil; status = "\(file.family) was not used because its card was removed or another card set was opened."; statusError = true }
+                    return
+                }
+                status = "\(file.family) is used on card \(position + 1). Apply Style to All Cards uses it on every card."; statusError = false
+            } catch {
+                guard loads[load.key] == load.ticket else { return }; loads[load.key] = nil
+                status = "The font could not be added. Choose a TrueType or OpenType font file up to 20 MB."; statusError = true
+            }
         }
     }
 
     private func chooseScreenshot() {
         guard !busy, let session else { return }
         let panel = NSOpenPanel(); panel.allowedContentTypes = [.png, .jpeg]; panel.allowsMultipleSelection = false; panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModal() == .OK, let url = panel.url, let load = start(.screenshot) else { return }
         working = true
         Task {
             defer { working = false }
@@ -454,10 +606,16 @@ struct CreateMediaView: View {
                 guard size.isRegularFile == true, (size.fileSize ?? 0) <= ScreenshotEditing.maximumSourceBytes else { throw ScreenshotEditFailure.bytes }
                 let bytes = try Data(contentsOf: url)
                 let shot = try await session.stageMediaCardScreenshot(accountId: account.id, appId: app.id, bytes: bytes, name: url.lastPathComponent)
-                screenshots[shot.hash] = try await ScreenshotRenderer.loadAsync(bytes)
-                change("screenshot") { $0.screenshot = shot; $0.zoom = $0.layout == .focus ? 1.6 : 1; $0.x = 0.5; $0.y = 0.5 }
-                status = "Screenshot added to card \((index ?? 0) + 1)."; statusError = false
+                let image = try await ScreenshotRenderer.loadAsync(bytes)
+                images.keepFull(image, shot.hash)
+                images.keepThumbnail(try await ScreenshotRenderer.loadAsync(bytes, maximumEdge: MediaCardImages.thumbnailEdge), shot.hash)
+                guard let position = finish(load, "screenshot", { $0.screenshot = shot; $0.zoom = $0.layout == .focus ? 1.6 : 1; $0.x = 0.5; $0.y = 0.5 }) else {
+                    if loads[load.key] == load.ticket { loads[load.key] = nil; status = "The screenshot was not added because its card was removed or another card set was opened."; statusError = true }
+                    return
+                }
+                status = "Screenshot added to card \(position + 1)."; statusError = false
             } catch {
+                guard loads[load.key] == load.ticket else { return }; loads[load.key] = nil
                 status = (error as? ScreenshotEditFailure)?.message ?? "The screenshot could not be added. Choose a PNG or JPEG up to 80 MB."; statusError = true
             }
         }
@@ -465,9 +623,16 @@ struct CreateMediaView: View {
 
     private func renderPreview() async {
         guard let set = opened, let card = current else { return }
-        if let shot = card.screenshot, screenshots[shot.hash] == nil { return }
+        // The decoded screenshot goes to the renderer directly, so one an export let go, or one too large to keep, still draws.
+        var screenshot: DecodedScreenshot?
+        if let shot = card.screenshot {
+            if let kept = images.full(shot.hash) { screenshot = kept } else { screenshot = await loadFull(card) }
+            guard screenshot != nil else { return }
+        }
+        // A saved font file still being read draws once it arrives; one that could not be read shows its message.
+        if card.style.typeface == .file, let file = card.style.fontFile, fonts[file.hash] == nil, previewIssue.isEmpty { return }
         do {
-            let image = try await MediaCardRenderer.previewAsync(card, width: set.width, height: set.height, screenshot: card.screenshot.flatMap { screenshots[$0.hash] })
+            let image = try await MediaCardRenderer.previewAsync(card, width: set.width, height: set.height, screenshot: screenshot, font: font(card))
             try Task.checkCancellation()
             preview = image; previewIssue = ""
         } catch is CancellationError {} catch { previewIssue = (error as? MediaCardFailure)?.message ?? MediaCardFailure.render.message }
@@ -476,7 +641,9 @@ struct CreateMediaView: View {
     private func exportCards(_ cards: [(Int, MediaCard)], in set: MediaCardSet) async throws -> [(Int, Data)] {
         var result: [(Int, Data)] = []
         for (position, card) in cards {
-            do { result.append((position, try await MediaCardRenderer.exportAsync(card, width: set.width, height: set.height, screenshot: card.screenshot.flatMap { screenshots[$0.hash] }))) }
+            // Each card's full-size screenshot is decoded as it is exported; the budget lets earlier ones go.
+            let screenshot = await loadFull(card)
+            do { result.append((position, try await MediaCardRenderer.exportAsync(card, width: set.width, height: set.height, screenshot: screenshot, font: font(card)))) }
             catch let failure as MediaCardFailure { throw CardExportFailure(position: position, failure: failure) }
         }
         return result
@@ -488,13 +655,18 @@ struct CreateMediaView: View {
         working = true; defer { working = false }
         let chosen = all ? Array(set.cards.enumerated()) : [(index, set.cards[index])]
         do {
-            // Every card is rendered and checked before any file is saved, so a set is never added halfway.
+            // Every card is rendered and checked first, and all of them are saved in one transaction, so a set is never added halfway.
             let files = try await exportCards(chosen, in: set)
-            for (position, data) in files {
-                _ = try await session.stageCreatedLibraryImage(accountId: account.id, appId: app.id, bytes: data, fileName: MediaCards.fileName(set: set, index: position), referenceName: "\(MediaCards.trimmed(set.name)) \(position + 1)")
+            let images = files.map { position, data in
+                WorkspaceSession.CreatedLibraryImage(sourceId: set.cards[position].id, bytes: data, fileName: MediaCards.fileName(set: set, index: position), referenceName: "\(MediaCards.trimmed(set.name)) \(position + 1)")
             }
-            if all { change("library", set: { $0.savedCards = $0.cards }) }
-            status = (files.count == 1 ? "1 card" : "\(files.count) cards") + " saved to Asset Library on this Mac. Next, add them in Release step 2, Text and Screenshots."; statusError = false
+            let saved = try await session.stageCreatedLibraryImages(accountId: account.id, appId: app.id, setId: set.id, images: images)
+            // The marker records the exported cards, so edits made while saving still show as unsaved.
+            if all { let exported = set.cards; change("library", set: { if $0.id == set.id { $0.savedCards = exported } }) }
+            let kept = saved.files.count - saved.added
+            status = (files.count == 1 ? "1 card" : "\(files.count) cards") + " saved to Asset Library on this Mac"
+                + (kept == 0 ? "" : kept == files.count ? ", already there unchanged" : ", \(kept) already there unchanged") + ". Next, add them in Release step 2, Text and Screenshots."
+            statusError = false
         } catch let failure as CardExportFailure {
             selectedId = set.cards[failure.position].id
             status = "Card \(failure.position + 1): \(failure.failure.message) Nothing was saved."; statusError = true
@@ -524,6 +696,7 @@ private struct PreviewRequest: Equatable { let card: MediaCard?, width: Int, hei
 private struct MediaCardThumbnail: View {
     let card: MediaCard, width: Int, height: Int
     let screenshot: DecodedScreenshot?
+    let font: Data?
     @State private var image: ScreenshotPreview?
     var body: some View {
         ZStack {
@@ -532,9 +705,9 @@ private struct MediaCardThumbnail: View {
         }
         .aspectRatio(Double(width) / Double(height), contentMode: .fit)
         .accessibilityHidden(true)
-        .task(id: PreviewRequest(card: card, width: width, height: height, loaded: screenshot != nil)) {
+        .task(id: PreviewRequest(card: card, width: width, height: height, loaded: screenshot != nil && (font != nil || card.style.typeface != .file))) {
             if card.screenshot != nil, screenshot == nil { return }
-            if let result = try? await MediaCardRenderer.previewAsync(card, width: width, height: height, screenshot: screenshot, edge: 360), !Task.isCancelled { image = result }
+            if let result = try? await MediaCardRenderer.previewAsync(card, width: width, height: height, screenshot: screenshot, font: font, edge: 360), !Task.isCancelled { image = result }
         }
     }
 }

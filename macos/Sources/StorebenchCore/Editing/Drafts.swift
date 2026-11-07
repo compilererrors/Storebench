@@ -24,6 +24,9 @@ public enum TextDrafts {
     public static let labels = ["name": "Name", "subtitle": "Subtitle", "privacyPolicyUrl": "Privacy Policy URL", "privacyChoicesUrl": "Privacy Choices URL", "privacyPolicyText": "Privacy Policy Text",
                                 "description": "Description", "keywords": "Keywords", "promotionalText": "Promotional Text", "whatsNew": "What’s New in This Version", "supportUrl": "Support URL", "marketingUrl": "Marketing URL"]
 
+    /// The longest text a saved draft field may hold, counted in UTF-16 units.
+    public static let storedLimit = 10_000
+
     public static func fields(_ scope: Scope) -> [String] { scope == .appInfo ? appInfoFields : versionFields }
 
     /// Characters as App Store Connect counts them; keywords count UTF-8 bytes.

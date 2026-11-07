@@ -68,11 +68,13 @@ public struct PeriodDateRange: Equatable, Sendable {
 }
 
 public enum PeriodRangeChoice: Equatable, Sendable {
-    case all, latest(Int), custom(PeriodDateRange)
+    /// Every saved date, the latest number of days, the calendar year of the newest saved date so far, or fixed dates.
+    case all, latest(Int), year, custom(PeriodDateRange)
     public init(_ value: JSONText) throws {
         switch value["kind"]?.text {
         case "all": self = .all
         case "latest": self = .latest(try PeriodValue.days(value["days"], maximum: 365))
+        case "year": self = .year
         case "custom": self = .custom(try PeriodDateRange(from: value["from"]?.text ?? "", to: value["to"]?.text ?? ""))
         default: throw PeriodFailure.invalid
         }
@@ -81,12 +83,18 @@ public enum PeriodRangeChoice: Equatable, Sendable {
         switch self {
         case .all: .object([("kind", .string("all"))])
         case .latest(let days): .object([("kind", .string("latest")), ("days", .number(Double(days)))])
+        case .year: .object([("kind", .string("year"))])
         case .custom(let range): .object([("kind", .string("custom")), ("from", .string(range.from)), ("to", .string(range.to))])
         }
     }
     public func resolve(latest: String) throws -> PeriodDateRange? {
         guard !latest.isEmpty else { return nil }
-        switch self { case .all: return nil; case .custom(let range): return range; case .latest(let days): return try .latest(days, ending: latest) }
+        switch self {
+        case .all: return nil
+        case .custom(let range): return range
+        case .latest(let days): return try .latest(days, ending: latest)
+        case .year: return try PeriodDateRange(from: String(latest.prefix(4)) + "-01-01", to: latest)
+        }
     }
     public static func choice(_ range: PeriodDateRange?, latest: String) -> Self {
         guard let range else { return .all }

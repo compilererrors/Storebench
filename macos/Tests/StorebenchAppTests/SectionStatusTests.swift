@@ -2,6 +2,26 @@
 import Testing
 @testable import StorebenchApp
 
+@MainActor @Suite struct PricingInputChangesTests {
+    init() throws { _ = try TestIsolation.require() }
+
+    @Test func comparisonDescribesTheMixThatSavingUses() throws {
+        let base = PricingProfileInputs(PricingProfile(id: "synthetic", name: "Synthetic", guideTerritory: "USA", rounding: "nearest", method: "same", percentages: [:]))
+        var edited = base
+        edited.mixMethod = "fx"; edited.mixShare = "25"
+        #expect(try edited.validated().mix == nil)
+        #expect(PricingInputChanges.compare(base, edited, identity: true).isEmpty)
+        edited.method = "ppp"
+        let changes = PricingInputChanges.compare(base, edited, identity: true)
+        let mix = try #require(changes.first { $0.id == "mix" })
+        #expect(mix.saved == "No mix" && mix.edited == "25% Currency conversion")
+        #expect(try edited.validated().mix == PricingMix(method: "fx", share: 25))
+        edited.choose(method: "fx")
+        #expect(!PricingInputChanges.compare(base, edited, identity: true).contains { $0.id == "mix" })
+        #expect(try edited.validated().mix == nil)
+    }
+}
+
 /// A section App Store Connect could not show now keeps its last answer as older information; a price read that failed is not done.
 @MainActor @Suite struct SectionStatusTests {
     init() throws { _ = try TestIsolation.require() }

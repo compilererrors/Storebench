@@ -93,6 +93,9 @@ extension WorkspaceSession {
     /// Reads release status in the background for the apps planned most recently, a few seconds apart, and saves it for the next visit.
     /// Apps checked within `maxAge` are skipped. Reads use the shared short-lived cache, so an open Release page and this warm-up share requests.
     public func warmReleaseStatus(limit: Int = 4, spacing: Duration = .seconds(3), maxAge: TimeInterval = 600, now: @escaping @Sendable () -> Date = Date.init) async {
+        await AppleReadPriority.$current.withValue(.background) { await warmingReleaseStatus(limit: limit, spacing: spacing, maxAge: maxAge, now: now) }
+    }
+    private func warmingReleaseStatus(limit: Int, spacing: Duration, maxAge: TimeInterval, now: @escaping @Sendable () -> Date) async {
         guard let accounts = try? accounts() else { return }
         let plans = ((try? storeAccess { try plansDocument($0).plans }) ?? []).compactMap(ReleasePlan.init)
             .filter { plan in accounts.contains { $0.id == plan.accountId && $0.appIds.contains(plan.appId) } }

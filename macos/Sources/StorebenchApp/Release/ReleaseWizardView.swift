@@ -29,6 +29,8 @@ struct ReleaseWizardView: View {
     /// Counts the needs-action row's Add Build clicks; the Build step prepares that review in place.
     @State private var addBuildRequests = 0
     @State private var operation: Task<Void, Never>?
+    /// Reads the listing editors for the plan it was started for; leaving the step does not stop it.
+    @State private var listingWarm: (plan: String, task: Task<Void, Never>)?
     @Environment(\.readyReviews) private var readyReviews
     @Environment(\.editorProtection) private var protection
     @Environment(\.openURL) private var openURL
@@ -72,20 +74,19 @@ struct ReleaseWizardView: View {
             if confirmedPlan != nil, readiness?.busy != true { operation = Task { await refreshStatus(initial: false) } }
         }
         .task(id: confirmedPlan) {
-            // The remembered status shows first and decides the step; the listing warms at the same time instead of before it.
-            // The step opens once its status is known; a listing still warming shows its own placeholder.
-            async let warm: Void = prepareListing()
+            // The remembered status shows first and decides the step. The step opens once its status is known.
             await refreshStatus(initial: true)
             if model != nil, !Task.isCancelled { initialDecided = true }
-            await warm
         }
+        // Only the steps that show the listing read its editors, once the opening step is decided; Build and later steps never wait for them.
+        .task(id: "\(confirmedPlan ?? "")/\(settled && ReleaseWizard.needsListing(phase))") { if settled, ReleaseWizard.needsListing(phase) { warmListing() } }
         .task(id: "\(confirmedPlan ?? "")/\(phase)/\(readiness?.snapshot?.targetVersionId ?? "")") { await prefetchNext() }
         // The language opened in a step stays open when Back returns to that step.
         .historyValue("release-language", $focusedLocale)
         // Each confirmed check, failure or Apple state change schedules the next automatic check.
         .task(id: "\(confirmedPlan ?? "")/\(readiness?.snapshot?.targetState ?? "")/\(readiness?.checkedAt?.timeIntervalSince1970 ?? 0)/\(readiness?.failures ?? 0)") { await syncStatus() }
         .onDisappear {
-            loadTicket = nil; loading = false; operation?.cancel(); listing?.retire(); readiness?.retire(); model?.retire()
+            loadTicket = nil; loading = false; operation?.cancel(); listingWarm?.task.cancel(); listingWarm = nil; listing?.retire(); readiness?.retire(); model?.retire()
             protection?.remove(id: protectionId)
         }
     }
@@ -393,7 +394,7 @@ struct ReleaseWizardView: View {
     /// One Apple ID section as the last status check read it: Done with what App Store Connect showed, otherwise not checked yet.
     private func appleIDSection(_ step: ReleaseReadiness.Step?, title: String, command: String, anchor: String, separator: Bool = true) -> some View {
         let done = step?.state == .ready
-        return StorebenchStatusRow(title: title, detail: step?.detail ?? "Not checked yet. Refresh Status reads it from App Store Connect.", separator: separator, actionWidth: 220) {
+        return StorebenchStatusRow(title: title, detail: step?.detail ?? "Not checked yet. Refresh Status reads it from App Store Connect.", separator: separator) {
             StorebenchFact(label: "Status", value: done ? "Done" : step == nil || step?.state == .manual ? "Not checked" : "Needed", done: done)
         } action: {
             Button(command) { openAppPrivacy(anchor: anchor) }.buttonStyle(StorebenchButtonStyle(.secondary)).help("Open \(title) in App Store changes")
@@ -467,7 +468,7 @@ struct ReleaseWizardView: View {
         operation = Task {
             await refreshStatus(initial: false, full: true)
             guard !Task.isCancelled, let session else { return }
-            await session.warmReleaseSteps(after: step, account: account, appId: app.id, versionId: readiness?.snapshot?.targetVersionId)
+            await session.warmReleaseSteps(after: step, account: account, appId: app.id, versionId: readiness?.snapshot?.targetVersionId, plan: readiness?.snapshot?.plan)
             if let session = self.session { await prepareSubmissionAhead(session) }
         }
     }
@@ -481,7 +482,14 @@ struct ReleaseWizardView: View {
 
     // MARK: Loading
 
-    /// Keep the same local editor owners when moving Back and Next; warm them as soon as a plan is saved.
+    /// Starts reading the listing editors once per saved plan. Moving to another step lets it finish, so a step that is left and opened
+    /// again keeps the same owners and their unsaved edits.
+    private func warmListing() {
+        guard let plan = confirmedPlan, listingWarm?.plan != plan else { return }
+        listingWarm?.task.cancel()
+        listingWarm = (plan, Task { await prepareListing() })
+    }
+    /// Keep the same local editor owners when moving Back and Next.
     private func prepareListing() async {
         guard let model, let plan = model.plan, confirmedPlan != nil, let session, !Task.isCancelled else { return }
         if let listing, listing.scope.revisionId != plan.sourceRevisionId || listing.versionId != plan.baseVersionId {
@@ -494,10 +502,14 @@ struct ReleaseWizardView: View {
     /// Warm only reads for the next step. Local drafts are always read again by their editor.
     private func prefetchNext() async {
         guard confirmedPlan != nil, ["listing", "send", "build", "review-information", "submit"].contains(phase) else { return }
-        // Editing a listing can take longer than the cache lifetime. Keep the next step warm while it is open.
+        // Editing a listing can take longer than the cache lifetime. Keep the next step warm while it is open, as next-step
+        // reads behind what the open step shows, and back off while Apple's answers fail.
+        var failures = 0
         repeat {
-            await prefetchNextRead()
-            do { try await Task.sleep(for: .seconds(20)) } catch { return }
+            let read = await ScreenReads.ahead { await prefetchNextRead() }
+            failures = read ? 0 : failures + 1
+            let lifetime = await session?.appleReadLifetime ?? .seconds(300)
+            do { try await Task.sleep(for: ReleaseWizard.prefetchDelay(failures: failures, lifetime: lifetime)) } catch { return }
         } while !Task.isCancelled
     }
     /// Once every step before Add for Review is done, its review is prepared in the background, so step 6 shows it at once.
@@ -508,20 +520,25 @@ struct ReleaseWizardView: View {
         guard let submit = guide.phases.first(where: { $0.id == "submit" }), !submit.locked,
               !submit.steps.contains(where: { $0.id == "submission" && [.ready, .waiting].contains($0.state) }),
               ReleaseWizard.unfinished(before: "submit", in: guide) == nil else { return }
-        await session.preparePublishingAhead(account: account, request: request(.submit, snapshot: snapshot))
+        await session.preparePublishingAhead(account: account, request: request(.submit, snapshot: snapshot), basis: ReleaseWizard.submissionBasis(snapshot))
     }
-    private func prefetchNextRead() async {
-        guard confirmedPlan != nil, let session, !Task.isCancelled else { return }
+    /// Whether the next step's reads succeeded.
+    private func prefetchNextRead() async -> Bool {
+        guard confirmedPlan != nil, let session, !Task.isCancelled else { return true }
         do {
             let client = try await session.readClient(for: account)
             switch phase {
             case "listing": _ = try await session.publishingWorkspace(account: account, appId: app.id, client: client)
-            case "send": _ = try await session.testFlightBuilds(appId: app.id, client: client)
-            case "build":
-                if let version = readiness?.snapshot?.targetVersionId {
-                    _ = try await session.reviewInformationSnapshot(account: account, appId: app.id, versionId: version, client: client)
+            case "send":
+                if let plan = readiness?.snapshot?.plan {
+                    _ = try await session.releaseBuildPage(account: account, appId: app.id, versionId: readiness?.snapshot?.targetVersionId, platform: plan.platform, version: plan.targetVersion)
                 }
+            case "build":
+                // While the build is chosen and its export compliance answered, what Add for Review needs besides the build is read.
+                // Its review is prepared only once every earlier step is done; the answer is never chosen for you.
                 await prepareSubmissionAhead(session)
+                let guide = ReleaseGuide.guide(readiness?.snapshot?.steps, appleState: readiness?.snapshot?.targetState)
+                await session.warmProblemScreens(ReleaseWizard.submissionAhead(guide), account: account, appId: app.id, versionId: readiness?.snapshot?.targetVersionId)
             case "review-information":
                 await prepareSubmissionAhead(session)
                 // Only the App Information cards Add for Review will show, the ones Apple still needs.
@@ -540,35 +557,37 @@ struct ReleaseWizardView: View {
                 await session.warmProblemScreens(Set(warned + [.pricing]), account: account, appId: app.id)
             default: break
             }
-        } catch { /* The destination owns retry and feedback for speculative reads. */ }
+            return true
+        } catch { return false /* The destination owns retry and feedback for speculative reads. */ }
     }
 
     /// `full` reads everything again, as after an approved Apple change, the open step's parts first; otherwise unchanged saved material costs one version-state read.
     private func refreshStatus(initial: Bool, fresh: Bool = false, full: Bool = false) async {
-        guard let model, let session, confirmedPlan != nil, !Task.isCancelled else { return }
-        if fresh { await session.invalidateAppleReads() }
-        if readiness == nil {
-            // The status remembered from an earlier visit shows at once and is read again right away.
-            var seed: (snapshot: ReleaseReadinessSnapshot, checkedAt: Date)?
-            if let plan = model.plan { seed = await session.rememberedReleaseReadiness(accountId: account.id, appId: app.id, planToken: plan.token) }
-            guard readiness == nil, !Task.isCancelled else { return }
-            let owner = ReleaseReadinessEditor(planEditor: model, account: account, session: session, seed: seed)
-            readiness = owner
-            if initial, !phaseChosen, owner.snapshot != nil {
-                phase = ReleaseWizard.initialPhase(ReleaseGuide.guide(owner.snapshot?.steps, appleState: owner.snapshot?.targetState)); initialDecided = true
+        await ScreenReads.reading(fresh: fresh) {
+            guard let model, let session, confirmedPlan != nil, !Task.isCancelled else { return }
+            if readiness == nil {
+                // The status remembered from an earlier visit shows at once and is read again right away.
+                var seed: (snapshot: ReleaseReadinessSnapshot, checkedAt: Date)?
+                if let plan = model.plan { seed = await session.rememberedReleaseReadiness(accountId: account.id, appId: app.id, planToken: plan.token) }
+                guard readiness == nil, !Task.isCancelled else { return }
+                let owner = ReleaseReadinessEditor(planEditor: model, account: account, session: session, seed: seed)
+                readiness = owner
+                if initial, !phaseChosen, owner.snapshot != nil {
+                    phase = ReleaseWizard.initialPhase(ReleaseGuide.guide(owner.snapshot?.steps, appleState: owner.snapshot?.targetState)); initialDecided = true
+                }
             }
+            // The open step's parts are read first. Without a remembered status the first step is not known yet, so every part is read before choosing it.
+            readiness?.focus = initial && !phaseChosen && readiness?.snapshot == nil ? .all : ReleaseWizard.reads(phase)
+            // A save can invalidate an older background read. Let that owner finish before checking the new material.
+            while readiness?.busy == true {
+                do { try await Task.sleep(for: .milliseconds(25)) } catch { return }
+                guard !Task.isCancelled, readiness?.active == true else { return }
+            }
+            // Opening again with a recent remembered status costs one version-state read; otherwise everything is read.
+            let current = fresh || full ? await readiness?.refresh() : await readiness?.revalidate()
+            guard current == true, initial, !phaseChosen else { return }
+            phase = ReleaseWizard.initialPhase(ReleaseGuide.guide(readiness?.snapshot?.steps, appleState: readiness?.snapshot?.targetState))
         }
-        // The open step's parts are read first. Without a remembered status the first step is not known yet, so every part is read before choosing it.
-        readiness?.focus = initial && !phaseChosen && readiness?.snapshot == nil ? .all : ReleaseWizard.reads(phase)
-        // A save can invalidate an older background read. Let that owner finish before checking the new material.
-        while readiness?.busy == true {
-            do { try await Task.sleep(for: .milliseconds(25)) } catch { return }
-            guard !Task.isCancelled, readiness?.active == true else { return }
-        }
-        // Opening again with a recent remembered status costs one version-state read; otherwise everything is read.
-        let current = fresh || full ? await readiness?.refresh() : await readiness?.revalidate()
-        guard current == true, initial, !phaseChosen else { return }
-        phase = ReleaseWizard.initialPhase(ReleaseGuide.guide(readiness?.snapshot?.steps, appleState: readiness?.snapshot?.targetState))
     }
     private func load() async {
         guard model == nil, !loading, let session, !Task.isCancelled else { return }

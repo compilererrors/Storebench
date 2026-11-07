@@ -33,11 +33,12 @@ struct StorebenchFact: View {
     }
 }
 
-/// A compact source header with contained copy; recovery and expanded details span the complete row.
+/// A compact source header with contained copy; recovery and expanded details span the complete row. Every row keeps its status
+/// in one fixed column and its command, such as Open, at the shared button width in the trailing column, so rows line up.
 struct StorebenchStatusRow<Status: View, Action: View, Details: View>: View {
     let title: String, detail: String
     var separator = true
-    var actionWidth: CGFloat = 74
+    private let actionWidth = CGFloat(StorebenchTheme.actionWidth)
     @ViewBuilder let status: () -> Status
     @ViewBuilder let action: () -> Action
     @ViewBuilder let details: () -> Details
@@ -49,7 +50,7 @@ struct StorebenchStatusRow<Status: View, Action: View, Details: View>: View {
                     StorebenchTextSlot(text: detail, height: StorebenchTheme.measure("fieldHint"), font: .sbCallout, color: StorebenchTheme.muted)
                 }
                 HStack(spacing: 0) { status() }.frame(maxWidth: .infinity, minHeight: StorebenchTheme.controlHeight, alignment: .leading)
-                HStack(spacing: 0) { action() }.frame(height: StorebenchTheme.controlHeight)
+                HStack(spacing: 0) { action().environment(\.actionFill, true) }.frame(width: actionWidth, height: StorebenchTheme.controlHeight, alignment: .trailing)
                 VStack(alignment: .leading, spacing: StorebenchTheme.space(2)) { details() }
                     .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
                     .transformEnvironment(\.navigationPresentation) { $0 = $0?.scoped(title) }
@@ -65,9 +66,9 @@ private struct StorebenchStatusRowLayout: Layout {
     func makeCache(subviews: Subviews) -> Cache { Cache() }
     func updateCache(_ cache: inout Cache, subviews: Subviews) { cache.measurement.invalidate() }
     private func geometry(_ width: CGFloat, subviews: Subviews) -> ComponentLayout.StatusRow {
-        let tracks = ComponentLayout.statusRow(width: width, headingHeight: 0, statusHeight: 0, actionHeight: 0, statusWidth: 124, actionWidth: actionWidth)
+        let tracks = ComponentLayout.statusRow(width: width, headingHeight: 0, statusHeight: 0, actionHeight: 0, statusWidth: StorebenchTheme.measure("statusColumn"), actionWidth: actionWidth)
         func height(_ index: Int, _ width: CGFloat) -> CGFloat { subviews.size(index, ProposedViewSize(width: width, height: nil)).height }
-        return ComponentLayout.statusRow(width: width, headingHeight: height(0, tracks.heading.width), statusHeight: height(1, tracks.status.width), actionHeight: height(2, tracks.action.width), detailsHeight: height(3, tracks.details.width), statusWidth: 124, actionWidth: actionWidth)
+        return ComponentLayout.statusRow(width: width, headingHeight: height(0, tracks.heading.width), statusHeight: height(1, tracks.status.width), actionHeight: height(2, tracks.action.width), detailsHeight: height(3, tracks.details.width), statusWidth: StorebenchTheme.measure("statusColumn"), actionWidth: actionWidth)
     }
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
         let width = proposal.usableWidth()
@@ -94,7 +95,7 @@ struct StorebenchSyncBadge: View {
             if state == .running { StorebenchSpinner().frame(width: 14, height: 14) }
             else { StorebenchIcon(name: value.icon, size: 14) }
             Text(value.label).font(.sbCaption.weight(.semibold)).lineLimit(1)
-        }.foregroundStyle(ink).padding(.horizontal, 8).frame(height: 30)
+        }.foregroundStyle(ink).padding(.horizontal, 8).frame(maxWidth: .infinity, alignment: .leading).frame(height: 30)
             .background(fill, in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(border))
             .frame(maxWidth: .infinity, alignment: .leading)

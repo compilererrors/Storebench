@@ -187,7 +187,7 @@ struct LanguageEditor: View {
         guard let editor else { return AnyView(EmptyView()) }
         let value = editor.value(field), used = TextDrafts.used(field.key, value), limit = TextDrafts.limits[field.key] ?? 0
         let title = editor.searchTitle
-        let lint = field.key == "keywords" ? SearchLint(value, name: title.name, subtitle: title.subtitle) : nil
+        let lint = field.key == "keywords" ? SearchLint(value, name: title.name, subtitle: title.subtitle, locale: locale) : nil
         let problem = problem(field), focused = focused(field), danger = StorebenchTheme.color("color-danger")
         return AnyView(VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
@@ -233,13 +233,13 @@ struct LanguageEditor: View {
     /// The keyword check and its commands as one group under the field: what can be improved, then one row of commands.
     private func keywordTools(_ field: LanguageEditorState.Field, lint: SearchLint) -> some View {
         VStack(alignment: .leading, spacing: StorebenchTheme.space(2)) {
-            if !lint.findings.isEmpty {
-                let count = lint.findings.count
+            if !lint.findings.isEmpty || !lint.nameAndSubtitle.isEmpty {
+                let count = lint.findings.count + (lint.nameAndSubtitle.isEmpty ? 0 : 1)
                 DisclosureGroup("Keyword check · \(count) \(count == 1 ? "suggestion" : "suggestions")\(lint.freedBytes > 0 ? " · \(lint.freedBytes) bytes can be freed" : "")") {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 8) {
-                            ForEach(lint.findings) { finding in Text(finding.message + (finding.terms.isEmpty ? "" : " " + finding.terms.joined(separator: ", ")) + " \(finding.bytes) bytes").font(.sbCallout).fixedSize(horizontal: false, vertical: true) }
-                            Text("Cleanup keeps your order. Review the result before saving.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
+                            ForEach(SearchLintPresentation.lines(lint), id: \.self) { Text($0).font(.sbCallout).fixedSize(horizontal: false, vertical: true) }
+                            Text("These are suggestions; nothing changes until you choose Clean Up Keywords. Cleanup keeps your order and leaves possible overlaps in place.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
                         }.frame(maxWidth: .infinity, alignment: .leading)
                     }.frame(maxHeight: 200)
                 }
@@ -247,7 +247,7 @@ struct LanguageEditor: View {
             StorebenchActionGroup(alignment: .leading) {
                 if lint.freedBytes > 0 {
                     Button("Clean Up Keywords") { change(field, lint.cleaned) }
-                        .help("Remove repeated words and words already in the name or subtitle. Frees \(lint.freedBytes) bytes and keeps your order.")
+                        .help("Remove repeated words, filler words and words already in the name or subtitle. Frees \(lint.freedBytes) bytes and keeps your order.")
                 }
                 Button("Choose Ideas") { autosave.cancelPending(); model?.dialogOpen = true; keywordField = field }.help("Choose Keyword Ideas").accessibilityLabel("Choose Keyword Ideas").storebenchWorking(saving)
                 if navigation.navigate != nil { Button("Open Keyword Ideas") { navigation.open(.keywords, locale: locale) }.help("Open Keyword Ideas for this language").storebenchWorking(busy) }

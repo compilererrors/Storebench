@@ -128,9 +128,10 @@ extension WorkspaceSession {
 
     /// Everything Start Testing checks, read from App Store Connect with the account's read client.
     public func testFlightFacts(account: Account, appId: String, fresh: Bool) async throws -> TestFlightFlow.Facts {
-        if fresh { await invalidateAppleReads() }
-        let client = try readClient(for: account)
-        return try await AppStoreReadCache.rereadingAfterInvalidation { try await testFlightFacts(appId: appId, client: client) }
+        return try await AppStoreReadCache.$refreshedSince.withValue(fresh ? .now : AppStoreReadCache.refreshedSince) {
+            let client = try readClient(for: account)
+            return try await AppStoreReadCache.rereadingAfterInvalidation { try await testFlightFacts(appId: appId, client: client) }
+        }
     }
 
     /// Groups read at the same time for their members.
@@ -190,6 +191,9 @@ extension WorkspaceSession {
     /// Reads ahead what the later Start Testing steps show for the followed build: its testers, What to Test, metrics and export compliance,
     /// the app's testers and its beta license. Each step then opens from the shared reads. Only reads at Apple, and only while the hourly request limit leaves room.
     public func prewarmTestFlightSteps(account: Account, appId: String, build: TestFlightBuild?) async {
+        await AppleReadPriority.$current.withValue(.next) { await prewarmingTestFlightSteps(account: account, appId: appId, build: build) }
+    }
+    private func prewarmingTestFlightSteps(account: Account, appId: String, build: TestFlightBuild?) async {
         guard AppleRequestBudget.allowsReadingAhead(keyId: account.keyId), let client = try? readClient(for: account) else { return }
         async let testers: Void = Self.warm { _ = try await self.allTesters(appId: appId, client: client) }
         async let license: Void = Self.warm { _ = try await self.testFlightBetaLicense(appId: appId, client: client) }

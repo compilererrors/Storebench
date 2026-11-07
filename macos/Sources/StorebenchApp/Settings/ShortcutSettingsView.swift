@@ -24,7 +24,7 @@ struct ShortcutSettingsView: View {
                     StorebenchFormSection(group) {
                         StorebenchStatusList {
                             ForEach(Array(commands.enumerated()), id: \.element) { index, command in
-                                StorebenchStatusRow(title: command.title, detail: command == .settings ? "Fixed macOS shortcut" : settings?.keymap.overrides[command.rawValue] != nil ? "Custom" : "Default", separator: index < commands.count - 1, actionWidth: 104) {
+                                StorebenchStatusRow(title: command.title, detail: command == .settings ? "Fixed macOS shortcut" : settings?.keymap.overrides[command.rawValue] != nil ? "Custom" : "Default", separator: index < commands.count - 1) {
                                     StorebenchTextSlot(text: settings?.keymap.binding(command)?.display ?? "Unassigned", height: 44, font: .sbCallout)
                                 } action: {
                                     if command != .settings { Button("Change") { editing = Edit(command: command) } }

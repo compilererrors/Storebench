@@ -236,30 +236,31 @@ struct AppInformationView: View {
     }
 
     private func load(fresh: Bool = false) async {
-        attempted = true
-        guard let session, !busy else { return }
-        working = true; defer { working = false }
-        if fresh { await session.invalidateAppleReads() }
-        if review?.state == "prepared" { review = nil }
-        do {
-            let client = try await session.readClient(for: account)
-            if parts.contains(.categories) || parts.contains(.availability) {
-                do { let loaded = try await session.appInformationState(appId: app.id, categories: parts.contains(.categories), availability: parts.contains(.availability), client: client); try Task.checkCancellation(); editor.receive(loaded); status = "" }
-                catch { try Task.checkCancellation(); editor.informationFailed(); status = AppInformation.loadMessage(error, subject: "App Information") + " Your changes are retained." }
+        await ScreenReads.reading(fresh: fresh) {
+            attempted = true
+            guard let session, !busy else { return }
+            working = true; defer { working = false }
+            if review?.state == "prepared" { review = nil }
+            do {
+                let client = try await session.readClient(for: account)
+                if parts.contains(.categories) || parts.contains(.availability) {
+                    do { let loaded = try await session.appInformationState(appId: app.id, categories: parts.contains(.categories), availability: parts.contains(.availability), client: client); try Task.checkCancellation(); editor.receive(loaded); status = "" }
+                    catch { try Task.checkCancellation(); editor.informationFailed(); status = AppInformation.loadMessage(error, subject: "App Information") + " Your changes are retained." }
+                }
+                if parts.contains(.ageRating) {
+                    do { let answers = try await session.ageRatingAnswers(appId: app.id, client: client); try Task.checkCancellation(); editor.receiveAgeAnswers(answers); ageStatus = "" }
+                    catch { try Task.checkCancellation(); editor.ageFailed(); ageStatus = AppInformation.loadMessage(error, subject: "age rating answers") + " Your changes are retained." }
+                }
+                if parts.contains(.accessibility) {
+                    do { let declarations = try await session.accessibilityDeclarations(appId: app.id, client: client); try Task.checkCancellation(); editor.receiveDeclarations(declarations); accessibilityStatus = "" }
+                    catch { try Task.checkCancellation(); editor.accessibilityFailed(); accessibilityStatus = "Accessibility declarations are unavailable. Refresh to retry; your changes are retained." }
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                editor.informationFailed(); editor.ageFailed(); editor.accessibilityFailed(); status = "App Information could not be loaded. Refresh to retry; your changes are retained."
             }
-            if parts.contains(.ageRating) {
-                do { let answers = try await session.ageRatingAnswers(appId: app.id, client: client); try Task.checkCancellation(); editor.receiveAgeAnswers(answers); ageStatus = "" }
-                catch { try Task.checkCancellation(); editor.ageFailed(); ageStatus = AppInformation.loadMessage(error, subject: "age rating answers") + " Your changes are retained." }
-            }
-            if parts.contains(.accessibility) {
-                do { let declarations = try await session.accessibilityDeclarations(appId: app.id, client: client); try Task.checkCancellation(); editor.receiveDeclarations(declarations); accessibilityStatus = "" }
-                catch { try Task.checkCancellation(); editor.accessibilityFailed(); accessibilityStatus = "Accessibility declarations are unavailable. Refresh to retry; your changes are retained." }
-            }
-        } catch {
-            guard !Task.isCancelled else { return }
-            editor.informationFailed(); editor.ageFailed(); editor.accessibilityFailed(); status = "App Information could not be loaded. Refresh to retry; your changes are retained."
+            if !editor.dirty, editor.informationReady || editor.ageReady || editor.accessibilityReady { history?.rememberRead(editor, readKey) }
         }
-        if !editor.dirty, editor.informationReady || editor.ageReady || editor.accessibilityReady { history?.rememberRead(editor, readKey) }
     }
 
     private func prepareInformation() async {

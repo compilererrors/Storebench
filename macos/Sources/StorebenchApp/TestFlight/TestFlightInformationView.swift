@@ -78,15 +78,16 @@ struct TestFlightInformationView: View {
         } catch { status = "Test information could not be read. Your inputs are kept." }
     }
     private func loadLicense(fresh: Bool = false) async {
-        guard !working, let session else { return }
-        working = true; defer { working = false }
-        do {
-            if fresh { await session.invalidateAppleReads() }
-            license = try await session.testFlightBetaLicense(account: account, appId: app.id)
-            agreement = license ?? ""; licenseReady = license != nil
-            licenseStatus = license == nil ? "Apple has not provided a beta license agreement for this app." : ""
-            remember { $0.license = .some(license) }
-        } catch { licenseStatus = "The license could not be read. Your inputs are kept." }
+        await ScreenReads.reading(fresh: fresh) {
+            guard !working, let session else { return }
+            working = true; defer { working = false }
+            do {
+                license = try await session.testFlightBetaLicense(account: account, appId: app.id)
+                agreement = license ?? ""; licenseReady = license != nil
+                licenseStatus = license == nil ? "Apple has not provided a beta license agreement for this app." : ""
+                remember { $0.license = .some(license) }
+            } catch { licenseStatus = "The license could not be read. Your inputs are kept." }
+        }
     }
     private func remember(_ change: (inout Read) -> Void) {
         var read = history?.rememberedRead(readKey, as: Read.self) ?? Read(); change(&read); history?.rememberRead(read, readKey)

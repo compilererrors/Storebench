@@ -114,10 +114,10 @@ struct ReportingSetupView: View {
         }.storebenchWorking(disabled || working).frame(maxWidth: StorebenchTheme.actionWidth))
     }
     @ViewBuilder private var tokenEntry: some View {
-        StorebenchSetupStep(number: 1, title: "Open Sales and Trends Reports", detail: "Sign in to App Store Connect, click Trends at the top, then Sales and Trends Reports in the left sidebar.") {
+        StorebenchSetupStep(number: 1, title: "Open Sales and Trends Reports", detail: "Sign in to App Store Connect, click Trends at the top, then Sales and Trends Reports in the left sidebar.", path: .salesAndTrendsReports) {
             StorebenchActionLink("Open in Browser", destination: URL(string: "https://appstoreconnect.apple.com")!, help: "Open App Store Connect")
         }
-        StorebenchSetupStep(number: 2, title: "Generate Reporter Token", detail: "At the top right, click the question mark (?) beside About Reports, then Generate Reporter Token, and copy it. The token is separate from your .p8 key and your Apple Account password, and expires after 180 days.")
+        StorebenchSetupStep(number: 2, title: "Generate Reporter Token", detail: "At the top right, click the question mark (?) beside About Reports, then Generate Reporter Token, and copy it. The token is separate from your .p8 key and your Apple Account password, and expires after 180 days.", path: .reporterToken)
         StorebenchSetupStep(number: 3, title: "Paste the token and connect", detail: "Storebench checks reporting access before it saves the token. If Apple returns several accounts or vendors, choose the one that owns this app.") {
             StorebenchSecureField(replacing ? "New Reporter token" : "Reporter token", text: $token).labelsHidden()
                 .accessibilityLabel("Reporter access token").focused($focused, equals: .token).storebenchFormColumn()

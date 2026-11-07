@@ -85,16 +85,50 @@ extension WorkspaceSession {
             try storeAccess { try $0.insertIfAbsent(namespace: "asset_library_files", key: prefix + file.id, json: file.json.data) }; return file
         }
     }
-    /// Saves a PNG made on this Mac, such as a card from Create Media, as a new local original. Nothing is uploaded.
-    public func stageCreatedLibraryImage(accountId: String, appId: String, bytes: Data, fileName: String, referenceName: String) throws -> AssetLibrary.File {
+    /// One PNG made on this Mac, such as a Create Media card. `sourceId` names what it was made from, so saving the same image again finds it.
+    public struct CreatedLibraryImage: Sendable {
+        public let sourceId: String, bytes: Data, fileName: String, referenceName: String
+        public init(sourceId: String, bytes: Data, fileName: String, referenceName: String) {
+            self.sourceId = sourceId; self.bytes = bytes; self.fileName = fileName; self.referenceName = referenceName
+        }
+    }
+
+    /// Saves PNGs made on this Mac as local originals, all in one transaction, so a failure leaves none of them in Asset Library.
+    /// An image already saved from the same set and source with the same bytes keeps its existing entry instead of adding a copy.
+    /// Returns the entries in input order and how many were new. Nothing is uploaded.
+    public func stageCreatedLibraryImages(accountId: String, appId: String, setId: String, images: [CreatedLibraryImage]) throws -> (files: [AssetLibrary.File], added: Int) {
         let prefix = try libraryFilePrefix(accountId, appId), directory = try storeAccess { $0.directory }
-        let image = try ScreenshotSpecs.validate(bytes)
-        guard image.contentType == "image/png", (try? ScreenshotEditing.inspect(bytes))?.transparent == false,
-              let source = CGImageSourceCreateWithData(bytes as CFData, nil), CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete else { throw AssetLibrary.failure("The created image could not be verified.") }
+        func identifier(_ value: String) -> Bool { (1...64).contains(value.utf8.count) && value.utf8.allSatisfy { (48...57).contains($0) || (97...122).contains($0) || $0 == 45 } }
+        guard !images.isEmpty, images.count <= MediaCards.maximumCards, identifier(setId), images.allSatisfy({ identifier($0.sourceId) }),
+              Set(images.map(\.sourceId)).count == images.count else { throw AssetLibrary.failure("The created images could not be verified.") }
+        let checked = try images.map { item -> ScreenshotSpecs.Image in
+            let image = try ScreenshotSpecs.validate(item.bytes)
+            guard image.contentType == "image/png", (try? ScreenshotEditing.inspect(item.bytes))?.transparent == false,
+                  let source = CGImageSourceCreateWithData(item.bytes as CFData, nil), CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete else { throw AssetLibrary.failure("The created image could not be verified.") }
+            return image
+        }
         return try FileMutex.withLock(directory.appendingPathComponent("asset_library_files.mutex")) {
-            let stored = try FileMutex.withLock(directory.appendingPathComponent("backup_media.mutex")) { try media.write(bytes, limit: ScreenshotSpecs.maximumBytes) }
-            let file = try AssetLibrary.File(.object([("id", .string(UUID().uuidString.lowercased())), ("fileName", .string(MediaReadPolicy.exportName(fileName, extension: "png"))), ("hash", .string(stored.hash)), ("extension", .string("png")), ("category", .string(AssetLibrary.Category.listing.rawValue)), ("kind", .string("image")), ("referenceName", .string(referenceName)), ("size", .number(Double(bytes.count))), ("width", .number(Double(image.width))), ("height", .number(Double(image.height))), ("hasAlpha", .bool(false)), ("hasAudio", .bool(false)), ("duration", .null), ("frameRate", .null), ("timeCode", .null)]))
-            try storeAccess { try $0.insertIfAbsent(namespace: "asset_library_files", key: prefix + file.id, json: file.json.data) }; return file
+            // Media is content-addressed, so blobs written before a failed commit are never removed: another entry may already use them.
+            let stored = try FileMutex.withLock(directory.appendingPathComponent("backup_media.mutex")) { try images.map { try media.write($0.bytes, limit: ScreenshotSpecs.maximumBytes) } }
+            var files: [AssetLibrary.File] = [], added = 0
+            try storeAccess { store in
+                try store.transaction { current in
+                    files = []; added = 0; var writes: [EncryptedDocumentStore.Write] = []
+                    for ((item, image), blob) in zip(zip(images, checked), stored) {
+                        let receiptKey = prefix + setId + ":" + item.sourceId
+                        if let receipt = try current("asset_library_created", receiptKey).map({ try JSONText.parse($0.payload) }), receipt["hash"]?.text == blob.hash,
+                           let id = receipt["fileId"]?.text, let existing = try current("asset_library_files", prefix + id) {
+                            files.append(try AssetLibrary.File(JSONText.parse(existing.payload))); continue
+                        }
+                        let file = try AssetLibrary.File(.object([("id", .string(UUID().uuidString.lowercased())), ("fileName", .string(MediaReadPolicy.exportName(item.fileName, extension: "png"))), ("hash", .string(blob.hash)), ("extension", .string("png")), ("category", .string(AssetLibrary.Category.listing.rawValue)), ("kind", .string("image")), ("referenceName", .string(item.referenceName)), ("size", .number(Double(item.bytes.count))), ("width", .number(Double(image.width))), ("height", .number(Double(image.height))), ("hasAlpha", .bool(false)), ("hasAudio", .bool(false)), ("duration", .null), ("frameRate", .null), ("timeCode", .null)]))
+                        writes += [.put(namespace: "asset_library_files", key: prefix + file.id, json: file.json.data),
+                                   .put(namespace: "asset_library_created", key: receiptKey, json: JSONText.object([("hash", .string(blob.hash)), ("fileId", .string(file.id))]).data)]
+                        files.append(file); added += 1
+                    }
+                    return writes
+                }
+            }
+            return (files, added)
         }
     }
     private func libraryFilePrefix(_ account: String, _ app: String) throws -> String {

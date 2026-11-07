@@ -233,7 +233,7 @@ struct AssetLibraryView: View {
             }.storebenchWorking(working)
             StorebenchCollection(items: placements, title: { placement in snapshot?.assets.first { $0.id == placement.assetId }?.name ?? placement.assetId }, subtitle: { $0.type + " · " + $0.group },
                                  empty: target == nil ? "Choose a destination to see what is used there. Show Destinations lists the ones you can change." : "No placements in this destination yet. Select an asset and a compatible placement, then choose Review Placement.") { placement in
-                StorebenchStatusRow(title: snapshot?.assets.first { $0.id == placement.assetId }?.name ?? placement.assetId, detail: "\(placement.type) · \(placement.group)", actionWidth: StorebenchTheme.actionWidth, status: { Text(AppStoreNames.state(placement.state)).font(.sbCaption) }, action: {
+                StorebenchStatusRow(title: snapshot?.assets.first { $0.id == placement.assetId }?.name ?? placement.assetId, detail: "\(placement.type) · \(placement.group)", status: { Text(AppStoreNames.state(placement.state)).font(.sbCaption) }, action: {
                     if fresh && targetFresh && surface != .versions && canRemove(placement) { Button("Review Removal") { var change = AssetLibrary.Change(action: .removePlacement); change.surface = surface; change.targetId = targetId; change.placementId = placement.id; Task { await prepare(change) } }.storebenchWorking(working) }
                 }, details: {})
             }
@@ -324,18 +324,19 @@ struct AssetLibraryView: View {
         selectedId = asset.id; referenceName = asset.referenceName; timeCode = asset.value["attributes"]?["previewFrameTimeCode"]?.text ?? ""; slotId = ""; uses = nil; prepared = nil
     }
     private func refresh(fresh force: Bool = false) async {
-        guard !operationBusy, protection?.allowLeaving() != false, let session else { return }
-        working = true; defer { working = false }; fresh = false; targetFresh = false
-        if force { await session.invalidateAppleReads() }
-        do { files = try await session.assetLibraryFiles(accountId: account.id, appId: app.id) } catch { status = "Saved local files could not be read." }
-        do {
-            let next = try await session.assetLibrary(account: account, appId: app.id, client: session.readClient(for: account)); try Task.checkCancellation()
-            snapshot = next; fresh = true; selectedIDs.formIntersection(Set(next.assets.filter(AssetLibraryAssetsCard.reviewable).map(\.id)))
-            if let asset = next.assets.first(where: { $0.id == selectedId }) { referenceName = asset.referenceName; timeCode = asset.value["attributes"]?["previewFrameTimeCode"]?.text ?? "" } else { selectedId = "" }
-            prepared = nil; issueCode = nil; status = "Asset Library and current specifications read."
-            await readVersionHistory(session)
-            history?.rememberRead(Read(snapshot: next, files: files, observations: observations), readKey)
-        } catch is CancellationError {} catch { problem(error, fallback: "Asset Library could not be read. Check your account and API role.") }
+        await ScreenReads.reading(fresh: force) {
+            guard !operationBusy, protection?.allowLeaving() != false, let session else { return }
+            working = true; defer { working = false }; fresh = false; targetFresh = false
+            do { files = try await session.assetLibraryFiles(accountId: account.id, appId: app.id) } catch { status = "Saved local files could not be read." }
+            do {
+                let next = try await session.assetLibrary(account: account, appId: app.id, client: session.readClient(for: account)); try Task.checkCancellation()
+                snapshot = next; fresh = true; selectedIDs.formIntersection(Set(next.assets.filter(AssetLibraryAssetsCard.reviewable).map(\.id)))
+                if let asset = next.assets.first(where: { $0.id == selectedId }) { referenceName = asset.referenceName; timeCode = asset.value["attributes"]?["previewFrameTimeCode"]?.text ?? "" } else { selectedId = "" }
+                prepared = nil; issueCode = nil; status = "Asset Library and current specifications read."
+                await readVersionHistory(session)
+                history?.rememberRead(Read(snapshot: next, files: files, observations: observations), readKey)
+            } catch is CancellationError {} catch { problem(error, fallback: "Asset Library could not be read. Check your account and API role.") }
+        }
     }
     /// The library last read shows at once; Apple changes stay unavailable until the read that follows confirms it.
     private func showRemembered() {
@@ -435,10 +436,11 @@ struct AssetLibraryView: View {
         catch { targets = []; problem(error, fallback: "Placement destinations could not be read.") }
     }
     private func readPlacements(fresh force: Bool = false) async {
-        guard !operationBusy, fresh, protection?.allowLeaving() != false, let session, let target else { return }; working = true; defer { working = false }; targetFresh = false
-        if force { await session.invalidateAppleReads() }
-        do { placements = try await session.assetLibraryPlacements(account: account, appId: app.id, target: target, client: session.readClient(for: account)); targetFresh = true; status = "Current placements read in display order."; issueCode = nil; working = false; await loadOrder() }
-        catch { problem(error, fallback: "Placement status is unknown. Refresh before changing it.") }
+        await ScreenReads.reading(fresh: force) {
+            guard !operationBusy, fresh, protection?.allowLeaving() != false, let session, let target else { return }; working = true; defer { working = false }; targetFresh = false
+            do { placements = try await session.assetLibraryPlacements(account: account, appId: app.id, target: target, client: session.readClient(for: account)); targetFresh = true; status = "Current placements read in display order."; issueCode = nil; working = false; await loadOrder() }
+            catch { problem(error, fallback: "Placement status is unknown. Refresh before changing it.") }
+        }
     }
     private func readUsage(_ asset: AssetLibrary.Asset) async {
         guard !working, let session else { return }; working = true; defer { working = false }; uses = nil

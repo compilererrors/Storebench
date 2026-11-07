@@ -106,7 +106,7 @@ private struct FeedbackSubmissionView: View {
                 else {
                     ScrollView(.horizontal) {
                         HStack { ForEach(submission.images.indices, id: \.self) { index in
-                            Button("View screenshot \(index + 1)") { Task { await loadImage(index) } }.storebenchWorking(working)
+                            Button("View Screenshot \(index + 1)") { Task { await loadImage(index) } }.storebenchWorking(working)
                         } }
                     }.frame(height: 36)
                 }

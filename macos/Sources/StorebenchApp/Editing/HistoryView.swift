@@ -102,7 +102,7 @@ struct HistoryView: View {
             Card(title: "Publishing history", subtitle: "Reopen a prepared review to see its exact changes and completed steps.") {
                 Text(publicationStatus).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).frame(maxWidth: .infinity, minHeight: 24, alignment: .topLeading)
                 StorebenchCollection(items: publications, title: { $0.title }, subtitle: { publicationState($0) }, sorts: [.init(id: "date", label: "Created", less: { $0.createdAt < $1.createdAt })], empty: publicationsLoaded ? "No publishing reviews yet. Reviews you prepare appear here." : "Reading publishing history…") { item in
-                    StorebenchStatusRow(title: item.title, detail: "\(timestamp(item.createdAt)) · \(item.steps.filter { $0.state == "done" }.count) of \(item.steps.count) steps completed", separator: false, actionWidth: StorebenchTheme.actionWidth) {
+                    StorebenchStatusRow(title: item.title, detail: "\(timestamp(item.createdAt)) · \(item.steps.filter { $0.state == "done" }.count) of \(item.steps.count) steps completed", separator: false) {
                         StorebenchTextSlot(text: publicationState(item), height: StorebenchTheme.controlHeight, font: .sbCaption, color: StorebenchTheme.muted, centered: true)
                     } action: {
                         if publicationsLoaded { Button("Open Review") { Task { await open(item) } }.storebenchWorking(busy) }

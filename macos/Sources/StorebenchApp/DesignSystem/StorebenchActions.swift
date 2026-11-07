@@ -1,7 +1,7 @@
 import StorebenchCore
 import SwiftUI
 
-/// Related controls wrap into complete rows while retaining the shared button footprint.
+/// Related controls wrap into complete rows while retaining the shared button footprint. The button rules are in docs/design-components.md.
 struct StorebenchActionGroup<Content: View>: View {
     var alignment: StorebenchFlow.Alignment = .leading
     @ViewBuilder let content: () -> Content
@@ -63,10 +63,9 @@ private struct StorebenchActionLayout: Layout {
     struct Cache { var measurement = LayoutMeasurementCache<CGFloat, ComponentLayout.ActionGrid>() }
     func makeCache(subviews: Subviews) -> Cache { Cache() }
     func updateCache(_ cache: inout Cache, subviews: Subviews) { cache.measurement.invalidate() }
-    /// Every command in the group takes the width of the widest label, within the shared minimum and maximum.
+    /// Every command in every group takes the one shared button width, so groups line up with each other on the grid.
     private func geometry(_ width: CGFloat, subviews: Subviews) -> ComponentLayout.ActionGrid {
-        let widest = subviews.map { $0.sizeThatFits(.unspecified).width }.filter(\.isFinite).max() ?? 0
-        let cell = min(max(0, width), min(widest, StorebenchTheme.actionMaxWidth))
+        let cell = min(max(0, width), StorebenchTheme.actionWidth)
         return ComponentLayout.actionGrid(width: width, heights: subviews.map { $0.sizeThatFits(ProposedViewSize(width: cell, height: nil)).height }, trailing: trailing, cell: cell)
     }
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {

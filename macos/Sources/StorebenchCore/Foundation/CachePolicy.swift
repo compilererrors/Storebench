@@ -8,7 +8,10 @@ public struct CachePolicy: Equatable, Sendable, Codable {
         public var title: String { rawValue.prefix(1).uppercased() + String(rawValue.dropFirst()) }
     }
     /// One cache's entry count and estimated retained bytes.
-    public struct Limit: Equatable, Sendable { public let count: Int, bytes: Int }
+    public struct Limit: Equatable, Sendable {
+        public let count: Int, bytes: Int
+        public init(count: Int, bytes: Int) { self.count = count; self.bytes = bytes }
+    }
 
     public static let memoryRange = 32...4_096
     public static let lifetimeRange = 1...60

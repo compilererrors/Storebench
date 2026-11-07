@@ -274,6 +274,13 @@ extension WorkspaceSession {
                     guard: .object([("kind", .string("submission-build")), ("digest", .string(Apple.jsonDigest(attached.map { .string($0.id) } ?? .null)))]))
     }
 
+    /// What Add for Review's review below verifies at Apple before it adds a version, in its order: the version's copyright, Age Ratings,
+    /// App Review Information with its attachments, the version's Asset Library media, then the build and its export compliance.
+    /// Release reads the screens for these ahead, so a refusal opens its fix at once; keep this list in step with `planSubmission`.
+    public static let submissionChecks: [AppleProblem.Area] = [.copyright, .ageRating, .reviewInformation, .listing, .build, .exportCompliance]
+    /// The checks that follow the build chosen in Build, which only a confirmed build and compliance answer settle.
+    public static let submissionBuildChecks: Set<AppleProblem.Area> = [.build, .exportCompliance]
+
     func planSubmission(_ planner: Planner, versions: [AppStoreConnectClient.Resource]) async throws -> String {
         let request = planner.request
         guard let version = versions.first(where: { $0.id == request.versionId }) else { throw PublishFailure.invalid("Choose an Apple version belonging to this app.") }

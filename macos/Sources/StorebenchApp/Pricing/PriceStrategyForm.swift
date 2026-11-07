@@ -1,39 +1,38 @@
 import StorebenchCore
 import SwiftUI
 
-/// How prices are set in each country or region: Apple's comparable prices, a built-in model, a saved pricing profile, or typed prices.
+/// How prices are set in each country or region: Apple's comparable prices, a built-in pricing method, a saved pricing profile, or
+/// typed prices. Names and explanations come from the shared catalog in `PricingMethod` and `PricingStrategyText`.
 enum PriceStrategy: Hashable {
-    case apple, model(String), profile(String), manual
-    /// The built-in models every app can use without a profile, in the order offered.
-    static let models = ["ppp", "bigmac", "fx", "same"]
+    case apple, model(PricingMethod), profile(String), manual
     var key: String {
-        switch self { case .apple: "apple"; case .model(let method): "model:" + method; case .profile(let id): "profile:" + id; case .manual: "manual" }
+        switch self { case .apple: "apple"; case .model(let method): "model:" + method.rawValue; case .profile(let id): "profile:" + id; case .manual: "manual" }
     }
     var savedProfile: Bool { if case .profile = self { true } else { false } }
-    static func methodName(_ method: String) -> String { PricingProfile.name(method) }
-    /// The model to apply: a saved profile as it is, a built-in model with the Base Country or Region as its guide country.
+    /// The model to apply: a saved profile as it is, a built-in method with the Base Country or Region as its guide country.
     func profile(saved: [PricingProfile], base: String) -> PricingProfile? {
         switch self {
         case .profile(let id): return saved.first { $0.id == id }
-        case .model(let method) where !base.isEmpty: return PricingProfile(id: "built-in-\(method)", name: Self.methodName(method), guideTerritory: base, rounding: "nearest", method: method, percentages: [:])
+        case .model(let method) where !base.isEmpty:
+            return PricingProfile(id: "built-in-\(method.rawValue)", name: method.name, guideTerritory: base, rounding: PricingRounding.nearest.rawValue, method: method.rawValue, percentages: [:])
         default: return nil
         }
     }
-    static let manualExplanation = "You type the price for each country or region in its own currency. Each is rounded to the nearest Apple price there."
     func explanation(saved: [PricingProfile]) -> String {
         switch self {
-        case .apple: return PricingProfile.appleExplanation
-        case .model(let method): return PricingProfile.explanation(method)
-        case .profile(let id): return saved.first { $0.id == id }.map { "Your profile \($0.name), from Settings → Pricing: " + PricingProfile.explanation($0.method) } ?? "A pricing profile from Settings → Pricing."
-        case .manual: return Self.manualExplanation
+        case .apple: return PricingStrategyText.appleExplanation
+        case .model(let method): return method.explanation
+        case .profile(let id):
+            return saved.first { $0.id == id }.map { "Your profile \($0.name), from Settings → Pricing: " + $0.summary } ?? "A pricing profile from Settings → Pricing."
+        case .manual: return PricingStrategyText.manualExplanation
         }
     }
     /// Every strategy explained, for the (i) popover.
     static var guide: String {
-        (["Apple's comparable prices: " + PricingProfile.appleExplanation]
-         + models.map { "\(methodName($0)): " + PricingProfile.explanation($0) }
-         + ["Your pricing profiles: set up in Settings → Pricing, with their own guide country, rounding and, for Your country percentages, a percentage per country.",
-            "Enter Prices Manually: " + manualExplanation,
+        (["\(PricingStrategyText.appleName): " + PricingStrategyText.appleExplanation]
+         + PricingMethod.builtIn.map { "\($0.name): " + $0.explanation }
+         + ["Your pricing profiles: your own recipes from Settings → Pricing. Each has a guide country, rounding and any method, including \(PricingMethod.custom.name) and \(PricingMethod.own.name), and can mix in a second method, adjust countries by percentage and keep prices between a lowest and highest price.",
+            "\(PricingStrategyText.manualName): " + PricingStrategyText.manualExplanation + " A CSV file can fill them in.",
             "Every strategy but Apple's comparable prices is previewed per country before anything is sent, and countries without a matching Apple price keep what Apple has."])
             .joined(separator: "\n\n")
     }
@@ -47,11 +46,11 @@ struct PricingStrategyPicker: View {
     var body: some View {
         HStack(alignment: .top, spacing: StorebenchTheme.space(1)) {
             StorebenchPicker("Price Strategy", selection: $selection, hint: selection.explanation(saved: profiles)) {
-                SelectionOption("Apple's comparable prices", value: PriceStrategy.apple).help(PricingProfile.appleExplanation)
-                selectionOptions(PriceStrategy.models) { SelectionOption(PriceStrategy.methodName($0), value: PriceStrategy.model($0)).help(PricingProfile.explanation($0)) }
-                SelectionOption("Enter Prices Manually", value: PriceStrategy.manual).help(PriceStrategy.manualExplanation)
+                SelectionOption(PricingStrategyText.appleName, value: PriceStrategy.apple).help(PricingStrategyText.appleExplanation)
+                selectionOptions(PricingMethod.builtIn) { SelectionOption($0.name, value: PriceStrategy.model($0)).help($0.explanation) }
+                SelectionOption(PricingStrategyText.manualName, value: PriceStrategy.manual).help(PricingStrategyText.manualExplanation)
                 selectionOptions(profiles) { item in
-                    SelectionOption("Profile: \(item.name) · \(PriceStrategy.methodName(item.method))", value: PriceStrategy.profile(item.id)).help(PriceStrategy.profile(item.id).explanation(saved: profiles))
+                    SelectionOption("Profile: \(item.name) · \(PricingMethod.name(item.method))", value: PriceStrategy.profile(item.id)).help(PriceStrategy.profile(item.id).explanation(saved: profiles))
                 }
             }
             StorebenchInfoTip(title: "Price Strategy", text: PriceStrategy.guide).padding(.top, 22)
@@ -141,6 +140,11 @@ struct PriceStrategyFields: View {
     private var currency: String { territories.first { $0.code == model.anchor(base: base) }?.currency ?? "" }
 
     var body: some View {
+        StorebenchCardSection(title: "Prices from a CSV File", description: model.strategy == .manual
+                              ? "Fill in your prices from a CSV file. Rows replace what is typed for those countries or regions."
+                              : "Importing a CSV file switches to \(PricingStrategyText.manualName) and fills in its prices. Nothing is sent until you review it.") {
+            PricingCSVButtons(kind: .prices, territories: territories) { values in model.strategy = .manual; model.typed.merge(values) { _, imported in imported } }
+        }
         if model.strategy != .apple {
             StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 230) {
                 if model.strategy == .manual { StorebenchFact(label: "Prices", value: "Entered below for each country or region") }

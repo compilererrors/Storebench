@@ -95,6 +95,76 @@ import Testing
         await #expect(throws: CancellationError.self) { try await task.value }
         #expect(await gate.calls == 1)
     }
+    /// A synthetic request that answers when released and records whether it was stopped.
+    private actor Held {
+        var calls = 0, stopped = false
+        private var waiting: CheckedContinuation<Void, Error>?
+        func load() async throws -> Data {
+            calls += 1
+            do {
+                try await withTaskCancellationHandler { try await withCheckedThrowingContinuation { waiting = $0 } } onCancel: { Task { await self.stop() } }
+            } catch { stopped = true; throw error }
+            return Data("held synthetic response".utf8)
+        }
+        func stop() { waiting?.resume(throwing: CancellationError()); waiting = nil }
+        func release() { waiting?.resume(); waiting = nil }
+        var open: Bool { waiting != nil }
+    }
+    @Test func aReaderThatLeavesStopsAtOnceWithoutStoppingTheSharedReadOthersStillNeed() async throws {
+        let cache = AppStoreReadCache(), held = Held()
+        let leaving = Task { try await cache.read("synthetic") { try await held.load() } }
+        let staying = Task { try await cache.read("synthetic") { try await held.load() } }
+        let deadline = ContinuousClock.now + .seconds(5)
+        func ready() async -> Bool { let open = await held.open, count = await cache.readers("synthetic"); return open && count == 2 }
+        while await !ready() { guard ContinuousClock.now < deadline else { throw Failure.synthetic }; try await Task.sleep(for: .milliseconds(5)) }
+        leaving.cancel()
+        // The leaving reader stops while the request is still open; the other reader keeps waiting for it.
+        await #expect(throws: CancellationError.self) { try await leaving.value }
+        let open = await held.open, remaining = await cache.readers("synthetic")
+        #expect(open && remaining == 1)
+        await held.release()
+        #expect(try await staying.value == Data("held synthetic response".utf8))
+        let calls = await held.calls, stopped = await held.stopped
+        #expect(calls == 1 && !stopped)
+        #expect(try await cache.read("synthetic") { Data("unused".utf8) } == Data("held synthetic response".utf8))
+    }
+    @Test func aSharedReadStopsWhenEveryReaderLeaves() async throws {
+        let cache = AppStoreReadCache(), held = Held()
+        let readers = (0..<2).map { _ in Task { try await cache.read("synthetic") { try await held.load() } } }
+        let deadline = ContinuousClock.now + .seconds(5)
+        func ready() async -> Bool { let open = await held.open, count = await cache.readers("synthetic"); return open && count == 2 }
+        while await !ready() { guard ContinuousClock.now < deadline else { throw Failure.synthetic }; try await Task.sleep(for: .milliseconds(5)) }
+        for reader in readers { reader.cancel() }
+        for reader in readers { await #expect(throws: CancellationError.self) { try await reader.value } }
+        while await !held.stopped { guard ContinuousClock.now < deadline else { throw Failure.synthetic }; try await Task.sleep(for: .milliseconds(5)) }
+        // Nothing was kept, so the next reader asks again.
+        #expect(try await cache.read("synthetic") { Data("fresh synthetic response".utf8) } == Data("fresh synthetic response".utf8))
+    }
+    @Test func aRefreshReadsItsOwnScreenAgainAndKeepsWhatOtherScreensRead() async throws {
+        let cache = AppStoreReadCache(), reader = Reader()
+        _ = try await cache.read("synthetic/builds") { try await reader.load() }
+        _ = try await cache.read("synthetic/pricing") { try await reader.load() }
+        #expect(await reader.calls == 2)
+        // Refreshing the builds reads them again and keeps the new answer; pricing is still served from the earlier read.
+        let fresh = try await AppStoreReadCache.refreshing { try await cache.read("synthetic/builds") { Data("refreshed builds".utf8) } }
+        #expect(fresh == Data("refreshed builds".utf8))
+        _ = try await cache.read("synthetic/pricing") { try await reader.load() }
+        #expect(await reader.calls == 2)
+        #expect(try await cache.read("synthetic/builds") { Data("unused".utf8) } == Data("refreshed builds".utf8))
+    }
+    @Test func aRefreshDoesNotJoinAnOlderRequestAndThatRequestsAnswerIsNotKept() async throws {
+        let cache = AppStoreReadCache(), held = Held()
+        let older = Task { try await cache.read("synthetic") { try await held.load() } }
+        let deadline = ContinuousClock.now + .seconds(5)
+        func ready() async -> Bool { let open = await held.open, count = await cache.readers("synthetic"); return open && count == 1 }
+        while await !ready() { guard ContinuousClock.now < deadline else { throw Failure.synthetic }; try await Task.sleep(for: .milliseconds(5)) }
+        let fresh = try await AppStoreReadCache.refreshing { try await cache.read("synthetic") { Data("refreshed synthetic response".utf8) } }
+        #expect(fresh == Data("refreshed synthetic response".utf8))
+        // The earlier reader still gets its own answer, but the newer one stays kept.
+        await held.release()
+        #expect(try await older.value == Data("held synthetic response".utf8))
+        #expect(try await cache.read("synthetic") { Data("unused".utf8) } == Data("refreshed synthetic response".utf8))
+    }
     @Test func simultaneousReadersShareOneRequestAndInvalidationForcesANewRead() async throws {
         let cache = AppStoreReadCache(), reader = Reader()
         async let first = cache.read("synthetic") { try await reader.load() }

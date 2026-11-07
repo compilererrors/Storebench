@@ -13,6 +13,7 @@ struct TestFlightEncryptionView: View {
     @State private var creating = false
     @State private var encryption = EncryptionQuestionnaire()
     @State private var working = false
+    @State private var readAt: Date?
     @State private var publishing = false
     @State private var status = ""
     @State private var review: PublishReview?
@@ -30,6 +31,7 @@ struct TestFlightEncryptionView: View {
                         .font(.sbCallout).fixedSize(horizontal: false, vertical: true)
                 } else {
                     StorebenchLoadState(state: compliance != nil ? .ready : failure.isEmpty ? .loading("Reading Apple's declarations…") : .failed(failure, retry: { await load(fresh: true) })) {
+                        StorebenchReadAge(readAt: readAt, reading: working)
                         if let compliance { content(compliance) }
                     } placeholder: {
                         Text("Current declaration: placeholder").font(.sbCallout)
@@ -106,20 +108,21 @@ struct TestFlightEncryptionView: View {
     private func reset() { creating = false; encryption = EncryptionQuestionnaire(); declarationId = "" }
 
     private func load(fresh: Bool = false) async {
-        guard !busy, let session, build.usesNonExemptEncryption != false else { return }
-        working = true; defer { working = false }
-        if fresh { await session.invalidateAppleReads() }
-        failure = ""
-        // The declarations read earlier in this window show at once; actions stay busy until Apple is read again.
-        if !fresh, compliance == nil, let saved = history?.rememberedRead(readKey, as: BuildExportCompliance.self) { compliance = saved }
-        do {
-            let value = try await session.buildExportCompliance(appId: app.id, buildId: build.id, platform: build.platform, client: try await session.readClient(for: account))
-            try Task.checkCancellation()
-            compliance = value; status = ""; history?.rememberRead(value, readKey)
-            if !value.approved.contains(where: { $0.id == declarationId }) { declarationId = "" }
-        } catch {
-            guard !Task.isCancelled else { return }
-            compliance = nil; failure = AppInformation.loadMessage(error, subject: "this build's export compliance")
+        await ScreenReads.reading(fresh: fresh) {
+            guard !busy, let session, build.usesNonExemptEncryption != false else { return }
+            working = true; defer { working = false }
+            failure = ""
+            // The declarations read earlier in this window show at once; actions stay busy until Apple is read again.
+            if !fresh, compliance == nil, let saved = history?.rememberedRead(readKey, as: BuildExportCompliance.self) { compliance = saved; readAt = history?.rememberedReadAt(readKey) }
+            do {
+                let value = try await session.buildExportCompliance(appId: app.id, buildId: build.id, platform: build.platform, client: try await session.readClient(for: account))
+                try Task.checkCancellation()
+                compliance = value; status = ""; readAt = Date(); history?.rememberRead(value, readKey)
+                if !value.approved.contains(where: { $0.id == declarationId }) { declarationId = "" }
+            } catch {
+                guard !Task.isCancelled else { return }
+                compliance = nil; failure = AppInformation.loadMessage(error, subject: "this build's export compliance")
+            }
         }
     }
     private func assign() async {

@@ -69,6 +69,9 @@ struct CountryPricesView: View {
         VStack(alignment: .leading, spacing: 20) {
             currentPrices
             draftCard
+            TransferCard(account: account, app: app, session: session, kind: .prices, title: "Import Country Drafts",
+                         subtitle: "Country drafts from a CSV or JSON file, previewed before they are saved. Export Apple Prices… gives a file to edit. Protected countries cannot be imported.",
+                         onImported: { await load() })
             if guideShown, let session {
                 NoSalesGuideView(account: account, app: app, session: session, profileId: guideProfileId, blocked: modelBlocked || working || refreshing || !pricingReadable, sourceVersion: sourceVersion,
                     onClose: { guideShown = false }, onSaved: { Task { await load() } }, onBusy: { guideBusy = $0 })
@@ -193,7 +196,7 @@ struct CountryPricesView: View {
             StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 230) {
                 if mode == "percent" {
                     StorebenchTextField("Percent", text: $percent).info("Starts from the current Apple price. Use a negative number to lower prices, such as -10 for 10 percent lower.")
-                    StorebenchPicker("Rounding", selection: $rounding) { selectionOptions(PricingProfile.roundings) { SelectionOption($0.1, value: $0.0) } }
+                    StorebenchPicker("Rounding", selection: $rounding) { selectionOptions(PricingRounding.allCases) { SelectionOption($0.name, value: $0.rawValue) } }
                 } else {
                     StorebenchTextField("Amount", text: $amount)
                 }

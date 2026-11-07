@@ -32,7 +32,13 @@ public enum SavedTimeSeries {
     public struct Marker: Sendable, Codable, Equatable {
         public let date, label: String
         public let active: Bool
-        public init(date: String, label: String, active: Bool = false) { self.date = date; self.label = label; self.active = active }
+        /// What the marker stands for, such as a kind of listing change or a note, which sets its color; nil for a plain marker.
+        public let kind: String?
+        /// The item the marker opens when chosen; nil when it opens nothing.
+        public let target: String?
+        public init(date: String, label: String, active: Bool = false, kind: String? = nil, target: String? = nil) {
+            self.date = date; self.label = label; self.active = active; self.kind = kind; self.target = target
+        }
         public var json: JSONText { .object([("date", .string(date)), ("label", .string(label))]) }
     }
     public struct Slot: Sendable, Equatable {
@@ -148,6 +154,28 @@ public enum SavedTimeSeries {
         let scale = (values.min() ?? 0) < 0 ? Scale(maximum: positive.maximum, ticks: negative.ticks.dropFirst().reversed().map { -$0 } + positive.ticks) : positive
         return Layout(series: series, slots: slots, gaps: gaps, markers: markers.filter { marker in PeriodDates.number(marker.date).map { $0 >= first && $0 <= last } ?? false }, startDay: first, endDay: last, runs: runs, centers: centers, centerSlots: centers.map { firstSlot[$0]! },
                       scale: scale)
+    }
+    /// How a chart draws its series. Values, gaps and inspection are the same in every style.
+    public enum Style: String, CaseIterable, Sendable {
+        case line, bars, area
+        public var title: String { switch self { case .line: "Line"; case .bars: "Bars"; case .area: "Area" } }
+    }
+    /// The day span one series' bar takes inside a report period, so the bars of overlaid series sit side by side.
+    public static func barSpan(_ point: Point, index: Int, count: Int) -> (start: Double, end: Double)? {
+        guard let first = PeriodDates.number(point.start), let last = PeriodDates.number(point.end), last >= first, count > 0, (0..<count).contains(index) else { return nil }
+        let length = Double(last - first + 1), inset = length * 0.1, width = (length - 2 * inset) / Double(count)
+        let start = Double(first) + inset + width * Double(index)
+        return (start, start + width)
+    }
+    /// Scales each series so the average of its reported values is 100, to compare measures of different size or unit.
+    /// A series without reported values, or whose values average zero, keeps its values.
+    public static func indexed(_ series: [Series]) -> [Series] {
+        series.map { item in
+            let known = item.points.compactMap(\.value).filter(\.isFinite)
+            let average = known.isEmpty ? 0 : abs(known.reduce(0, +) / Double(known.count))
+            guard average > 0 else { return item }
+            return Series(key: item.key, label: item.label, points: item.points.map { Point(start: $0.start, end: $0.end, value: $0.value.map { $0 / average * 100 }) })
+        }
     }
     public static func runs(_ points: [Point]) -> [[Point]] {
         var result: [[Point]] = [], current: [Point] = []

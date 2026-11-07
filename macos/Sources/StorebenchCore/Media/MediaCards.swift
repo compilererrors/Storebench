@@ -10,9 +10,17 @@ public struct MediaCardStyle: Equatable, Sendable, Codable {
         case solid, gradient
         public var label: String { self == .solid ? "Solid Color" : "Gradient" }
     }
+    /// The Mac's system font and its rounded, serif and monospaced designs, an installed font family, or a font file you added.
     public enum Typeface: String, CaseIterable, Sendable, Codable {
-        case standard, rounded, serif
-        public var label: String { switch self { case .standard: "System"; case .rounded: "Rounded"; case .serif: "Serif" } }
+        case standard, rounded, serif, monospaced, installed, file
+        public var label: String {
+            switch self { case .standard: "System"; case .rounded: "Rounded"; case .serif: "Serif"; case .monospaced: "Monospaced"; case .installed: "Installed Font"; case .file: "Font File" }
+        }
+    }
+    /// A font file saved in this Mac's encrypted media store, referenced by its content hash.
+    public struct FontFile: Equatable, Sendable, Codable {
+        public let hash: String, name: String, family: String
+        public init(hash: String, name: String, family: String) { self.hash = hash; self.name = name; self.family = family }
     }
     public enum Alignment: String, CaseIterable, Sendable, Codable {
         case leading, center, trailing
@@ -22,6 +30,10 @@ public struct MediaCardStyle: Equatable, Sendable, Codable {
     public var color = "#2f4fd8", secondColor = "#7b3fe4", angle = 160.0
     public var titleColor = "#ffffff", subtitleColor = "#e8ecff", bodyColor = "#d9e0ff"
     public var typeface: Typeface = .standard, alignment: Alignment = .center
+    /// The installed font family used by Installed Font.
+    public var fontFamily: String? = nil
+    /// The font file used by Font File.
+    public var fontFile: FontFile? = nil
     /// Text size factor; long text is reduced automatically until it fits.
     public var textSize = 1.0
     /// Share of the inner height reserved for text.
@@ -73,6 +85,8 @@ public struct MediaCardSet: Equatable, Sendable, Codable, Identifiable {
     public var id: String, name: String
     public var displayType: String, width: Int, height: Int
     public var cards: [MediaCard]
+    /// The App Store language the card text is written in; nil until it is chosen.
+    public var language: String? = nil
     /// The cards as they were when all of them were last saved to Asset Library; nil before the first save.
     public var savedCards: [MediaCard]? = nil
     public init(id: String = UUID().uuidString.lowercased(), name: String, target: ScreenshotEditing.Target) {
@@ -82,7 +96,7 @@ public struct MediaCardSet: Equatable, Sendable, Codable, Identifiable {
 }
 
 public enum MediaCardFailure: Error, Equatable {
-    case invalid, text, screenshot, render, exportSize, stale, missing, full
+    case invalid, text, screenshot, render, exportSize, stale, missing, full, translationLength, translation, font
     public var message: String {
         switch self {
         case .invalid: "Choose valid card sizes, colors, text and values."
@@ -93,6 +107,9 @@ public enum MediaCardFailure: Error, Equatable {
         case .stale: "This card set was changed in another window. Reload it before editing again."
         case .missing: "This card set is no longer saved on this Mac."
         case .full: "A card set holds up to 10 cards, the App Store maximum per display size."
+        case .translationLength: "A translated text is longer than a card allows. Shorten that text in this card set and translate again."
+        case .translation: "The translation could not be finished. This card set is unchanged; try again."
+        case .font: "The card's font file could not be read. Choose the font file again, or choose another typeface."
         }
     }
 }
@@ -107,6 +124,8 @@ public enum MediaCards {
     public struct Placement: Equatable, Sendable {
         public let text: Area?, screen: Area?
         public let radius: Double, border: Double
+        /// True when the screenshot is as tall as its space allows, so a larger screenshot width cannot make it bigger.
+        public let limited: Bool
     }
 
     /// Every size the App Store accepts for screenshots, in Apple's display size order.
@@ -124,28 +143,39 @@ public enum MediaCards {
     static func hasText(_ card: MediaCard) -> Bool { [card.title, card.subtitle, card.body].contains { !TextSemantics.trim($0).isEmpty } }
 
     /// Where text and screenshot go. Without a screenshot the frame keeps the card's own proportions as a placeholder.
+    /// The text area is kept whether or not text is written yet, so the screenshot does not move while typing. A screenshot that
+    /// cannot fill its space keeps text and screenshot together in the middle of the card; a cropped screenshot always runs past its
+    /// card edge, and the text is centered in the space left beside it.
     public static func placement(_ card: MediaCard, width: Int, height: Int) -> Placement {
         let style = card.style, w = Double(width), h = Double(height), short = min(w, h)
         let margin = (short * clamp(style.margin, 0, 15) / 100).rounded()
         let innerWidth = w - margin * 2, innerHeight = h - margin * 2
-        guard card.layout.usesScreenshot else { return Placement(text: Area(left: margin, top: margin, width: innerWidth, height: innerHeight), screen: nil, radius: 0, border: 0) }
-        let texted = hasText(card), space = texted ? innerHeight * clamp(style.textSpace, 0.12, 0.5) : 0, gap = texted ? short * 0.03 : 0
-        let text = texted ? Area(left: margin, top: card.layout.textOnTop ? margin : h - margin - space, width: innerWidth, height: space) : nil
+        guard card.layout.usesScreenshot else { return Placement(text: Area(left: margin, top: margin, width: innerWidth, height: innerHeight), screen: nil, radius: 0, border: 0, limited: false) }
+        let space = innerHeight * clamp(style.textSpace, 0.12, 0.5), gap = short * 0.03
         let aspect = card.screenshot.map { Double($0.width) / Double($0.height) } ?? w / h
         var frameWidth = innerWidth * clamp(style.screenshotWidth, 0.4, 1), frameHeight = frameWidth / aspect
-        let regionTop = card.layout.textOnTop ? margin + space + gap : margin, regionHeight = innerHeight - space - gap
-        let top: Double
+        let regionHeight = innerHeight - space - gap
+        var textTop = card.layout.textOnTop ? margin : h - margin - space, textHeight = space, top: Double, limited = false
         switch card.layout {
         case .textAbove, .textBelow:
-            if frameHeight > regionHeight { frameHeight = regionHeight; frameWidth = frameHeight * aspect }
-            top = card.layout == .textAbove ? regionTop : regionTop + regionHeight - frameHeight
-        case .bleedBottom: top = regionTop
-        case .bleedTop: top = h - margin - space - gap - frameHeight
-        case .focus: frameHeight = regionHeight; top = regionTop
+            if frameHeight > regionHeight { frameHeight = regionHeight; frameWidth = frameHeight * aspect; limited = true }
+            let offset = (regionHeight - frameHeight) / 2
+            if card.layout == .textAbove { textTop = margin + offset; top = textTop + space + gap }
+            else { top = margin + offset; textTop = top + frameHeight + gap }
+        case .bleedBottom:
+            // At least a tenth of the screenshot runs past the bottom edge.
+            top = max(margin + space + gap, h - frameHeight * 0.9)
+            textHeight = top - gap - margin
+        case .bleedTop:
+            let bottom = min(h - margin - space - gap, frameHeight * 0.9)
+            top = bottom - frameHeight
+            textTop = bottom + gap; textHeight = h - margin - textTop
+        case .focus: frameHeight = regionHeight; top = margin + space + gap
         case .textOnly: top = 0
         }
+        let text = Area(left: margin, top: textTop, width: innerWidth, height: textHeight)
         let screen = Area(left: (w - frameWidth) / 2, top: top, width: frameWidth, height: frameHeight)
-        return Placement(text: text, screen: screen, radius: frameWidth * clamp(style.cornerRadius, 0, 20) / 100, border: frameWidth * clamp(style.borderWidth, 0, 6) / 100)
+        return Placement(text: text, screen: screen, radius: frameWidth * clamp(style.cornerRadius, 0, 20) / 100, border: frameWidth * clamp(style.borderWidth, 0, 6) / 100, limited: limited)
     }
 
     /// The image area inside the border, and where the cropped screenshot is drawn relative to the card.
@@ -170,6 +200,10 @@ public enum MediaCards {
 
     /// Text shrinks in 5 % steps down to half its size. Text that still does not fit is an error, never silently clipped.
     public static func lines(_ card: MediaCard, area: Area, shortSide: Double, measure: (String, Double, Weight) -> Double) throws -> [Line] {
+        try fitted(card, area: area, shortSide: shortSide, measure: measure).lines
+    }
+    /// The fitted lines and the share of the chosen text size they are drawn at: 1 when the text fits as chosen.
+    public static func fitted(_ card: MediaCard, area: Area, shortSide: Double, measure: (String, Double, Weight) -> Double) throws -> (lines: [Line], share: Double) {
         let style = card.style, factor = clamp(style.textSize, 0.6, 1.5) * (card.layout == .textOnly ? 1.25 : 1)
         struct Part { let text: String, weight: Weight, color: String, size: Double, leading: Double }
         let parts = [Part(text: card.title, weight: .title, color: style.titleColor, size: 0.072, leading: 1.18),
@@ -195,7 +229,7 @@ public enum MediaCards {
                 }
                 top += gap
             }
-            return result
+            return (result, 1 - Double(step) * 0.05)
         }
         throw MediaCardFailure.text
     }
@@ -213,6 +247,13 @@ public enum MediaCards {
         guard validID(card.id), ranges.allSatisfy({ $0.0.isFinite && $0.1.contains($0.0) }),
               [style.color, style.secondColor, style.titleColor, style.subtitleColor, style.bodyColor, style.borderColor].allSatisfy(color),
               validText(card.title, titleLimit), validText(card.subtitle, subtitleLimit), validText(card.body, bodyLimit) else { throw MediaCardFailure.invalid }
+        switch style.typeface {
+        case .installed: guard let family = style.fontFamily, !TextSemantics.trim(family).isEmpty, validText(family, 200), !family.contains("\n") else { throw MediaCardFailure.invalid }
+        case .file:
+            guard let file = style.fontFile, file.hash.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil, !file.name.isEmpty, validText(file.name, 200), !file.name.contains("\n"),
+                  validText(file.family, 200), !file.family.contains("\n") else { throw MediaCardFailure.invalid }
+        default: break
+        }
         if let shot = card.screenshot {
             guard shot.hash.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil, !shot.name.isEmpty, validText(shot.name, 200), !shot.name.contains("\n"),
                   shot.width > 0, shot.height > 0, shot.width <= ScreenshotEditing.maximumSide, shot.height <= ScreenshotEditing.maximumSide else { throw MediaCardFailure.invalid }
@@ -221,7 +262,7 @@ public enum MediaCards {
 
     public static func validate(_ set: MediaCardSet) throws {
         let name = TextSemantics.trim(set.name)
-        guard validID(set.id), !name.isEmpty, validText(set.name, nameLimit), !set.name.contains("\n"),
+        guard validID(set.id), !name.isEmpty, validText(set.name, nameLimit), !set.name.contains("\n"), set.language.map(StoreLocales.codes.contains) ?? true,
               targets.contains(where: { $0.type == set.displayType && $0.width == set.width && $0.height == set.height }) else { throw MediaCardFailure.invalid }
         guard set.cards.count <= maximumCards else { throw MediaCardFailure.full }
         guard Set(set.cards.map(\.id)).count == set.cards.count else { throw MediaCardFailure.invalid }
@@ -238,12 +279,39 @@ public enum MediaCards {
 
 /// Draws cards with Core Graphics. No UI, file, credential or networking APIs are used.
 public enum MediaCardRenderer {
-    static func font(_ typeface: MediaCardStyle.Typeface, _ weight: MediaCards.Weight, _ size: Double) -> CTFont {
+    static func system(_ size: Double, bold: Bool, design: String?) -> CTFont {
+        let base = CTFontCreateUIFontForLanguage(bold ? .emphasizedSystem : .system, size, nil) ?? CTFontCreateWithName((bold ? "Helvetica-Bold" : "Helvetica") as CFString, size, nil)
+        guard let design else { return base }
+        let descriptor = CTFontDescriptorCreateCopyWithAttributes(CTFontCopyFontDescriptor(base), [kCTFontTraitsAttribute: ["NSCTFontUIFontDesignTrait": design]] as CFDictionary)
+        let font = CTFontCreateWithFontDescriptor(descriptor, size, nil)
+        return bold ? CTFontCreateCopyWithSymbolicTraits(font, size, nil, .traitBold, .traitBold) ?? font : font
+    }
+    /// A font from a font file's data, or nil when the data holds no font. Titles use a bold face when the file has one.
+    public static func fileFont(_ data: Data, size: Double, bold: Bool) -> CTFont? {
+        guard let descriptors = CTFontManagerCreateFontDescriptorsFromData(data as CFData) as? [CTFontDescriptor], let first = descriptors.first else { return nil }
+        let isBold = { (descriptor: CTFontDescriptor) -> Bool in
+            ((CTFontDescriptorCopyAttribute(descriptor, kCTFontTraitsAttribute) as? [CFString: Any])?[kCTFontSymbolicTrait] as? UInt32).map { $0 & CTFontSymbolicTraits.traitBold.rawValue != 0 } ?? false
+        }
+        let chosen = bold ? descriptors.first(where: isBold) ?? first : descriptors.first { !isBold($0) } ?? first
+        return CTFontCreateWithFontDescriptor(chosen, size, nil)
+    }
+    /// The family name a font file shows, or nil when the data holds no font.
+    public static func fontFamily(_ data: Data) -> String? { fileFont(data, size: 12, bold: false).map { CTFontCopyFamilyName($0) as String } }
+    /// The installed font families, sorted by name.
+    public static var installedFamilies: [String] {
+        ((CTFontManagerCopyAvailableFontFamilyNames() as? [String]) ?? []).filter { !$0.hasPrefix(".") }.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+    static func font(_ style: MediaCardStyle, _ weight: MediaCards.Weight, _ size: Double, file: Data?) -> CTFont {
         let bold = weight == .title
-        switch typeface {
-        case .standard: return CTFontCreateUIFontForLanguage(bold ? .emphasizedSystem : .system, size, nil) ?? CTFontCreateWithName((bold ? "Helvetica-Bold" : "Helvetica") as CFString, size, nil)
-        case .rounded: return CTFontCreateWithName((bold ? "ArialRoundedMTBold" : "ArialMT") as CFString, size, nil)
-        case .serif: return CTFontCreateWithName((bold ? "Georgia-Bold" : "Georgia") as CFString, size, nil)
+        switch style.typeface {
+        case .standard: return system(size, bold: bold, design: nil)
+        case .rounded: return system(size, bold: bold, design: "NSCTFontUIFontDesignRounded")
+        case .serif: return system(size, bold: bold, design: "NSCTFontUIFontDesignSerif")
+        case .monospaced: return system(size, bold: bold, design: "NSCTFontUIFontDesignMonospaced")
+        case .installed:
+            let font = CTFontCreateWithFontDescriptor(CTFontDescriptorCreateWithAttributes([kCTFontFamilyNameAttribute: style.fontFamily ?? ""] as CFDictionary), size, nil)
+            return bold ? CTFontCreateCopyWithSymbolicTraits(font, size, nil, .traitBold, .traitBold) ?? font : font
+        case .file: return file.flatMap { fileFont($0, size: size, bold: bold) } ?? system(size, bold: bold, design: nil)
         }
     }
     static func line(_ text: String, font: CTFont, color: CGColor? = nil) -> CTLine {
@@ -252,13 +320,13 @@ public enum MediaCardRenderer {
         return CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: attributes))
     }
     /// Line breaking measures many prefixes at a few sizes, so one measurer keeps each font and each measured width it has made.
-    public static func measure(_ typeface: MediaCardStyle.Typeface) -> (String, Double, MediaCards.Weight) -> Double {
+    public static func measure(_ style: MediaCardStyle, file: Data? = nil) -> (String, Double, MediaCards.Weight) -> Double {
         final class Cache { var fonts: [String: CTFont] = [:], widths: [String: Double] = [:] }
         let cache = Cache()
         return { text, size, weight in
             let fontKey = "\(weight)\u{0}\(size)", key = fontKey + "\u{0}" + text
             if let width = cache.widths[key] { return width }
-            let made = cache.fonts[fontKey] ?? MediaCardRenderer.font(typeface, weight, size)
+            let made = cache.fonts[fontKey] ?? MediaCardRenderer.font(style, weight, size, file: file)
             cache.fonts[fontKey] = made
             let width = CTLineGetTypographicBounds(line(text, font: made), nil, nil, nil)
             cache.widths[key] = width
@@ -272,11 +340,16 @@ public enum MediaCardRenderer {
         return try await withTaskCancellationHandler(operation: { let value = try await owned.value; try Task.checkCancellation(); return value }, onCancel: { owned.cancel() })
     }
     /// A preview fits within `edge` pixels on its long side, with the same layout as the full-size card.
-    public static func previewAsync(_ card: MediaCard, width: Int, height: Int, screenshot: DecodedScreenshot?, edge: Double = 1200) async throws -> ScreenshotPreview {
-        try await run { ScreenshotPreview(image: try render(card, width: width, height: height, screenshot: screenshot, edge: edge)) }
+    public static func previewAsync(_ card: MediaCard, width: Int, height: Int, screenshot: DecodedScreenshot?, font: Data? = nil, edge: Double = 1200) async throws -> ScreenshotPreview {
+        try await run { ScreenshotPreview(image: try render(card, width: width, height: height, screenshot: screenshot, font: font, edge: edge)) }
     }
-    public static func exportAsync(_ card: MediaCard, width: Int, height: Int, screenshot: DecodedScreenshot?) async throws -> Data {
-        try await run { try export(card, width: width, height: height, screenshot: screenshot) }
+    public static func exportAsync(_ card: MediaCard, width: Int, height: Int, screenshot: DecodedScreenshot?, font: Data? = nil) async throws -> Data {
+        try await run { try export(card, width: width, height: height, screenshot: screenshot, font: font) }
+    }
+    /// The share of the chosen text size the card's text is drawn at; below 1 when Space for text makes it smaller. Nil when it does not fit.
+    public static func textShare(_ card: MediaCard, width: Int, height: Int, font: Data? = nil) -> Double? {
+        guard let area = MediaCards.placement(card, width: width, height: height).text else { return 1 }
+        return try? MediaCards.fitted(card, area: area, shortSide: Double(min(width, height)), measure: measure(card.style, file: font)).share
     }
 
     static func path(_ area: MediaCards.Area, radius: Double) -> CGPath {
@@ -285,16 +358,17 @@ public enum MediaCardRenderer {
     }
 
     /// Without `edge` the card is drawn at its exact pixel size. A missing screenshot draws a placeholder in previews only.
-    public static func render(_ card: MediaCard, width: Int, height: Int, screenshot: DecodedScreenshot?, edge: Double? = nil) throws -> CGImage {
+    public static func render(_ card: MediaCard, width: Int, height: Int, screenshot: DecodedScreenshot?, font: Data? = nil, edge: Double? = nil) throws -> CGImage {
         try Task.checkCancellation()
         try MediaCards.validate(card)
         guard width > 0, height > 0, width <= ScreenshotEditing.maximumSide, height <= ScreenshotEditing.maximumSide, width * height <= ScreenshotEditing.maximumPixels else { throw MediaCardFailure.invalid }
         if card.layout.usesScreenshot, edge == nil, screenshot == nil || card.screenshot == nil { throw MediaCardFailure.screenshot }
+        if card.style.typeface == .file, font.flatMap(fontFamily) == nil { throw MediaCardFailure.font }
         if let screenshot, let shot = card.screenshot, screenshot.width != shot.width || screenshot.height != shot.height { throw MediaCardFailure.screenshot }
         let ratio = edge.map { min(1, $0 / Double(max(width, height))) } ?? 1
         let pixelWidth = max(1, Int((Double(width) * ratio).rounded())), pixelHeight = max(1, Int((Double(height) * ratio).rounded()))
         let placement = MediaCards.placement(card, width: width, height: height), short = Double(min(width, height)), style = card.style
-        let lines = try placement.text.map { try MediaCards.lines(card, area: $0, shortSide: short, measure: measure(style.typeface)) } ?? []
+        let lines = try placement.text.map { try MediaCards.lines(card, area: $0, shortSide: short, measure: measure(style, file: font)) } ?? []
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(data: nil, width: pixelWidth, height: pixelHeight, bitsPerComponent: 8, bytesPerRow: pixelWidth * 4, space: space,
                                       bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.noneSkipLast.rawValue) else { throw MediaCardFailure.render }
@@ -332,7 +406,7 @@ public enum MediaCardRenderer {
         }
         for text in lines {
             try Task.checkCancellation()
-            let typeface = font(style.typeface, text.weight, text.size)
+            let typeface = self.font(style, text.weight, text.size, file: font)
             let drawn = line(text.text, font: typeface, color: try ScreenshotRenderer.color(text.color))
             context.saveGState()
             context.translateBy(x: text.left, y: text.top + CTFontGetAscent(typeface)); context.scaleBy(x: 1, y: -1)
@@ -345,8 +419,8 @@ public enum MediaCardRenderer {
     }
 
     /// An opaque PNG at the exact App Store size, checked again after encoding.
-    public static func export(_ card: MediaCard, width: Int, height: Int, screenshot: DecodedScreenshot?) throws -> Data {
-        let image = try render(card, width: width, height: height, screenshot: screenshot), output = NSMutableData()
+    public static func export(_ card: MediaCard, width: Int, height: Int, screenshot: DecodedScreenshot?, font: Data? = nil) throws -> Data {
+        let image = try render(card, width: width, height: height, screenshot: screenshot, font: font), output = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil) else { throw MediaCardFailure.render }
         CGImageDestinationAddImage(destination, image, [kCGImagePropertyOrientation: 1] as CFDictionary)
         guard CGImageDestinationFinalize(destination) else { throw MediaCardFailure.render }
