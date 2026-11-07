@@ -40,6 +40,8 @@ import Foundation
     public var readCapacity = NavigationPresentation.readBudget { didSet { trimReads() } }
     private struct Read { let value: Any, readAt: Date, generation: Int; var cost: Int }
     private var reads: [String: Read] = [:]
+    private struct ReadWatch { var version = UUID(); var readers = 0 }
+    private var readWatches: [String: ReadWatch] = [:]
     private var readOrder: [String] = []
     private var readBytes = 0, generation = 0
     public var rememberedReadCount: Int { reads.count + saved.count }
@@ -53,6 +55,7 @@ import Foundation
     /// When the remembered or saved read for `key` was taken, without decoding it.
     public func readAt(_ key: String) -> Date? { reads[key]?.readAt ?? saved[key]?.readAt }
     private func keep(_ value: Any, key: String, date: Date, cost: Int) -> Int {
+        if readWatches[key] != nil { readWatches[key]?.version = UUID() }
         drop(saved: key); readBytes -= reads[key]?.cost ?? 0
         generation += 1
         reads[key] = Read(value: value, readAt: date, generation: generation, cost: cost); readBytes += cost
@@ -61,12 +64,13 @@ import Foundation
     }
     private func touch(_ key: String) { readOrder.removeAll { $0 == key }; readOrder.append(key) }
     /// Saved reads not yet shown go first, oldest first; then the least recently used reads.
-    private func trimReads() {
+    private func trimReads(keepingSaved protected: String? = nil) {
         while reads.count + saved.count > max(1, readCapacity.count) || retainedReadBytes > readCapacity.bytes,
-              let oldest = saved.min(by: { $0.value.readAt < $1.value.readAt })?.key { drop(saved: oldest) }
-        while !readOrder.isEmpty, reads.count > max(1, readCapacity.count) || readBytes > readCapacity.bytes {
+              let oldest = saved.lazy.filter({ $0.key != protected }).min(by: { $0.value.readAt < $1.value.readAt })?.key { drop(saved: oldest) }
+        while !readOrder.isEmpty, reads.count + saved.count > max(1, readCapacity.count) || retainedReadBytes > readCapacity.bytes {
             let key = readOrder.removeFirst(); readBytes -= reads.removeValue(forKey: key)?.cost ?? 0
         }
+        if let protected, reads.count + saved.count > max(1, readCapacity.count) || retainedReadBytes > readCapacity.bytes { drop(saved: protected) }
     }
     /// The encoded size of a kept read, once known; a read replaced or dropped since is left alone.
     private func measured(_ key: String, generation: Int, bytes: Int) {
@@ -78,18 +82,24 @@ import Foundation
     /// Reads that can be encoded are also written to the encrypted database, so the next launch shows them at once
     /// while each screen reads again. `persist` writes one with the session's view-read epoch; `preload` hands over what an earlier launch saved.
     public var persist: (@Sendable (String, Data, Date, Int) -> Void)?
+    /// Reloads one SQL result after memory eviction. The epoch prevents Clear Cache from restoring an earlier result.
+    public var restore: (@Sendable (String, Int) async -> (data: Data, readAt: Date)?)?
     /// The session epoch reads are saved under; nil after Clear Cache until the session's new epoch is known.
     public private(set) var epoch: Int?
     /// Changes on Clear Cache, so a load that started before it does not fill the window again.
     public private(set) var clearCount = 0
     private var saved: [String: (data: Data, readAt: Date)] = [:]
     private var savedBytes = 0
+    private var restoring: [String: (id: UUID, task: Task<(data: Data, readAt: Date)?, Never>)] = [:]
+    private var hydrationGeneration = 0
     private func drop(saved key: String) { if let value = saved.removeValue(forKey: key) { savedBytes -= value.data.count } }
     /// Hands over saved reads loaded under `epoch`, unless the window was cleared after `clearCount` was read.
     public func preload(_ values: [String: (data: Data, readAt: Date)], epoch: Int, clearCount: Int) {
         guard clearCount == self.clearCount else { return }
         self.epoch = epoch
-        for (key, value) in values where reads[key] == nil { drop(saved: key); saved[key] = value; savedBytes += value.data.count }
+        for (key, value) in values where reads[key] == nil && (saved[key].map { $0.readAt < value.readAt } ?? true) {
+            drop(saved: key); saved[key] = value; savedBytes += value.data.count
+        }
         trimReads()
     }
     public func remember<Value: Codable & Sendable>(_ value: Value, read key: String, at date: Date = Date()) {
@@ -117,22 +127,87 @@ import Foundation
 
     /// As `remembered(read:as:)`, but a read saved by an earlier launch is decoded away from the main thread, for large reads.
     public func rememberedDecoded<Value: Decodable & Sendable>(read key: String, as type: Value.Type) async -> (value: Value, readAt: Date)? {
+        guard !Task.isCancelled else { return nil }
         if let entry = reads[key], let value = entry.value as? Value { touch(key); return (value, entry.readAt) }
+        readWatches[key, default: ReadWatch()].readers += 1
+        let version = readWatches[key]?.version, hydration = hydrationGeneration, clears = clearCount
+        defer {
+            readWatches[key]?.readers -= 1
+            if readWatches[key]?.readers == 0 { readWatches[key] = nil }
+        }
+        if saved[key] == nil, let restore, let epoch {
+            let work: (id: UUID, task: Task<(data: Data, readAt: Date)?, Never>)
+            if let existing = restoring[key] { work = existing }
+            else {
+                guard restoring.count < 16 else { return nil }
+                let id = UUID()
+                work = (id, Task { [weak self] in
+                    let result = await restore(key, epoch)
+                    if self?.restoring[key]?.id == id { self?.restoring[key] = nil }
+                    return result
+                })
+                restoring[key] = work
+            }
+            let entry = await LocalReadWaiter.value(of: work.task)
+            guard !Task.isCancelled, hydration == hydrationGeneration, clears == clearCount, epoch == self.epoch else { return nil }
+            if let current = reads[key], let value = current.value as? Value { touch(key); return (value, current.readAt) }
+            // A newer result may have arrived and then been evicted while SQL was reading. Never resurrect the earlier value.
+            guard readWatches[key]?.version == version else { return nil }
+            if let entry, entry.data.count <= readCapacity.bytes, saved[key].map({ $0.readAt < entry.readAt }) ?? true {
+                drop(saved: key); saved[key] = entry; savedBytes += entry.data.count
+                trimReads(keepingSaved: key)
+            }
+        }
         guard let entry = saved[key] else { return nil }
-        let clears = clearCount, data = entry.data
-        guard let value = await Task.detached(priority: .userInitiated, operation: { try? JSONDecoder().decode(Value.self, from: data) }).value,
-              clears == clearCount, saved[key]?.data == data, reads[key] == nil else { return remembered(read: key, as: type) }
+        let data = entry.data
+        let decoding = Task.detached(priority: .userInitiated) { try? JSONDecoder().decode(Value.self, from: data) }
+        let value = await withTaskCancellationHandler { await LocalReadWaiter.value(of: decoding) } onCancel: { decoding.cancel() }
+        guard !Task.isCancelled, hydration == hydrationGeneration, clears == clearCount else { return nil }
+        if let current = reads[key], let value = current.value as? Value { touch(key); return (value, current.readAt) }
+        guard readWatches[key]?.version == version, saved[key]?.data == data else { return nil }
+        guard let value else { drop(saved: key); return nil }
         _ = keep(value, key: key, date: entry.readAt, cost: data.count * Self.decodedFactor)
         return (value, entry.readAt)
     }
 
     /// Under memory pressure: drops every remembered and saved read; each screen reads again when it opens.
     public func releaseReads() {
+        hydrationGeneration += 1
+        for work in restoring.values { work.task.cancel() }; restoring.removeAll()
         reads.removeAll(); readOrder.removeAll(); saved.removeAll(); readBytes = 0; savedBytes = 0
     }
     /// Clear Cache: drops every read and stops saving until `resume(epoch:)` gives the session's new epoch.
     public func clearReads() { releaseReads(); clearCount += 1; epoch = nil }
     public func resume(epoch: Int) { self.epoch = epoch }
+}
+
+/// A caller can leave a shared SQL read or a detached decode immediately without cancelling work another caller needs.
+private final class LocalReadWaiter<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value?, Never>?
+    private var completed = false
+    private var result: Value?
+    private func receive(_ continuation: CheckedContinuation<Value?, Never>) {
+        lock.lock()
+        if completed { let result = result; lock.unlock(); continuation.resume(returning: result) }
+        else { self.continuation = continuation; lock.unlock() }
+    }
+    private func finish(_ value: Value?) {
+        lock.lock()
+        guard !completed else { lock.unlock(); return }
+        completed = true; result = value
+        let continuation = continuation; self.continuation = nil
+        lock.unlock(); continuation?.resume(returning: value)
+    }
+    static func value(of task: Task<Value?, Never>) async -> Value? {
+        let waiter = LocalReadWaiter()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                waiter.receive(continuation)
+                Task { waiter.finish(await task.value) }
+            }
+        } onCancel: { waiter.finish(nil) }
+    }
 }
 
 extension WorkspaceSession {
@@ -219,6 +294,21 @@ extension WorkspaceSession {
             bytes += data.count; kept[summary.key] = (data, at)
         }
         return kept
+    }
+    /// Reads exactly one saved screen result from encrypted SQL after a window evicts it. Metadata is checked before loading
+    /// the value; no full cache scan or cleanup blocks the requested screen.
+    public func savedViewRead(key: String, epoch: Int) -> (data: Data, readAt: Date)? {
+        guard epoch == viewReadEpoch, !Task.isCancelled, key.utf16.count <= 1_024, (try? requireSessionAccess()) != nil else { return nil }
+        return try? storeAccess { store in
+            guard let record = try store.document(namespace: Self.viewReadMetaNamespace, key: key),
+                  let meta = try? JSONText.parse(record.payload), let at = meta["readAt"]?.text.flatMap(ReportTimestamps.date),
+                  at >= Date().addingTimeInterval(-Self.viewReadAge), case .number(let bytes)? = meta["bytes"],
+                  bytes >= 0, bytes <= Double(Self.viewReadLimit), bytes.rounded() == bytes,
+                  let document = try store.document(namespace: Self.viewReadsNamespace, key: key),
+                  let value = try? JSONText.parse(document.payload), value["readAt"] == meta["readAt"],
+                  let data = value["value"]?.text.flatMap({ Data(base64Encoded: $0) }), data.count == Int(bytes) else { return nil }
+            return (data, at)
+        }
     }
     /// Clear Cache: removes every saved screen read and starts a new epoch, so reads captured before it are not saved again.
     func clearViewReads() {

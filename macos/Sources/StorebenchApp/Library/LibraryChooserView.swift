@@ -8,6 +8,7 @@ struct LibraryChooserView: View {
     @State private var loading = false
     @State private var failed = false
     @State private var context = UUID()
+    @State private var readGate = PresentationWork()
     @State private var gallery: ScreenshotGalleryRequest?
     @State private var galleryScope: Editing?
     @Environment(\.navigationPresentation) private var history
@@ -17,12 +18,12 @@ struct LibraryChooserView: View {
             LazyVStack(alignment: .leading, spacing: 20) {
                 StorebenchPageHeader(title: section.rawValue, description: "Choose an app to open " + section.rawValue.lowercased() + ". Saved languages and images come from the latest complete archive.", eyebrow: "APP WORKFLOWS", actions: AnyView(HStack {
                     Spacer(minLength: 0)
-                    Button { Task { await load(context) } } label: { StorebenchLabel(loading ? "Reading…" : "Refresh Saved Apps", icon: "refresh", busy: loading) }.storebenchWorking(loading || model.session == nil)
-                }), feedback: AnyView(StorebenchFeedback(text: failed ? "Saved apps could not be confirmed. Refresh before opening an app." : navigationMessage, height: 34)))
+                    LibraryAppRefreshButton(model: model, identity: section.key) { await load(context, wait: true) }
+                }), feedback: AnyView(StorebenchFeedback(text: failed ? "Saved apps could not be confirmed. Refresh before opening an app." : navigationMessage.isEmpty ? model.appRefreshMessage : navigationMessage, height: 34, error: failed || model.appRefreshFailed)))
                 // Only Previews and Screenshots has more to show for an app; every other section opens the app directly from its row.
                 StorebenchCollection(items: unavailable ? [] : entries ?? [], title: { $0.name(for: section) }, subtitle: description, icon: { entry in
                     AnyView(AppIconView(accountId: entry.row.account.id, appId: entry.row.app.id, name: entry.name(for: section), session: unavailable ? nil : model.session).id(entry.id + "/" + entry.row.accountToken))
-                }, empty: unavailable ? "Saved apps could not be confirmed. Choose Refresh Saved Apps." : entries == nil ? "Reading saved apps…" : "No apps configured. Connect or refresh an Apple account from Settings.",
+                }, empty: failed ? "Saved apps could not be confirmed. Choose Refresh Apps." : entries == nil ? "Reading saved apps…" : "No apps configured. Connect an Apple account or choose Refresh Apps.",
                    activate: section == .media ? nil : { entry in if let action = try? entry.destination(section) { openApp(action) } }) { entry in
                     StorebenchCardList {
                         StorebenchNavigationCard(title: entry.name(for: section), description: description(entry), action: "Open", activate: { if let action = try? entry.destination(section) { openApp(action) } }) {
@@ -50,9 +51,8 @@ struct LibraryChooserView: View {
             entries = history?.rememberedRead("library-chooser/" + section.key, as: [LibraryChooser.Entry].self)
             await StorebenchPolling.repeating(every: .seconds(2), while: { context == id }) { await load(id) }
         }
-        .onDisappear { context = UUID(); gallery = nil }
+        .onDisappear { context = UUID(); readGate.end(); gallery = nil }
         .trackUnsavedChanges(false, busy: loading)
-        .shortcutAction(.refresh, enabled: !loading && model.session != nil, identity: section.key) { await load(context) }
         .sheet(item: $gallery) { request in
             if let session = model.session, let scope = galleryScope { SavedScreenshotGallery(request: request, scope: scope, setId: "", session: session, close: { gallery = nil }) }
         }
@@ -78,9 +78,14 @@ struct LibraryChooserView: View {
             } catch { if context == starting, model.session === session { failed = true } }
         }
     }
-    private func load(_ id: UUID) async {
-        guard !loading, let session = model.session else { return }; loading = true
-        defer { if context == id { loading = false } }
+    private func load(_ id: UUID, wait: Bool = false) async {
+        while wait && readGate.active {
+            guard context == id, !Task.isCancelled else { return }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        guard context == id, !Task.isCancelled, !readGate.active, let session = model.session else { return }
+        let ticket = readGate.begin(); if entries == nil { loading = true }
+        defer { if readGate.accepts(ticket) { readGate.end() }; if context == id { loading = false } }
         do {
             let next = try await session.libraryChooser(section)
             guard context == id, !Task.isCancelled, model.session === session else { return }

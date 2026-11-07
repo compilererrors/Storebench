@@ -33,8 +33,8 @@ private struct FeedbackSection: View {
 
     var body: some View {
         Card(title: kind.title, subtitle: kind == .screenshot ? "Written feedback submitted with tester screenshots." : "Tester comments submitted with crash reports.") {
+            StorebenchFeedback(text: error, height: 40)
             if loading && page == nil { ProgressView("Reading feedback…") }
-            else if !error.isEmpty { Text(error).foregroundStyle(StorebenchTheme.muted) }
             else if let page {
                 StorebenchCollection(items: page.submissions, title: { $0.device }, subtitle: { $0.createdDate }, empty: cursor == nil ? "Apple has no recent \(kind.rawValue) feedback for this app." : "No \(kind.rawValue) feedback on this page. Return to the first page to check newer submissions.") { submission in
                     FeedbackSubmissionView(account: account, app: app, session: session, submission: submission, build: builds.first { $0.id == submission.buildId }).id("\(submission.id):\(cursor ?? "first")")
@@ -48,7 +48,10 @@ private struct FeedbackSection: View {
         }
         .task(id: cursor) {
             // Back returns to the same feedback page; the page last read shows while it is read again.
-            page = history?.rememberedRead(readKey, as: TestFlightFeedback.Page.self)
+            let requestedCursor = cursor
+            let saved = await history?.rememberedDecodedRead(readKey, as: TestFlightFeedback.Page.self)
+            guard !Task.isCancelled, cursor == requestedCursor else { return }
+            page = saved
             await load()
         }
         .historyValue("feedback-page", $cursor)
@@ -68,7 +71,10 @@ private struct FeedbackSection: View {
             guard cursor == requestedCursor else { return }
             page = loaded; error = ""; history?.rememberRead(loaded, readKey)
         } catch is CancellationError { return }
-        catch { page = nil; self.error = "Feedback could not be read from Apple. Refresh to try again." }
+        catch {
+            guard !Task.isCancelled, cursor == requestedCursor else { return }
+            self.error = page == nil ? "Feedback could not be read from Apple. Refresh to try again." : "Feedback could not be refreshed. The last page read is shown. Refresh to try again."
+        }
     }
 }
 

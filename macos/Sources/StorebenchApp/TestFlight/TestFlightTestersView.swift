@@ -8,6 +8,7 @@ struct TestFlightTestersView: View {
     @State private var preparing = false
     @State private var publishing = false
     @State private var testers: [TestFlightTester] = []
+    @State private var confirmed = false
     @State private var state = "loading"
     @State private var review: PublishReview?
     @State private var status = ""
@@ -18,13 +19,13 @@ struct TestFlightTestersView: View {
 
     @Environment(\.navigationPresentation) private var history
     private struct Choices: Equatable { var email, activeEmail: String; var pageCursor: String? }
-    private struct Read: Codable { let activeEmail: String, pageCursor: String?, testers: [TestFlightTester], next: String? }
+    private struct Read: Codable, Sendable { let activeEmail: String, pageCursor: String?, testers: [TestFlightTester], next: String? }
     private var readKey: String { "testflight-testers/\(account.id)/\(app.id)" }
     private var busy: Bool { working || preparing || publishing }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            ReviewPanel(account: account, app: app, session: session, review: $review, done: { if review?.state == "complete" { Task { await load(cursor: currentCursor) } } }, busyChanged: { publishing = $0 }).storebenchWorking(working || preparing)
+            ReviewPanel(account: account, app: app, session: session, review: $review, done: { if review?.state == "complete" { Task { await load(cursor: currentCursor) } } }, busyChanged: { publishing = $0 }).storebenchWorking(!confirmed || working || preparing)
             Card(title: "Find a tester", subtitle: "Search Apple's testers within this app by exact email, or clear the filter to see all app testers.") {
                 StorebenchInputActions {
                     StorebenchTextField("Tester email", text: $email)
@@ -38,8 +39,9 @@ struct TestFlightTestersView: View {
             }
             .storebenchWorking(busy)
             Card(title: "All Testers", subtitle: state == "ready" ? "\(testers.count) testers on this page. Each change requires a separate Publish review." : "Testers in this app, including group and direct build access.") {
+                StorebenchFeedback(text: status, height: 40)
                 switch state {
-                case "failed": Text(status).foregroundStyle(StorebenchTheme.muted)
+                case "failed": EmptyView()
                 case "ready" where testers.isEmpty:
                     Text(currentCursor != nil ? "No testers on this page. Return to the first page to check current app access." : activeEmail.isEmpty ? "No testers for this app. Add testers from Groups or invite them to an eligible build." : "No tester with this email. Check the address or clear the filter.").foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
                 case "ready":
@@ -50,7 +52,7 @@ struct TestFlightTestersView: View {
                                     Button(tester.state == "INVITED" ? "Resend Invite" : "Send Invite") { Task { await prepare { $0.testflightAction = "send-invitation"; $0.testerId = tester.id } } }.fixedSize()
                                 }
                                 Button("Remove from App", role: .destructive) { Task { await prepare { $0.testflightAction = "remove-app-tester"; $0.testerId = tester.id } } }.fixedSize()
-                        }
+                        }.storebenchWorking(!confirmed)
                     }
                 default: StorebenchCollectionPlaceholder()
                 }
@@ -61,13 +63,13 @@ struct TestFlightTestersView: View {
                         Spacer()
                     }
                 }
-                if !status.isEmpty && state != "failed" { Text(status).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true) }
             }
             .storebenchWorking(busy)
         }
         .task {
             // Back returns to the same filter and page; the page last read shows while it is read again.
-            if testers.isEmpty, let read = history?.rememberedRead(readKey, as: Read.self), read.activeEmail == activeEmail, read.pageCursor == currentCursor { testers = read.testers; nextCursor = read.next; state = "ready" }
+            if testers.isEmpty, let read = await history?.rememberedDecodedRead(readKey, as: Read.self), !Task.isCancelled, testers.isEmpty, read.activeEmail == activeEmail, read.pageCursor == currentCursor { testers = read.testers; nextCursor = read.next; state = "ready" }
+            guard !Task.isCancelled else { return }
             await load(cursor: currentCursor)
         }
         .historyValue("testflight-testers", Binding(get: { Choices(email: email, activeEmail: activeEmail, pageCursor: currentCursor) }, set: { email = $0.email; activeEmail = $0.activeEmail; currentCursor = $0.pageCursor }))
@@ -75,7 +77,7 @@ struct TestFlightTestersView: View {
     }
 
     private func prepare(_ configure: (inout PublishRequest) -> Void) async {
-        guard !busy else { return }
+        guard confirmed, !busy else { return }
         preparing = true; defer { preparing = false }
         (review, status) = await prepareTestFlight(account, app, session, configure)
     }
@@ -88,12 +90,20 @@ struct TestFlightTestersView: View {
         catch { status = "Check the tester email or clear the filter."; return }
         working = true; defer { working = false }
         let samePage = state == "ready" && filter == activeEmail && cursor == currentCursor
+        confirmed = false; if review?.state == "prepared" { review = nil }
         if !samePage { state = "loading"; nextCursor = nil }
         status = ""; activeEmail = filter; currentCursor = cursor
         do {
             let page = try await session.testFlightTesterPage(appId: app.id, email: filter, cursor: cursor, client: try await session.client(for: account))
-            testers = page.testers; nextCursor = page.next; state = "ready"
+            try Task.checkCancellation()
+            testers = page.testers; nextCursor = page.next; state = "ready"; confirmed = true
             history?.rememberRead(Read(activeEmail: filter, pageCursor: cursor, testers: page.testers, next: page.next), readKey)
-        } catch { status = "TestFlight testers could not be loaded. Refresh to retry, or return to the first page."; state = "failed" }
+        } catch is CancellationError { }
+        catch {
+            guard !Task.isCancelled else { return }
+            status = "TestFlight testers could not be loaded. Refresh to retry, or return to the first page."
+            state = samePage ? "ready" : "failed"
+            if samePage { status += " The last testers read are shown; invitation and removal actions need a successful refresh." }
+        }
     }
 }

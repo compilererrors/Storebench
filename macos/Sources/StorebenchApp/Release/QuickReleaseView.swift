@@ -352,7 +352,8 @@ struct QuickReleaseView: View {
         protection?.policy.update(id: protectionId, dirty: false, busy: true)
         do {
             // The starting versions read earlier, here, in Release or ahead in the background, open at once and are read again right after.
-            let remembered = presentation?.rememberedRead(historyKey, as: [Revision].self)
+            let remembered = await presentation?.rememberedDecodedRead(historyKey, as: [Revision].self)
+            try Task.checkCancellation()
             let savedPlan = try await session.releasePlan(accountId: account.id, appId: app.id)
             let savedHistory: [Revision]
             if let remembered { savedHistory = remembered }

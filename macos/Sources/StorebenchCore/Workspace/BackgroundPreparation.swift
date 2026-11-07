@@ -159,16 +159,23 @@ extension WorkspaceSession {
         }
     }
 
-    /// Reads ahead for the apps worth preparing, one at a time, so Release and Quick Release open with what they need already saved.
-    /// Only reads at Apple. Each app's parts are handed over as soon as they are ready, cheapest first: for the first apps the saved starting
-    /// versions, then Apple's builds; then the open app's material import starts when its release was opened lately and it has no saved plan,
-    /// and each saved plan's release status is read and remembered as a full status check would. The open app's pricing and TestFlight check are read first. Stops when cancelled.
+    /// Hands over the selected apps' saved starting versions before any delay, credential access or Apple request. Remote preparation
+    /// then follows one app at a time, the open app first. Each remote part is handed over as soon as it is ready. The open app's material
+    /// import starts when its release was opened lately and it has no saved plan; each saved plan's release status is read and remembered
+    /// as a full status check would. Stops when cancelled.
     public func prepareApps(current: (accountId: String, appId: String)?, now: @Sendable () -> Date = Date.init,
                             prepared: @escaping @MainActor @Sendable (PreparedApp) -> Void = { _ in }) async {
         guard let limit = try? backgroundPreparation().appLimit, limit > 0, let accounts = try? accounts() else { return }
         let connected = accounts.flatMap { account in account.apps.map { (accountId: account.id, appId: $0.id) } }
         let usage = (try? appUsage()) ?? AppUsage()
-        for (index, target) in usage.ranked(connected, current: current, limit: limit, now: now()).enumerated() {
+        let targets = usage.ranked(connected, current: current, limit: limit, now: now())
+        for target in targets.prefix(PreparedApp.presentedLimit) {
+            guard !Task.isCancelled else { return }
+            guard let history = try? revisions(accountId: target.accountId, appId: target.appId) else { continue }
+            guard !Task.isCancelled else { return }
+            await prepared(PreparedApp(accountId: target.accountId, appId: target.appId, history: history, builds: nil, pricing: nil))
+        }
+        for (index, target) in targets.enumerated() {
             do { try await Task.sleep(for: Self.preparationPause) } catch { return }
             guard let account = accounts.first(where: { $0.id == target.accountId }) else { continue }
             let open = current.map { $0.accountId == target.accountId && $0.appId == target.appId } ?? false
@@ -187,6 +194,14 @@ extension WorkspaceSession {
         try Task.checkCancellation()
         guard AppleRequestBudget.allowsReadingAhead(keyId: account.keyId) else { return }
         let client = try readClient(for: account)
+        // Deliver the build list before pricing and the fuller TestFlight check, which also reads group memberships.
+        // The later check reuses these build responses instead of downloading them again.
+        if presented {
+            if let builds = try? await AppStoreReadCache.rereadingAfterInvalidation({ try await testFlightBuilds(appId: appId, client: client) }) {
+                try Task.checkCancellation()
+                await prepared(PreparedApp(accountId: account.id, appId: appId, history: nil, builds: builds, pricing: nil))
+            }
+        }
         if open, let pricing = try? await AppStoreReadCache.rereadingAfterInvalidation({ try await pricingSetupState(account: account, appId: appId, client: client) }) {
             try Task.checkCancellation()
             await prepared(PreparedApp(accountId: account.id, appId: appId, history: nil, builds: nil, pricing: pricing))
@@ -196,14 +211,7 @@ extension WorkspaceSession {
             try Task.checkCancellation()
             await prepared(PreparedApp(accountId: account.id, appId: appId, history: nil, builds: facts.builds, pricing: nil, testFlight: facts))
         }
-        if presented {
-            await prepared(PreparedApp(accountId: account.id, appId: appId, history: try revisions(accountId: account.id, appId: appId), builds: nil, pricing: nil))
-            try Task.checkCancellation()
-            if let builds = try? await AppStoreReadCache.rereadingAfterInvalidation({ try await testFlightBuilds(appId: appId, client: client) }) {
-                try Task.checkCancellation()
-                await prepared(PreparedApp(accountId: account.id, appId: appId, history: nil, builds: builds, pricing: nil))
-            }
-        }
+        try Task.checkCancellation()
         if let plan = try releasePlan(accountId: account.id, appId: appId) {
             let freshness = open ? ReleaseStatusSync.rememberedFreshness : Self.preparedStatusAge
             let remembered = rememberedReleaseReadiness(accountId: account.id, appId: appId, planToken: plan.token)

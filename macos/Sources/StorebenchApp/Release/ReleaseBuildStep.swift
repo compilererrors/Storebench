@@ -25,11 +25,12 @@ struct ReleaseBuildStep: View {
     @State private var publishing = false
     /// False while remembered builds show and App Store Connect is read again.
     @State private var confirmed = false
-    @State private var loadId = UUID()
+    @State private var reader: ReleaseBuildReader?
     @Environment(\.pageScroll) private var pageScroll
     @Environment(\.navigationPresentation) private var presentation
     /// Shared with the background preparation, which reads builds without a version.
     private var buildsKey: String { "release-builds/\(account.id)/\(app.id)" }
+    private var readScope: String { JSONText.array([.string(account.id), .string(app.id), .string(plan.token), .string(versionId ?? "")]).stringify() }
     private var matching: [TestFlightBuild] {
         (builds ?? []).filter { $0.platform == plan.platform && $0.appVersion == plan.targetVersion && $0.expired != true }
     }
@@ -73,8 +74,23 @@ struct ReleaseBuildStep: View {
         }
         .id("release-build")
         .storebenchWorking(preparing || publishing)
-        .task(id: "\(plan.token)/\(versionId ?? "")") { await load(); await followUploads() }
-        .onDisappear { loadId = UUID() }
+        .task(id: readScope) {
+            if reader?.scope != readScope {
+                builds = nil; attachedId = nil; confirmed = false; complete = true
+                review = nil; readAt = nil; status = ""; failure = ""
+            }
+            reader?.retire()
+            guard let session else { return }
+            let account = self.account, appId = self.app.id, versionId = self.versionId, platform = self.plan.platform, version = self.plan.targetVersion
+            let owner = ReleaseBuildReader(scope: readScope) { all, latest in
+                try await session.releaseBuildPage(account: account, appId: appId, versionId: versionId, platform: platform, version: version, all: all, latest: latest)
+            }
+            reader = owner
+            await load()
+            guard owner.active, !Task.isCancelled else { return }
+            await followUploads()
+        }
+        .onDisappear { reader?.retire() }
         .onChange(of: matching.map(\.id)) { chooseDefault() }
         .onChange(of: addRequests) { Task { await addBuild() } }
         // Export compliance comes right after choosing the build, before Add Build and its review.
@@ -143,31 +159,19 @@ struct ReleaseBuildStep: View {
             await load(latest: true)
         }
     }
-    /// `fresh` clears the shared reads, as Refresh Builds does; `latest` reads this step's builds from Apple without them.
+    /// Refresh replaces this step's shared reads; `latest` reads past the cache for an automatic check.
     private func load(fresh: Bool = false, latest: Bool = false) async {
-        await ScreenReads.reading(fresh: fresh) {
-            guard let session else { return }
-            let ticket = UUID(); loadId = ticket
-            failure = ""; if !latest { confirmed = false }
-            if !fresh, builds == nil, let saved = presentation?.rememberedRead(buildsKey, as: RememberedBuilds.self) {
-                // A remembered list cannot establish that a chosen build is missing; wait for the new read before replacing it.
-                builds = saved.builds; attachedId = saved.versionId == versionId ? saved.attachedId : nil; complete = false; chooseDefault()
-                readAt = presentation?.rememberedReadAt(buildsKey)
-            }
-            // The version's first page of builds and its attached build show first; any older builds for the version follow.
-            var shown = false
-            do {
-                let first = try await session.releaseBuildPage(account: account, appId: app.id, versionId: versionId, platform: plan.platform, version: plan.targetVersion, latest: latest)
-                try Task.checkCancellation(); guard loadId == ticket else { return }; show(first); shown = true
-                guard !first.complete else { return }
-                let every = try await session.releaseBuildPage(account: account, appId: app.id, versionId: versionId, platform: plan.platform, version: plan.targetVersion, all: true, latest: latest)
-                try Task.checkCancellation(); guard loadId == ticket else { return }; show(every)
-            } catch {
-                // A background check that fails keeps the builds on screen; Refresh Builds reports the problem.
-                guard loadId == ticket, !Task.isCancelled, !latest else { return }
-                if shown { status = "Older builds for version \(plan.targetVersion) could not be read. Refresh Builds reads them again."; return }
-                builds = nil; failure = AppInformation.loadMessage(error, subject: "builds")
-            }
+        guard let reader, reader.scope == readScope, reader.active, !Task.isCancelled else { return }
+        failure = ""; if !latest { confirmed = false; status = "" }
+        if !fresh, builds == nil, let saved = await presentation?.rememberedDecodedRead(buildsKey, as: RememberedBuilds.self), !Task.isCancelled, reader.active, self.reader === reader, builds == nil {
+            // A remembered list cannot establish that a chosen build is missing; wait for the new read before replacing it.
+            builds = saved.builds; attachedId = saved.versionId == versionId ? saved.attachedId : nil; complete = false; chooseDefault()
+            readAt = presentation?.rememberedReadAt(buildsKey)
+        }
+        guard !Task.isCancelled, reader.active, self.reader === reader else { return }
+        await reader.load(fresh: fresh, latest: latest, received: { show($0) }) { error, shown in
+            if shown { status = "Older builds for version \(plan.targetVersion) could not be read. Refresh Builds reads them again."; return }
+            builds = nil; failure = AppInformation.loadMessage(error, subject: "builds")
         }
     }
     private func show(_ page: ReleaseBuildPage) {
@@ -175,11 +179,18 @@ struct ReleaseBuildStep: View {
         presentation?.rememberRead(RememberedBuilds(builds: page.builds, versionId: versionId, attachedId: page.attachedId, complete: page.complete), buildsKey)
     }
     private func addBuild() async {
-        guard !preparing, !publishing, let versionId, let selectedBuildId, selectedBuildId != attachedId else { return }
+        guard let reader, reader.scope == readScope, reader.active, !Task.isCancelled,
+              !preparing, !publishing, let versionId, let selectedBuildId, selectedBuildId != attachedId else { return }
         preparing = true; defer { preparing = false }
-        (review, status) = await preparePublishReview(account, session, PublishRequest(accountId: account.id, appId: app.id, scope: .versionBuild, versionId: versionId, buildId: selectedBuildId))
+        let prepared = await preparePublishReview(account, session, PublishRequest(accountId: account.id, appId: app.id, scope: .versionBuild, versionId: versionId, buildId: selectedBuildId))
+        guard reader.active, self.reader === reader, self.selectedBuildId == selectedBuildId, !Task.isCancelled else { return }
+        (review, status) = prepared
         // The prepared review opens below the build card; bring it into view so the next step is visible.
-        if review != nil { try? await Task.sleep(for: .milliseconds(100)); pageScroll?("release-build-review", .top) }
+        if review != nil {
+            try? await Task.sleep(for: .milliseconds(100))
+            guard reader.active, !Task.isCancelled else { return }
+            pageScroll?("release-build-review", .top)
+        }
     }
 }
 

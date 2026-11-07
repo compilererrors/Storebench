@@ -1,6 +1,31 @@
 @testable import StorebenchCore
+import CoreText
+import Foundation
 import Testing
 @testable import StorebenchApp
+
+@MainActor @Suite struct ExplicitRefreshTests {
+    init() throws { _ = try TestIsolation.require() }
+    private actor Source {
+        var reads = 0
+        func read() -> Data { reads += 1; return Data(String(reads).utf8) }
+    }
+    @Test func aReadButtonReplacesCachedAnswersButAPassiveReadSharesThem() async throws {
+        let cache = AppStoreReadCache(), source = Source()
+        let first = try await cache.read("synthetic-refresh") { await source.read() }
+        let passive = try await cache.read("synthetic-refresh") { await source.read() }
+        let passiveReads = await source.reads
+        #expect(first == Data("1".utf8) && passive == first && passiveReads == 1)
+        var refreshed: Data?
+        await StorebenchReadButton.perform {
+            do { refreshed = try await cache.read("synthetic-refresh") { await source.read() } }
+            catch { Issue.record("An explicit synthetic refresh unexpectedly failed") }
+        }
+        let refreshedReads = await source.reads
+        #expect(refreshed == Data("2".utf8) && refreshedReads == 2)
+        #expect(AppStoreReadCache.refreshedSince == nil)
+    }
+}
 
 @MainActor @Suite struct PricingInputChangesTests {
     init() throws { _ = try TestIsolation.require() }
@@ -19,6 +44,47 @@ import Testing
         edited.choose(method: "fx")
         #expect(!PricingInputChanges.compare(base, edited, identity: true).contains { $0.id == "mix" })
         #expect(try edited.validated().mix == nil)
+    }
+
+    @Test func comparisonLeavesUnusedCountryAdjustmentsAndIndexesOut() throws {
+        let saved = PricingProfileInputs(PricingProfile(id: "synthetic", name: "Synthetic", guideTerritory: "USA", rounding: "nearest", method: "same", percentages: [:]))
+        var edited = saved
+        edited.overrides = [.init(territory: "", percentage: "unfinished")]
+        edited.floor = "unfinished"; edited.ceiling = "unfinished"
+        edited.indexRows = [.init(territory: "", percentage: "unfinished")]
+        #expect(PricingInputChanges.compare(saved, edited, identity: true).isEmpty)
+        #expect(try edited.validated().percentages.isEmpty)
+        edited.choose(method: "ppp")
+        #expect(Set(PricingInputChanges.compare(saved, edited, identity: true).map(\.id)) == Set(["method", "rounding", "floor", "ceiling", "countries"]))
+    }
+}
+
+@MainActor @Suite struct MediaCardPreviewRequestTests {
+    init() throws { _ = try TestIsolation.require() }
+
+    @Test func aTextOnlyCardRendersWhenItsFontArrivesWithoutAScreenshot() async throws {
+        let url = try #require(CTFontCopyAttribute(CTFontCreateWithName("Helvetica" as CFString, 12, nil), kCTFontURLAttribute) as? URL)
+        let font = try Data(contentsOf: url)
+        var card = MediaCard(); card.layout = .textOnly; card.title = "Synthetic title"
+        card.style.typeface = .file; card.style.fontFile = .init(hash: String(repeating: "a", count: 64), name: "Synthetic.ttc", family: "Helvetica")
+        let before = MediaCardPreviewRequest(card: card, width: 1320, height: 2868, screenshotLoaded: false, fontLoaded: false)
+        let after = MediaCardPreviewRequest(card: card, width: 1320, height: 2868, screenshotLoaded: false, fontLoaded: true)
+        #expect(before != after && !before.ready && after.ready)
+        await #expect(throws: MediaCardFailure.font) { _ = try await MediaCardRenderer.previewAsync(card, width: 1320, height: 2868, screenshot: nil) }
+        let rendered = try await MediaCardRenderer.previewAsync(card, width: 1320, height: 2868, screenshot: nil, font: font)
+        #expect(rendered.image.width > 0 && rendered.image.height > 0)
+    }
+
+    @Test func imageAndFontCanArriveInEitherOrderAndTextOnlyDoesNotWaitForUnusedMedia() {
+        var card = MediaCard()
+        card.screenshot = .init(hash: String(repeating: "a", count: 64), name: "Synthetic.png", width: 1290, height: 2796)
+        card.style.typeface = .file; card.style.fontFile = .init(hash: String(repeating: "b", count: 64), name: "Synthetic.ttc", family: "Synthetic")
+        let imageOnly = MediaCardPreviewRequest(card: card, width: 1320, height: 2868, screenshotLoaded: true, fontLoaded: false)
+        let fontOnly = MediaCardPreviewRequest(card: card, width: 1320, height: 2868, screenshotLoaded: false, fontLoaded: true)
+        let ready = MediaCardPreviewRequest(card: card, width: 1320, height: 2868, screenshotLoaded: true, fontLoaded: true)
+        #expect(!imageOnly.ready && !fontOnly.ready && ready.ready && imageOnly != ready && fontOnly != ready)
+        card.layout = .textOnly
+        #expect(MediaCardPreviewRequest(card: card, width: 1320, height: 2868, screenshotLoaded: false, fontLoaded: true).ready)
     }
 }
 

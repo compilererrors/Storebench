@@ -202,7 +202,8 @@ import Observation
             let due = ReleaseReadiness.Parts.all.subtracting(checkedParts).subtracting(fillStarted)
             guard let next = ReleaseReadiness.Parts.batches(due, first: focus).first else { return }
             fillStarted.formUnion(next)
-            let value = try? await read(plan, next)
+            // Parts outside the open step leave connection slots free for its visible reads.
+            let value = try? await AppleReadPriority.$current.withValue(.next) { try await read(plan, next) }
             guard fillTicket == ticket, starting == generation, active else { return }
             guard let value, (try? accept(value, plan: plan)) != nil, planEditor.ready, !planEditor.dirty, TextSemantics.same(planEditor.expected, plan.token) else { fillComplete = false; continue }
             snapshot = value.merging(snapshot); checkedParts.formUnion(next); didChange()

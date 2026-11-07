@@ -119,9 +119,9 @@ enum ProductInformationReads {
 
 extension WorkspaceSession {
     /// What App Review still needs on the first `limit` in-app purchases and subscriptions, with the products not reached yet and the
-    /// product families that could not be read. Answers warmed earlier in this session are used unless `fresh`. Nothing is written.
+    /// product families that could not be read. Visible checks revalidate Apple; background reads reuse warm answers. Nothing is written.
     public func productReadiness(account: Account, appId: String, fresh: Bool, limit: Int = ProductReadinessCheck.batch) async throws -> ProductReadinessCheck {
-        return try await AppStoreReadCache.$refreshedSince.withValue(fresh ? .now : AppStoreReadCache.refreshedSince) {
+        return try await ScreenReads.reading(fresh: fresh) {
             let client = try readClient(for: account)
             return try await AppStoreReadCache.rereadingAfterInvalidation { try await productReadiness(account: account, appId: appId, client: client, limit: limit) }
         }

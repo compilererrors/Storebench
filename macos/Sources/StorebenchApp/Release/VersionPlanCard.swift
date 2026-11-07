@@ -74,7 +74,7 @@ struct VersionPlanCard: View {
     private func startSummary(_ model: ReleasePlanEditor) -> String {
         let base = selectedBase(model).map { ReleaseSetup.describe($0) }
         switch mode(model.inputs) {
-        case .reuse: return base.map { "Continues \($0), which is already being prepared in App Store Connect." } ?? "Continues the version already being prepared in App Store Connect."
+        case .reuse: return base.map { "Continues \($0), already in App Store Connect." } ?? "Continues the existing version in App Store Connect."
         case .copy: return base.map { "Text and screenshots are copied from \($0), as App Store Connect does for a new version." } ?? "Text and screenshots are copied from the current version, as App Store Connect does for a new version."
         case .empty: return "Starts empty: you write the text and add screenshots yourself."
         }
@@ -88,7 +88,7 @@ struct VersionPlanCard: View {
         let all = ReleaseSetup.candidates(history)
         if mode(model.inputs) == .copy { return all }
         let imported = all.filter { !$0.revision.isLocalDraft }
-        return imported.filter(\.inProgress) + imported.filter { !$0.inProgress }
+        return imported.filter(\.canContinue) + imported.filter { !$0.canContinue }
     }
     private func selectedBase(_ model: ReleasePlanEditor) -> Base? {
         ReleaseSetup.candidates(history).first { $0.revision.id == model.inputs.sourceRevisionId && $0.version.id == model.inputs.baseVersionId }
@@ -116,8 +116,8 @@ struct VersionPlanCard: View {
         if case .empty(let value, _) = model.inputs.start { platform = value } else { guard let base = selectedBase(model) else { return nil }; platform = base.version.platform }
         let clash = ReleaseSetup.candidates(history).first { !$0.revision.isLocalDraft && $0.version.platform == platform && $0.version.number == number }
         guard let clash, !(mode(model.inputs) == .reuse && clash.version.id == model.inputs.baseVersionId), number != model.plan?.targetVersion else { return nil }
-        return clash.inProgress
-            ? "\(clash.version.title) is already being prepared in App Store Connect. Choose Continue a version under Start from another version, or enter another number."
+        return clash.canContinue
+            ? "\(clash.version.title) already has an active release in App Store Connect. Choose Continue a version under Start from another version, or enter another number."
             : "\(clash.version.title) already exists at Apple. Enter a higher number."
     }
     @ViewBuilder private func workingOn(_ plan: ReleasePlan) -> some View {
@@ -138,7 +138,7 @@ struct VersionPlanCard: View {
                 inputs.start = value == .empty ? .empty(platform: "IOS", locale: "en-US") : value == .copy ? .copy : .reuse
                 let candidates = value == .copy ? ReleaseSetup.candidates(history) : ReleaseSetup.candidates(history).filter { !$0.revision.isLocalDraft }
                 if value != .empty, !candidates.contains(where: { $0.revision.id == inputs.sourceRevisionId && $0.version.id == inputs.baseVersionId }) || value == .reuse {
-                    let preferred = value == .reuse ? candidates.first(where: \.inProgress) ?? candidates.first : candidates.first
+                    let preferred = value == .reuse ? candidates.first(where: \.canContinue) ?? candidates.first : candidates.first
                     if value == .reuse || !candidates.contains(where: { $0.revision.id == inputs.sourceRevisionId && $0.version.id == inputs.baseVersionId }) {
                         inputs.sourceRevisionId = preferred?.revision.id; inputs.baseVersionId = preferred?.version.id
                     }
@@ -159,8 +159,8 @@ struct VersionPlanCard: View {
             if bases(model).isEmpty {
                 Text(mode(model.inputs) == .reuse ? "No version from App Store Connect is saved yet. Sync the app first, or choose Start empty." : "No saved versions are available. Choose Start empty.")
                     .font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
-            } else if mode(model.inputs) == .reuse, selectedBase(model)?.inProgress == false {
-                Text("This version is no longer being prepared in App Store Connect. To ship changes, choose Copy an earlier version.").font(.sbCallout).foregroundStyle(StorebenchTheme.color("color-danger")).fixedSize(horizontal: false, vertical: true)
+            } else if mode(model.inputs) == .reuse, selectedBase(model)?.canContinue == false {
+                Text("This version has no active release in the saved App Store Connect status. Refresh its status, or choose Copy an earlier version to ship new changes.").font(.sbCallout).foregroundStyle(StorebenchTheme.color("color-danger")).fixedSize(horizontal: false, vertical: true)
             }
         }
     }

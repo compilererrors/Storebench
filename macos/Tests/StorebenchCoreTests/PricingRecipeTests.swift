@@ -137,6 +137,21 @@ import Testing
         #expect(try inputs.validated().floor == nil)
     }
 
+    @Test func switchingToSameForAllKeepsUnfinishedAdjustmentsWithoutApplyingThem() throws {
+        var input = PricingProfileInputs(PricingProfile(id: "synthetic", name: "Synthetic", guideTerritory: "USA", rounding: "nearest", method: "ppp", percentages: ["SWE": 90]))
+        input.overrides.append(.init(territory: "", percentage: "unfinished"))
+        input.floor = "unfinished"; input.ceiling = "unfinished"
+        let rows = input.overrides
+        input.choose(method: "same")
+        let saved = try input.validated()
+        #expect(saved.percentages.isEmpty && saved.floor == nil && saved.ceiling == nil)
+        #expect(input.overrides == rows && input.floor == "unfinished" && input.ceiling == "unfinished")
+        input.choose(method: "ppp")
+        #expect(throws: PricingFailure.self) { try input.validated() }
+        input.overrides.removeLast(); input.floor = "80"; input.ceiling = "120"
+        #expect(try input.validated().percentages == ["SWE": 90])
+    }
+
     @Test func csvFilesFillPricesPercentagesAndYourOwnIndex() throws {
         let territories = [Territory(code: "USA", name: "United States", currency: "USD"), Territory(code: "SWE", name: "Sweden", currency: "SEK")]
         // The columns of Storebench's own price export are read as they are.

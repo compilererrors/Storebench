@@ -147,7 +147,9 @@ private struct StorebenchShortcutNavigation: ViewModifier {
 }
 extension View {
     func shortcutAction(_ command: ShortcutCommand, enabled: Bool = true, priority: Int = 10, identity: String = "", action: @escaping @MainActor () async -> Void) -> some View {
-        modifier(StorebenchShortcutAction(command: command, enabled: enabled, priority: priority, identity: identity, action: action))
+        modifier(StorebenchShortcutAction(command: command, enabled: enabled, priority: priority, identity: identity, action: {
+            if command == .refresh { await StorebenchReadButton.perform(action) } else { await action() }
+        }))
     }
     func shortcutNavigation(_ commands: [ShortcutCommand], identity: String, navigate: @escaping @MainActor (ShortcutCommand) -> Void) -> some View {
         modifier(StorebenchShortcutNavigation(commands: commands, identity: identity, navigate: navigate))

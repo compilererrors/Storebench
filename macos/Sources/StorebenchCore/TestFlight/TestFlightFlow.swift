@@ -123,12 +123,16 @@ public enum TestFlightFlow {
 extension WorkspaceSession {
     /// The app's TestFlight builds, read with the account's read client.
     public func testFlightBuilds(account: Account, appId: String) async throws -> [TestFlightBuild] {
-        try await testFlightBuilds(appId: appId, client: readClient(for: account))
+        try await ScreenReads.reading(fresh: false) {
+            try await AppStoreReadCache.rereadingAfterInvalidation {
+                try await testFlightBuilds(appId: appId, client: readClient(for: account))
+            }
+        }
     }
 
     /// Everything Start Testing checks, read from App Store Connect with the account's read client.
     public func testFlightFacts(account: Account, appId: String, fresh: Bool) async throws -> TestFlightFlow.Facts {
-        return try await AppStoreReadCache.$refreshedSince.withValue(fresh ? .now : AppStoreReadCache.refreshedSince) {
+        return try await ScreenReads.reading(fresh: fresh) {
             let client = try readClient(for: account)
             return try await AppStoreReadCache.rereadingAfterInvalidation { try await testFlightFacts(appId: appId, client: client) }
         }

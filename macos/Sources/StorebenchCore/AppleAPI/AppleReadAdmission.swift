@@ -13,6 +13,15 @@ public enum AppleReadPriority: Int, Sendable, Comparable, CaseIterable {
     public static func < (left: Self, right: Self) -> Bool { left.rawValue < right.rawValue }
 }
 
+/// The expected amount of work in one request, from its shape rather than a guess at Apple's response time.
+/// Within the same urgency, small metadata reads go before ordinary pages, then report downloads and later pages.
+public enum AppleReadCost: Int, Sendable, Comparable, CaseIterable {
+    case small, standard, bulk
+    /// An explicit choice for a read pipeline; nil lets the client choose from each request's shape.
+    @TaskLocal public static var current: AppleReadCost?
+    public static func < (left: Self, right: Self) -> Bool { left.rawValue < right.rawValue }
+}
+
 /// One queue for every read request sent to Apple in this app. Visible reads go first, then next-step reads, then background
 /// reads. Only so many requests run at once, and slots stay free for visible reads, so heavy background work never holds every
 /// connection. Next-step and background reads that would wait beyond their limit are dropped instead of piling up.
@@ -51,7 +60,13 @@ public actor AppleReadAdmission {
     /// The shared read a request belongs to, so a reader that joins it can raise its priority.
     @TaskLocal public static var key: String?
 
-    private struct Waiter { let id: UUID, key: String?, order: Int; var priority: AppleReadPriority; let continuation: CheckedContinuation<AppleReadPriority, Error> }
+    private struct Waiter {
+        let id: UUID, key: String?, order: Int, cost: AppleReadCost
+        var priority: AppleReadPriority, bypasses = 0
+        let continuation: CheckedContinuation<AppleReadPriority, Error>
+    }
+    /// A newer, smaller request may pass an older request only this many times at the same urgency.
+    static let maximumCostBypasses = 8
     private let limits: Limits
     private var waiting: [Waiter] = []
     private var active: [AppleReadPriority: Int] = [:]
@@ -64,11 +79,12 @@ public actor AppleReadAdmission {
         Snapshot(active: active.filter { $0.value > 0 }, waiting: Dictionary(grouping: waiting, by: \.priority).mapValues(\.count), dropped: dropped)
     }
 
-    /// Runs one request when a slot is free for its priority.
+    /// Runs one request when a slot is free for its priority, with smaller requests first at the same urgency.
     public func run<T: Sendable>(_ priority: AppleReadPriority = AppleReadPriority.current, key: String? = AppleReadAdmission.key,
+                                 cost: AppleReadCost = AppleReadCost.current ?? .standard,
                                  _ body: @Sendable () async throws -> T) async throws -> T {
-        let slot = try await acquire(priority, key: key)
-        do { let value = try await body(); release(slot, key: key); return value } catch { release(slot, key: key); throw error }
+        let slot = try await acquire(priority, key: key, cost: cost)
+        do { try Task.checkCancellation(); let value = try await body(); release(slot, key: key); return value } catch { release(slot, key: key); throw error }
     }
 
     /// A more urgent reader joined the shared read for `key`: a request of it that waits, or has not reached the queue yet, moves up.
@@ -79,7 +95,7 @@ public actor AppleReadAdmission {
         pump()
     }
 
-    private func acquire(_ requested: AppleReadPriority, key: String?) async throws -> AppleReadPriority {
+    private func acquire(_ requested: AppleReadPriority, key: String?, cost: AppleReadCost) async throws -> AppleReadPriority {
         try Task.checkCancellation()
         let priority = max(requested, key.flatMap { raised[$0] } ?? requested)
         if !waiting.contains(where: { $0.priority >= priority }), startable(priority) { active[priority, default: 0] += 1; return priority }
@@ -89,7 +105,7 @@ public actor AppleReadAdmission {
         order += 1; let position = order
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                waiting.append(Waiter(id: id, key: key, order: position, priority: priority, continuation: continuation))
+                waiting.append(Waiter(id: id, key: key, order: position, cost: cost, priority: priority, continuation: continuation))
             }
         } onCancel: { Task { await self.cancel(id) } }
     }
@@ -109,11 +125,22 @@ public actor AppleReadAdmission {
         pump()
     }
 
-    /// Starts waiting requests, most urgent and then oldest first, while slots allow.
+    /// Urgency always wins. Within it, smaller requests go first, then FIFO; an older request passed often enough goes next.
+    private func nextWaiter() -> Int? {
+        let eligible = waiting.indices.filter { startable(waiting[$0].priority) }
+        guard let priority = eligible.map({ waiting[$0].priority }).max() else { return nil }
+        let peers = eligible.filter { waiting[$0].priority == priority }
+        if let oldest = peers.filter({ waiting[$0].bypasses >= Self.maximumCostBypasses }).min(by: { waiting[$0].order < waiting[$1].order }) { return oldest }
+        return peers.min { (waiting[$0].cost, waiting[$0].order) < (waiting[$1].cost, waiting[$1].order) }
+    }
+
+    /// Starts waiting requests while their reserved slots allow.
     private func pump() {
-        while let index = waiting.indices.filter({ startable(waiting[$0].priority) })
-                .max(by: { (waiting[$0].priority, -waiting[$0].order) < (waiting[$1].priority, -waiting[$1].order) }) {
+        while let index = nextWaiter() {
             let waiter = waiting.remove(at: index)
+            for older in waiting.indices where waiting[older].priority == waiter.priority && waiting[older].order < waiter.order {
+                waiting[older].bypasses = min(Self.maximumCostBypasses, waiting[older].bypasses + 1)
+            }
             active[waiter.priority, default: 0] += 1
             waiter.continuation.resume(returning: waiter.priority)
         }

@@ -20,7 +20,7 @@ struct TestFlightInformationView: View {
     @State private var busyLocales: Set<String> = []
     @State private var summaries: [String: String] = [:]
     @Environment(\.navigationPresentation) private var history
-    private struct Read: Codable { var localizations: [TestFlightLocalization]?, license: String?? }
+    private struct Read: Codable, Sendable { var localizations: [TestFlightLocalization]?, license: String?? }
     private var readKey: String { "testflight-information/\(account.id)/\(app.id)" }
     private var codes: [String] { Array(Set(localizations.map(\.locale)).union(addedLocales)).sorted() }
     private var available: [String] { StoreLocales.codes.filter { !codes.contains($0) } }
@@ -39,7 +39,7 @@ struct TestFlightInformationView: View {
                     }.environment(\.fieldHintHeight, 0).storebenchWorking(busy)
                 }
                 StorebenchActionGroup {
-                    Button(informationReady ? "Reload Languages" : "Read Languages") { if !busy, protection?.allowLeaving() != false { Task { await loadInformation() } } }.help(informationReady ? "Reload languages from Apple" : "Read Languages from Apple").accessibilityLabel(informationReady ? "Reload languages from Apple" : "Read Languages from Apple").storebenchWorking(busy)
+                    StorebenchReadButton(informationReady ? "Reload Languages" : "Read Languages") { if !busy, protection?.allowLeaving() != false { await loadInformation() } }.help(informationReady ? "Reload languages from Apple" : "Read Languages from Apple").accessibilityLabel(informationReady ? "Reload languages from Apple" : "Read Languages from Apple").storebenchWorking(busy)
                 }
                 StorebenchFeedback(text: status, height: 40)
                 StorebenchCollection(items: codes.map { StorebenchCollectionEntry(id: $0, value: $0) }, title: { StoreLocales.name($0.value) }, subtitle: { $0.value + " · " + (summaries[$0.value] ?? "Open to edit TestFlight information") },
@@ -64,7 +64,7 @@ struct TestFlightInformationView: View {
             }
             ReviewPanel(account: account, app: app, session: session, review: $licenseReview, done: { if licenseReview?.state == "complete" { Task { await loadLicense() } } }, busyChanged: { publishingLicense = $0 })
         }
-        .task(id: "\(account.id):\(app.id)") { showRemembered(); await loadInformation(); await loadLicense() }
+        .task(id: "\(account.id):\(app.id)") { await showRemembered(); guard !Task.isCancelled else { return }; await loadInformation(); await loadLicense() }
         .onChange(of: Data(agreement.utf8)) { if !busy, licenseReview?.state == "prepared" { licenseReview = nil } }
         .trackUnsavedChanges(dirty, busy: busy)
     }
@@ -93,8 +93,8 @@ struct TestFlightInformationView: View {
         var read = history?.rememberedRead(readKey, as: Read.self) ?? Read(); change(&read); history?.rememberRead(read, readKey)
     }
     /// The languages and license last read show at once. Languages stay read-only until Apple's current answer arrives.
-    private func showRemembered() {
-        guard !informationReady, !licenseReady, let read = history?.rememberedRead(readKey, as: Read.self) else { return }
+    private func showRemembered() async {
+        guard !informationReady, !licenseReady, let read = await history?.rememberedDecodedRead(readKey, as: Read.self), !Task.isCancelled, !informationReady, !licenseReady else { return }
         if let saved = read.localizations, localizations.isEmpty { localizations = saved }
         if case .some(.some(let text)) = read.license { license = text; agreement = text; licenseReady = true }
     }

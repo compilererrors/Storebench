@@ -172,18 +172,19 @@ struct PricingView: View {
 
     private func reload() { Task { await load() } }
 
-    /// Opening Pricing uses a read warmed earlier in this session; Refresh reads Apple again. Each review still reads Apple itself.
+    /// Saved pricing shows before Apple is read again. Each review still reads Apple itself.
     private func load(fresh: Bool = false) async {
         guard let session else { return }
         let key = Self.readKey(accountId: account.id, appId: app.id)
         if !fresh, setup == nil, let remembered = presentation?.rememberedRead(key, as: PricingSetupState.self) {
             setup = remembered; readAt = presentation?.rememberedReadAt(key); chosen = try? await session.chosenPricingModel(accountId: account.id, appId: app.id)
         }
+        guard !Task.isCancelled else { return }
         let current = UUID(); ticket = current; reading = true
         defer { if ticket == current { reading = false } }
         do {
             let saved = try await session.chosenPricingModel(accountId: account.id, appId: app.id)
-            let value = try await session.pricingSetupState(account: account, appId: app.id, fresh: fresh)
+            let value = try await ScreenReads.reading(fresh: fresh) { try await session.pricingSetupState(account: account, appId: app.id, fresh: false) }
             guard ticket == current, !Task.isCancelled else { return }
             chosen = saved; if setup != value { setup = value }; readAt = Date()
             presentation?.rememberRead(value, key)

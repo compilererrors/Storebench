@@ -32,6 +32,7 @@ struct TestFlightGuideView: View {
         .task {
             // The last check shows at once while Start Testing reads App Store Connect again.
             if facts == nil, let remembered = history?.rememberedRead(readKey, as: TestFlightFlow.Facts.self) { facts = remembered }
+            guard !Task.isCancelled else { return }
             await load()
         }
         // Sending to Apple clears the shared reads, so the next step's check follows App Store Connect without reading everything again.
@@ -62,7 +63,7 @@ struct TestFlightGuideView: View {
         guard let session, !reading else { return }
         reading = true; defer { reading = false }
         do {
-            let next = try await session.testFlightFacts(account: account, appId: app.id, fresh: fresh)
+            let next = try await ScreenReads.reading(fresh: fresh) { try await session.testFlightFacts(account: account, appId: app.id, fresh: false) }
             try Task.checkCancellation()
             facts = next; problem = ""
             history?.rememberRead(next, readKey)

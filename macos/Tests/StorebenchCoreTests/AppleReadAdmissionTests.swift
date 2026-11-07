@@ -22,8 +22,12 @@ import Testing
         var limits = AppleReadAdmission.Limits(); limits.active = 3; limits.nextActive = 2; limits.backgroundActive = 1; limits.nextWaiting = 2; limits.backgroundWaiting = 1
         return limits
     }
-    private func start(_ queue: AppleReadAdmission, _ requests: Requests, _ name: String, _ priority: AppleReadPriority, key: String? = nil) -> Task<Void, Error> {
-        Task { try await queue.run(priority, key: key) { await requests.hold(name) } }
+    private func start(_ queue: AppleReadAdmission, _ requests: Requests, _ name: String, _ priority: AppleReadPriority, key: String? = nil, cost: AppleReadCost = .standard) -> Task<Void, Error> {
+        Task { try await queue.run(priority, key: key, cost: cost) { await requests.hold(name) } }
+    }
+    private func oneSlot() -> AppleReadAdmission.Limits {
+        var value = AppleReadAdmission.Limits(); value.active = 1; value.nextActive = 1; value.backgroundActive = 1
+        return value
     }
 
     @Test func backgroundWorkLeavesRoomForVisibleReadsAndFullQueuesDropSpeculativeReads() async throws {
@@ -72,7 +76,7 @@ import Testing
         let early = start(queue, requests, "early", .background, key: "early-key")
         try await until { await requests.isOpen("early") }
 
-        let waiting = start(queue, requests, "cancelled", .background)
+        let waiting = start(queue, requests, "cancelled", .background, cost: .small)
         try await until { await queue.snapshot.waiting[.background] == 1 }
         waiting.cancel()
         await #expect(throws: CancellationError.self) { try await waiting.value }
@@ -90,5 +94,95 @@ import Testing
             await Task { #expect(AppleReadPriority.current == .background) }.value
         }
         #expect(AppleReadPriority.allCases.sorted() == [.background, .next, .visible])
+    }
+
+    @Test func smallReadsPassOrdinaryAndBulkReadsAtTheSameUrgencyWithFIFOForPeers() async throws {
+        let queue = AppleReadAdmission(limits: oneSlot()), requests = Requests()
+        let running = start(queue, requests, "running", .visible)
+        try await until { await requests.isOpen("running") }
+        let names = ["bulk", "ordinary", "small-first", "small-second"]
+        let costs: [AppleReadCost] = [.bulk, .standard, .small, .small]
+        var tasks: [Task<Void, Error>] = []
+        for (index, name) in names.enumerated() {
+            tasks.append(start(queue, requests, name, .visible, cost: costs[index]))
+            let count = index + 1
+            try await until { await queue.snapshot.waiting[.visible] == count }
+        }
+        await requests.finish("running"); try await running.value
+        for name in ["small-first", "small-second", "ordinary", "bulk"] {
+            try await until { await requests.isOpen(name) }
+            await requests.finish(name)
+        }
+        for task in tasks { try await task.value }
+        #expect(await requests.started == ["running", "small-first", "small-second", "ordinary", "bulk"])
+        #expect(await queue.snapshot.active.isEmpty)
+    }
+
+    @Test func urgencyWinsOverRequestCost() async throws {
+        let queue = AppleReadAdmission(limits: oneSlot()), requests = Requests()
+        let running = start(queue, requests, "running", .visible)
+        try await until { await requests.isOpen("running") }
+        let background = start(queue, requests, "background-small", .background, cost: .small)
+        try await until { await queue.snapshot.waiting[.background] == 1 }
+        let next = start(queue, requests, "next-small", .next, cost: .small)
+        try await until { await queue.snapshot.waiting[.next] == 1 }
+        let visible = start(queue, requests, "visible-bulk", .visible, cost: .bulk)
+        try await until { await queue.snapshot.waiting[.visible] == 1 }
+        await requests.finish("running"); try await running.value
+        for name in ["visible-bulk", "next-small", "background-small"] {
+            try await until { await requests.isOpen(name) }
+            await requests.finish(name)
+        }
+        try await visible.value; try await next.value; try await background.value
+        #expect(await requests.started == ["running", "visible-bulk", "next-small", "background-small"])
+    }
+
+    @Test func aBulkReadCannotBeStarvedByNewerSmallReads() async throws {
+        let queue = AppleReadAdmission(limits: oneSlot()), requests = Requests()
+        let running = start(queue, requests, "running", .visible)
+        try await until { await requests.isOpen("running") }
+        let bulk = start(queue, requests, "bulk", .visible, cost: .bulk)
+        try await until { await queue.snapshot.waiting[.visible] == 1 }
+        let bound = AppleReadAdmission.maximumCostBypasses
+        var small: [Task<Void, Error>] = []
+        for index in 0..<(bound + 2) {
+            small.append(start(queue, requests, "small-\(index)", .visible, cost: .small))
+            let count = index + 2
+            try await until { await queue.snapshot.waiting[.visible] == count }
+        }
+        await requests.finish("running"); try await running.value
+        for index in 0..<bound {
+            let name = "small-\(index)"
+            try await until { await requests.isOpen(name) }
+            await requests.finish(name); try await small[index].value
+        }
+        try await until { await requests.isOpen("bulk") }
+        #expect(await !requests.isOpen("small-\(bound)"))
+        await requests.finish("bulk"); try await bulk.value
+        for index in bound..<(bound + 2) {
+            let name = "small-\(index)"
+            try await until { await requests.isOpen(name) }
+            await requests.finish(name); try await small[index].value
+        }
+        #expect(await requests.started.firstIndex(of: "bulk") == bound + 1)
+        let idle = await queue.snapshot
+        #expect(idle.active.isEmpty && idle.waiting.isEmpty)
+    }
+
+    @Test func requestShapeChoosesSmallPagesBeforeBulkContinuations() async {
+        #expect(AppStoreConnectClient.readCost("/v1/apps/1001") == .small)
+        #expect(AppStoreConnectClient.readCost("/v2/inAppPurchases/1002") == .small)
+        #expect(AppStoreConnectClient.readCost("/v1/builds?limit=1") == .small)
+        #expect(AppStoreConnectClient.readCost("/v1/builds?limit=50") == .small)
+        #expect(AppStoreConnectClient.readCost("/v1/builds?limit=200") == .standard)
+        #expect(AppStoreConnectClient.readCost("/v1/builds?limit=0") == .standard)
+        #expect(AppStoreConnectClient.readCost("/v1/builds?limit=1&limit=200") == .standard)
+        #expect(AppStoreConnectClient.readCost("/v1/builds?limit=1&cursor=synthetic-next") == .bulk)
+        #expect(AppStoreConnectClient.readCost("/v1/apps/1001?cursor=synthetic-next") == .bulk)
+        #expect(AppleReadCost.current == nil)
+        await AppleReadCost.$current.withValue(.bulk) {
+            await Task { #expect(AppleReadCost.current == .bulk) }.value
+        }
+        #expect(AppleReadCost.current == nil)
     }
 }

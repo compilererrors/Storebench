@@ -4,7 +4,9 @@ import Foundation
 extension WorkspaceSession {
     private func testFlightRead<T>(_ account: Account, _ read: (AppStoreConnectClient) async throws -> T) async throws -> T {
         let client = try readClient(for: account)
-        return try await AppStoreReadCache.rereadingAfterInvalidation { try await read(client) }
+        return try await ScreenReads.reading(fresh: false) {
+            try await AppStoreReadCache.rereadingAfterInvalidation { try await read(client) }
+        }
     }
 
     /// The testers given this build individually, and every tester of the app to choose from.

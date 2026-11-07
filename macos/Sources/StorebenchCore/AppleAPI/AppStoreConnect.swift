@@ -147,7 +147,7 @@ public final class AppStoreConnectClient: NSObject, URLSessionTaskDelegate, Send
             request.timeoutInterval = Self.readTimeout(attempt)
             let result: BoundedResponse.Result
             let current = request, pool = pool
-            do { result = try await AppleReadAdmission.shared(for: origin.host).run { try await pool.read(current, maximumBytes: maxBytes) } } catch where Self.retriesConnection(error, attempt: attempt) { continue }
+            do { result = try await AppleReadAdmission.shared(for: origin.host).run(cost: AppleReadCost.current ?? .bulk) { try await pool.read(current, maximumBytes: maxBytes) } } catch where Self.retriesConnection(error, attempt: attempt) { continue }
             try accessCheck()
             let data = result.data, http = result.response
             if [429, 500, 502, 503, 504].contains(http.statusCode), attempt < 2 {
@@ -248,6 +248,19 @@ public final class AppStoreConnectClient: NSObject, URLSessionTaskDelegate, Send
         return page
     }
 
+    /// Request shape only: continuation pages are bulk work; a single resource or a bounded small page is metadata.
+    /// The server's actual latency is unknown, so unclassified requests keep the ordinary queue position.
+    static func readCost(_ path: String) -> AppleReadCost {
+        guard let components = URLComponents(string: path) else { return .standard }
+        let items = components.queryItems ?? []
+        if items.contains(where: { $0.name == "cursor" }) { return .bulk }
+        let limits = items.filter { $0.name == "limit" }
+        if limits.count == 1, let text = limits[0].value, let limit = Int(text), (1...50).contains(limit) { return .small }
+        let parts = components.path.split(separator: "/")
+        if parts.count == 3, parts[0] == "v1" || parts[0] == "v2" { return .small }
+        return .standard
+    }
+
     private func pageBytes(_ path: String) async throws -> Data {
         try accessCheck()
         guard let url = URL(string: path, relativeTo: origin), url.host == origin.host, path.hasPrefix("/v1/") || path.hasPrefix("/v2/") else { throw Failure.invalidPath }
@@ -259,7 +272,7 @@ public final class AppStoreConnectClient: NSObject, URLSessionTaskDelegate, Send
             request.timeoutInterval = Self.readTimeout(attempt)
             let result: BoundedResponse.Result
             let current = request, pool = pool
-            do { result = try await AppleReadAdmission.shared(for: origin.host).run { try await pool.read(current, maximumBytes: 4_000_000) } } catch where Self.retriesConnection(error, attempt: attempt) { continue }
+            do { result = try await AppleReadAdmission.shared(for: origin.host).run(cost: AppleReadCost.current ?? Self.readCost(path)) { try await pool.read(current, maximumBytes: 4_000_000) } } catch where Self.retriesConnection(error, attempt: attempt) { continue }
             try accessCheck()
             let data = result.data, http = result.response
             AppleRequestBudget.record(http, keyId: token.account.keyId)

@@ -20,7 +20,7 @@ struct TestFlightBuildAccessView: View {
     @State private var preparing = ""
     @State private var review: PublishReview?
     @Environment(\.navigationPresentation) private var history
-    private struct Read { let assigned: [TestFlightTester], testers: [TestFlightTester] }
+    private struct Read: Codable, Sendable { let assigned: [TestFlightTester], testers: [TestFlightTester] }
     private var readKey: String { "build-access/\(account.id)/\(app.id)/\(build.id)" }
     private var busy: Bool { reading || publishing || !preparing.isEmpty }
     private var baseline: String { build.autoNotifyEnabled.map { $0 ? "on" : "off" } ?? "" }
@@ -96,7 +96,8 @@ struct TestFlightBuildAccessView: View {
         .task(id: build.id) {
             automatic = baseline
             // The testers last read, or read ahead by Start Testing, show at once while Apple's current answer is read.
-            if !loaded, let read = history?.rememberedRead(readKey, as: Read.self) { assigned = read.assigned; testers = read.testers; loaded = true; readAt = history?.rememberedReadAt(readKey) }
+            if !loaded, let read = await history?.rememberedDecodedRead(readKey, as: Read.self), !Task.isCancelled, !loaded { assigned = read.assigned; testers = read.testers; loaded = true; readAt = history?.rememberedReadAt(readKey) }
+            guard !Task.isCancelled else { return }
             await load()
         }
         .onChange(of: busy) { busyChanged(busy) }

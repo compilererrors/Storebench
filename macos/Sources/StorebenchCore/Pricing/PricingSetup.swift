@@ -244,9 +244,9 @@ extension WorkspaceSession {
         }
     }
 
-    /// Pricing as it opens: Apple's answers warmed earlier in this session, or read again when `fresh`. Each review still reads Apple itself.
+    /// Visible pricing checks Apple again; background preparation reuses warm responses. Each review still reads Apple itself.
     public func pricingSetupState(account: Account, appId: String, fresh: Bool) async throws -> PricingSetupState {
-        return try await AppStoreReadCache.$refreshedSince.withValue(fresh ? .now : AppStoreReadCache.refreshedSince) {
+        return try await ScreenReads.reading(fresh: fresh) {
             let client = try readClient(for: account)
             return try await AppStoreReadCache.rereadingAfterInvalidation { try await pricingSetupState(account: account, appId: appId, client: client) }
         }

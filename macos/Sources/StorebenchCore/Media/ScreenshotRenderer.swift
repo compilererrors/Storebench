@@ -7,18 +7,22 @@ import UniformTypeIdentifiers
 /// Immutable decoded pixels. No UI, file, credential or networking APIs are used by the renderer.
 public struct DecodedScreenshot: @unchecked Sendable {
     public let image: CGImage
+    /// Dimensions verified in the source header, retained when preview pixels are downsampled.
+    public let sourceWidth, sourceHeight: Int
     public var width: Int { image.width }
     public var height: Int { image.height }
-    fileprivate init(image: CGImage) { self.image = image }
+    fileprivate init(image: CGImage, sourceWidth: Int, sourceHeight: Int) {
+        self.image = image; self.sourceWidth = sourceWidth; self.sourceHeight = sourceHeight
+    }
 }
 
 public struct ScreenshotPreview: @unchecked Sendable { public let image: CGImage }
 
 public enum ScreenshotRenderer {
     public static func load(_ data: Data) throws -> DecodedScreenshot {
-        DecodedScreenshot(image: try decode(data, maximumEdge: nil))
+        try decode(data, maximumEdge: nil)
     }
-    private static func decode(_ data: Data, maximumEdge: Int?) throws -> CGImage {
+    private static func decode(_ data: Data, maximumEdge: Int?) throws -> DecodedScreenshot {
         try Task.checkCancellation()
         let inspected = try ScreenshotEditing.inspect(data)
         guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
@@ -33,7 +37,8 @@ public enum ScreenshotRenderer {
               image.width > 0, image.height > 0, image.width <= ScreenshotEditing.maximumSide, image.height <= ScreenshotEditing.maximumSide,
               image.width * image.height <= ScreenshotEditing.maximumPixels,
               maximumEdge != nil || image.width * image.height == inspected.width * inspected.height else { throw ScreenshotEditFailure.image }
-        try Task.checkCancellation(); return image
+        try Task.checkCancellation()
+        return DecodedScreenshot(image: image, sourceWidth: inspected.width, sourceHeight: inspected.height)
     }
 
     private static func run<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
@@ -44,10 +49,10 @@ public enum ScreenshotRenderer {
     public static func loadAsync(_ data: Data) async throws -> DecodedScreenshot { try await run { try load(data) } }
     /// A smaller decode whose longest side is at most `maximumEdge`, for drawing thumbnails. It keeps the original proportions.
     public static func loadAsync(_ data: Data, maximumEdge: Int) async throws -> DecodedScreenshot {
-        try await run { DecodedScreenshot(image: try decode(data, maximumEdge: max(1, min(ScreenshotEditing.maximumSide, maximumEdge)))) }
+        try await run { try decode(data, maximumEdge: max(1, min(ScreenshotEditing.maximumSide, maximumEdge))) }
     }
     public static func thumbnailAsync(_ data: Data, maximumEdge: Int = 240) async throws -> ScreenshotPreview {
-        try await run { ScreenshotPreview(image: try decode(data, maximumEdge: max(1, min(1024, maximumEdge)))) }
+        try await run { ScreenshotPreview(image: try decode(data, maximumEdge: max(1, min(1024, maximumEdge))).image) }
     }
     public static func previewAsync(_ source: DecodedScreenshot, edits: ScreenshotEdits) async throws -> ScreenshotPreview {
         try await run { ScreenshotPreview(image: try render(source, edits: edits, preview: true)) }

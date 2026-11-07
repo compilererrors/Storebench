@@ -30,6 +30,24 @@ import Testing
         #expect(inputs.start == .empty(platform: "IOS", locale: "en-US") && inputs.targetVersion == "1.0")
     }
 
+    @Test func firstVersionsRemainAvailableAcrossEveryAppStoreConnectStage() throws {
+        let states = ["PREPARE_FOR_SUBMISSION", "READY_FOR_REVIEW", "WAITING_FOR_REVIEW", "IN_REVIEW", "PENDING_DEVELOPER_RELEASE", "PENDING_APPLE_RELEASE", "READY_FOR_DISTRIBUTION", "REJECTED", "METADATA_REJECTED", "DEVELOPER_REJECTED", "PROCESSING_FOR_APP_STORE", "SYNTHETIC_FUTURE_STATE"]
+        for (index, state) in states.enumerated() {
+            let saved = try revision("synthetic-\(index)", importedAt: "2026-03-01T00:00:00.000Z", versions: [("synthetic-first", "MAC_OS", "1.0", state, "MANUAL")])
+            #expect(ReleaseSetup.candidates([saved]).map(\.version.id) == ["synthetic-first"])
+            if try #require(ReleaseSetup.candidates([saved]).first).canContinue {
+                let next = ReleaseSetup.suggestion([saved], date: date)
+                #expect(next.start == .reuse && next.targetVersion == "1.0")
+            }
+        }
+    }
+
+    @Test func aFirstVersionWaitingForManualReleaseKeepsItsOwnPlan() throws {
+        let saved = try revision("synthetic-first", importedAt: "2026-03-01T00:00:00.000Z", versions: [("synthetic-first-version", "MAC_OS", "1.0", "PENDING_DEVELOPER_RELEASE", "MANUAL")])
+        let next = ReleaseSetup.suggestion([saved], date: date)
+        #expect(next.start == .reuse && next.baseVersionId == "synthetic-first-version" && next.targetVersion == "1.0")
+    }
+
     @Test func olderPreparationStatesNeverOverrideTheNewestImportAndCopyUsesTheHighestReleasedVersion() throws {
         let old = try revision("import-old", importedAt: "2026-01-01T00:00:00.000Z", versions: [("v1", "IOS", "1.0", "PREPARE_FOR_SUBMISSION", "MANUAL")])
         let latest = try revision("import-latest", importedAt: "2026-02-01T00:00:00.000Z", versions: [

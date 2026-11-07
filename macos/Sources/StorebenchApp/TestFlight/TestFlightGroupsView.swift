@@ -33,7 +33,7 @@ struct TestFlightGroupsView: View {
     @State private var limit = ""
     @State private var restoring: String??
     @Environment(\.navigationPresentation) private var history
-    private struct Read: Codable { let groups: [TestFlightGroup], builds: [TestFlightBuild], testers: [TestFlightTester] }
+    private struct Read: Codable, Sendable { let groups: [TestFlightGroup], builds: [TestFlightBuild], testers: [TestFlightTester] }
     private var readKey: String { "testflight-groups/\(account.id)/\(app.id)" }
 
     private var busy: Bool { working || preparing || publishing }
@@ -75,12 +75,15 @@ struct TestFlightGroupsView: View {
             if let selected, let group = groups.first(where: { $0.id == selected }) { groupCard(group).storebenchWorking(busy) }
         }
         .task {
-            if let internalOnly, newName.isEmpty { newInternal = internalOnly }
-            if groups.isEmpty, let read = history?.rememberedRead(readKey, as: Read.self) { groups = read.groups; builds = read.builds; testers = read.testers }
-            await load()
-            // Back reopens the group that was open, with its members read again.
-            if case .some(let id) = restoring { restoring = nil; if let id, let group = groups.first(where: { $0.id == id }) { await select(group) } }
-            else if selected == nil, let id = initialGroupId, let group = groups.first(where: { $0.id == id }) { await select(group) }
+            await ScreenReads.reading(fresh: false) {
+                if let internalOnly, newName.isEmpty { newInternal = internalOnly }
+                if groups.isEmpty, let read = await history?.rememberedDecodedRead(readKey, as: Read.self), !Task.isCancelled, groups.isEmpty { groups = read.groups; builds = read.builds; testers = read.testers }
+                guard !Task.isCancelled else { return }
+                await load()
+                // Back reopens the group that was open, with its members read again.
+                if case .some(let id) = restoring { restoring = nil; if let id, let group = groups.first(where: { $0.id == id }) { await select(group) } }
+                else if selected == nil, let id = initialGroupId, let group = groups.first(where: { $0.id == id }) { await select(group) }
+            }
         }
         .historyValue("testflight-groups", Binding(get: { restoring ?? selected }, set: { restoring = .some($0) }))
         .trackUnsavedChanges(dirty, busy: busy)
@@ -158,7 +161,7 @@ struct TestFlightGroupsView: View {
                 }
             } else if memberState == "failed" {
                 Text("Group access could not be confirmed. Reload before choosing a build or tester.").foregroundStyle(StorebenchTheme.muted)
-                Button("Reload Group") { Task { await loadMembers() } }.fixedSize()
+                StorebenchReadButton("Reload Group") { await loadMembers() }.fixedSize()
             } else {
                 Group {
                     Text("Builds").font(.sbHeadline)

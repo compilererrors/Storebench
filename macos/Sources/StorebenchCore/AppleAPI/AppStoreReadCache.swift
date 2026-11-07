@@ -27,6 +27,9 @@ public actor AppStoreReadCache {
     /// While set, reads skip responses kept or requests started before this instant and replace them, so a screen's Refresh reads
     /// what it shows again without dropping what other screens read.
     @TaskLocal public static var refreshedSince: ContinuousClock.Instant?
+    /// A screen opening checks Apple again after showing its local result. Unlike an explicit Refresh, it joins a request
+    /// already in flight. Reads completed during the same screen load are reused by its later steps.
+    @TaskLocal public static var revalidatedSince: ContinuousClock.Instant?
     /// Runs `body` as a refresh that starts now.
     public static func refreshing<T>(isolation: isolated (any Actor)? = #isolation, _ body: () async throws -> T) async rethrows -> T {
         try await $refreshedSince.withValue(.now, operation: body, isolation: isolation)
@@ -59,7 +62,8 @@ public actor AppStoreReadCache {
 
     private func read(_ key: String, host: String?, starting: UInt64, load: @escaping @Sendable () async throws -> Data) async throws -> Data {
         let since = Self.refreshedSince
-        if let entry = entries.value(for: key), ContinuousClock.now - entry.stored < lifetime, since.map({ entry.stored >= $0 }) ?? true { return entry.bytes }
+        let boundary = since ?? Self.revalidatedSince
+        if let entry = entries.value(for: key), ContinuousClock.now - entry.stored < lifetime, boundary.map({ entry.stored >= $0 }) ?? true { return entry.bytes }
         let priority = AppleReadPriority.current, workId: UUID
         if let existing = pending[key], let since, existing.started < since { superseded[existing.id] = existing; pending[key] = nil }
         if let existing = pending[key] {

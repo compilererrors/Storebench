@@ -599,7 +599,8 @@ struct ReleaseWizardView: View {
             // Existing plans keep their saved source and every local edit.
             // Opening Release again shows the starting versions read earlier in this window at once and reads them again afterwards.
             let historyKey = "release-history/\(account.id)/\(app.id)"
-            let remembered = presentation?.rememberedRead(historyKey, as: [Revision].self)
+            let remembered = await presentation?.rememberedDecodedRead(historyKey, as: [Revision].self)
+            try Task.checkCancellation(); guard loadTicket == ticket else { return }
             // A saved plan opens straight from its own small record; the starting versions behind it are read after the step is shown.
             let savedPlan = remembered == nil ? try await session.releasePlan(accountId: account.id, appId: app.id) : nil
             var savedHistory = remembered

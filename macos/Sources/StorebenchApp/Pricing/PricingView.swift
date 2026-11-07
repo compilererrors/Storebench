@@ -92,7 +92,7 @@ struct CountryPricesView: View {
             }
             SalesReportsView(account: account, app: app, session: session, blocked: guideShown || guideBusy || working || refreshing, onChanged: { await load() })
         }
-        .task(id: account.id + "/" + app.id) { restoreTable(); showRemembered(); await load() }
+        .task(id: account.id + "/" + app.id) { restoreTable(); await showRemembered(); guard !Task.isCancelled else { return }; await load() }
         .onDisappear { saveTable(); loadTicket = UUID() }
         .onChange(of: query) { if restoredQuery == query { restoredQuery = nil } else { filterCountries() }; saveTable() }
         .onChange(of: tableSort) { if restoredSort == tableSort { restoredSort = nil } else { filterCountries() }; saveTable() }
@@ -239,8 +239,8 @@ struct CountryPricesView: View {
     }
     private var readKey: String { "pricing/\(account.id)/\(app.id)" }
     /// The prices read on an earlier visit in this window show at once; actions stay locked until the read that follows confirms them.
-    private func showRemembered() {
-        guard !loaded, let value = history?.rememberedRead(readKey, as: PricingScreen.self) else { return }
+    private func showRemembered() async {
+        guard !loaded, let value = await history?.rememberedDecodedRead(readKey, as: PricingScreen.self), !Task.isCancelled, !loaded else { return }
         apply(value); loaded = true
     }
     private func apply(_ value: PricingScreen) {

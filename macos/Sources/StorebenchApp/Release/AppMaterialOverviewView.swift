@@ -78,7 +78,8 @@ struct OverviewSection: View {
                 Card(title: "Saved on this Mac", subtitle: "This app's App Store text and screenshots that Storebench has saved.") { StorebenchLoadingStatus(message: "Reading what is saved…", surface: false) }
             }
         }.task {
-            if snapshot == nil { snapshot = history?.rememberedRead("app-material/\(account.id)/\(app.id)", as: AppOverviewMaterial.Snapshot.self) }
+            if snapshot == nil, let saved = await history?.rememberedDecodedRead("app-material/\(account.id)/\(app.id)", as: AppOverviewMaterial.Snapshot.self), !Task.isCancelled, snapshot == nil { snapshot = saved }
+            guard !Task.isCancelled else { return }
             await load()
         }.trackUnsavedChanges(false, busy: reading)
     }
@@ -149,7 +150,8 @@ struct AppLiveVersionsView: View {
                 StorebenchTextSlot(text: "Version draft: \(plan.label). " + planStatus(plan), height: 64, font: .sbCallout, color: StorebenchTheme.muted)
             }
         }.task {
-            if entries == nil { entries = history?.rememberedRead(readKey, as: [AppOverviewVersions.Entry].self); readAt = history?.rememberedReadAt(readKey) }
+            if entries == nil, let saved = await history?.rememberedDecodedRead(readKey, as: [AppOverviewVersions.Entry].self), !Task.isCancelled, entries == nil { entries = saved; readAt = history?.rememberedReadAt(readKey) }
+            guard !Task.isCancelled else { return }
             await load()
         }.trackUnsavedChanges(false, busy: reading)
     }

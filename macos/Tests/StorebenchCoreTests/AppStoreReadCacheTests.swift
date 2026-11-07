@@ -182,6 +182,38 @@ import Testing
         await #expect(throws: Failure.synthetic) { try await cache.read("failure") { throw Failure.synthetic } }
         #expect(try await cache.read("failure") { Data("recovered".utf8) } == Data("recovered".utf8))
     }
+    @Test func openingAScreenChecksRemoteOnceAndNestedStepsReuseThatAnswer() async throws {
+        let cache = AppStoreReadCache(), reader = Reader()
+        _ = try await cache.read("synthetic/screen") { try await reader.load() }
+        _ = try await cache.read("synthetic/other") { try await reader.load() }
+        try await ScreenReads.reading(fresh: false) {
+            _ = try await cache.read("synthetic/screen") { try await reader.load() }
+            try await ScreenReads.reading(fresh: false) {
+                _ = try await cache.read("synthetic/screen") { try await reader.load() }
+            }
+        }
+        #expect(await reader.calls == 3)
+        _ = try await cache.read("synthetic/other") { try await reader.load() }
+        #expect(await reader.calls == 3)
+        // A later opening validates again. Reading ahead retains the configured cache lifetime.
+        try await ScreenReads.reading(fresh: false) { _ = try await cache.read("synthetic/screen") { try await reader.load() } }
+        try await ScreenReads.ahead {
+            try await ScreenReads.reading(fresh: false) { _ = try await cache.read("synthetic/screen") { try await reader.load() } }
+        }
+        #expect(await reader.calls == 4)
+    }
+    @Test func openingScreensJoinTheSameRemoteReadInsteadOfReplacingIt() async throws {
+        let cache = AppStoreReadCache(), held = Held()
+        let first = Task { try await ScreenReads.reading(fresh: false) { try await cache.read("synthetic/screen") { try await held.load() } } }
+        let deadline = ContinuousClock.now + .seconds(5)
+        while await !held.open { guard ContinuousClock.now < deadline else { throw Failure.synthetic }; try await Task.sleep(for: .milliseconds(5)) }
+        let second = Task { try await ScreenReads.reading(fresh: false) { try await cache.read("synthetic/screen") { try await held.load() } } }
+        while await cache.readers("synthetic/screen") < 2 { guard ContinuousClock.now < deadline else { throw Failure.synthetic }; try await Task.sleep(for: .milliseconds(5)) }
+        #expect(await held.calls == 1)
+        await held.release()
+        #expect(try await first.value == second.value)
+        #expect(await held.calls == 1)
+    }
     @Test func cachedClientsSeparateAccountsAndFreshClientsAlwaysReadApple() async throws {
         let host = "release-read-cache.synthetic.test", cache = AppStoreReadCache()
         StubProtocol.handle(host) { _ in

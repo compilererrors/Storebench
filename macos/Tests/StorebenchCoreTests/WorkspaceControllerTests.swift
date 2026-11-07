@@ -15,6 +15,66 @@ import Testing
         while !(try await condition()) { guard ContinuousClock.now < deadline else { throw FileMutex.Failure.timeout }; try await Task.sleep(for: .milliseconds(10)) }
     }
 
+    private actor CatalogProbe {
+        var calls = 0
+        private var entered = false, released = false
+        private var continuations: [CheckedContinuation<Void, Never>] = []
+        func run() async -> AppCatalogRefresh {
+            calls += 1; entered = true
+            if !released { await withCheckedContinuation { continuations.append($0) } }
+            return AppCatalogRefresh(accounts: 0, refreshedAccounts: 0, appCount: 0, issues: [], sample: false)
+        }
+        func immediate() -> AppCatalogRefresh {
+            calls += 1
+            return AppCatalogRefresh(accounts: 0, refreshedAccounts: 0, appCount: 0, issues: [], sample: false)
+        }
+        func release() { released = true; let waiting = continuations; continuations = []; for continuation in waiting { continuation.resume() } }
+        func wait() async throws {
+            let deadline = ContinuousClock.now + .seconds(10)
+            while !entered { guard ContinuousClock.now < deadline else { throw FileMutex.Failure.timeout }; try await Task.sleep(for: .milliseconds(10)) }
+        }
+    }
+
+    @Test func appRefreshStaysBusyAndSharesTheWholeOperation() async throws {
+        let (controller, _, _, root) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        await controller.start(); await controller.setUp(password: nil)
+        let probe = CatalogProbe()
+        let first = Task { try await controller.refreshApps(using: { _ in await probe.run() }) }
+        try await probe.wait()
+        #expect(controller.refreshingApps && controller.appRefreshMessage.contains("Reading apps"))
+        var joined = false
+        let second = Task { joined = true; return try await controller.refreshApps(using: { _ in await probe.run() }) }
+        try await wait { joined }
+        let calls = await probe.calls
+        #expect(calls == 1 && controller.refreshingApps)
+        await probe.release()
+        let result = try await first.value
+        #expect(try await second.value == result)
+        #expect(!controller.refreshingApps && controller.appRefreshMessage == result.message && !controller.appRefreshFailed)
+        await controller.signOut()
+    }
+
+    @Test func aRefreshCompletingAfterSignOutCannotRestoreTheOldAccountState() async throws {
+        let (controller, _, _, root) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        await controller.start(); await controller.setUp(password: nil)
+        let probe = CatalogProbe()
+        let pending = Task { try await controller.refreshApps(using: { _ in await probe.run() }) }
+        try await probe.wait(); await controller.signOut(); await probe.release()
+        do { _ = try await pending.value; Issue.record("An old catalog refresh unexpectedly succeeded") }
+        catch { #expect(error is CancellationError) }
+        #expect(controller.session == nil && controller.state == .locked && !controller.refreshingApps && controller.appRefreshMessage.isEmpty)
+    }
+
+    @Test func sampleAppRefreshNeverUsesTheAppleCatalogService() async throws {
+        let (controller, _, _, root) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        await controller.start(); await controller.setUp(password: nil); await controller.openSampleData()
+        let probe = CatalogProbe()
+        let result = try await controller.refreshApps(using: { _ in await probe.immediate() })
+        #expect(result.sample && result.appCount > 0 && controller.appRefreshMessage.contains("Sample"))
+        #expect(await probe.calls == 0)
+        await controller.closeSampleData(); await controller.signOut()
+    }
+
     @Test func failedAutomaticStartsNeverRearmKeychainButExplicitRetryCan() async throws {
         let root = try TestIsolation.require().appendingPathComponent("synthetic-start-permission-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }

@@ -24,6 +24,8 @@ struct CreateMediaView: View {
     @State private var images = MediaCardImages()
     /// Font files used by the open set's cards, by content hash.
     @State private var fonts: [String: Data] = [:]
+    @State private var mediaReadId = UUID()
+    @State private var mediaRead: Task<Void, Never>?
     @State private var loads: [String: UUID] = [:]
     @State private var preview: ScreenshotPreview?
     @State private var previewIssue = ""
@@ -69,7 +71,10 @@ struct CreateMediaView: View {
             _ = await save()
         }
         // The preview loads its selected screenshot at full size; other cards draw from small decodes.
-        .task(id: PreviewRequest(card: current, width: opened?.width ?? 0, height: opened?.height ?? 0, loaded: (current?.screenshot.map { images.full($0.hash) != nil } ?? true) && (current.map { font($0) != nil || $0.style.typeface != .file } ?? true))) { await renderPreview() }
+        .task(id: MediaCardPreviewRequest(card: current, width: opened?.width ?? 0, height: opened?.height ?? 0,
+                                        screenshotLoaded: current?.screenshot.map { images.full($0.hash) != nil } ?? false,
+                                        fontLoaded: current.map { font($0) != nil } ?? false)) { await renderPreview() }
+        .onDisappear { mediaRead?.cancel(); mediaReadId = UUID() }
         .trackUnsavedChanges(dirty, busy: busy || saving, onSave: { await save() })
     }
 
@@ -481,10 +486,12 @@ struct CreateMediaView: View {
         } catch { status = "Card sets could not be opened. Your saved files are unchanged."; statusError = true }
     }
     private func show(_ value: WorkspaceSession.SavedMediaCardSet) {
-        if value.set.id != opened?.id { images.removeAll() }
+        mediaRead?.cancel(); mediaReadId = UUID()
+        if value.set.id != opened?.id { images.removeAll(); fonts.removeAll() }
         history = MediaCardHistory(value.set); savedSet = value.set; revision = value.revision; stale = false
         selectedId = value.set.cards.first?.id ?? ""; preview = nil; previewIssue = ""
-        Task { await loadScreenshots(value.set) }
+        let ticket = mediaReadId
+        mediaRead = Task { await loadScreenshots(value.set, ticket: ticket) }
     }
     private func open(_ id: String) async {
         guard id != opened?.id, !busy else { return }
@@ -496,7 +503,10 @@ struct CreateMediaView: View {
         do {
             saved = try await session.mediaCardSets(accountId: account.id, appId: app.id)
             if let value = saved.first(where: { $0.set.id == id }) ?? saved.first { show(value); status = "Card set reloaded."; statusError = false }
-            else { history = nil; savedSet = nil; creating = true; status = MediaCardFailure.missing.message; statusError = true }
+            else {
+                mediaRead?.cancel(); mediaReadId = UUID(); images.removeAll(); fonts.removeAll()
+                history = nil; savedSet = nil; creating = true; status = MediaCardFailure.missing.message; statusError = true
+            }
         } catch { status = "The card set could not be reloaded."; statusError = true }
     }
     private func createSet() async {
@@ -519,7 +529,9 @@ struct CreateMediaView: View {
             try await session.deleteMediaCardSet(accountId: account.id, appId: app.id, id: set.id, expected: revision)
             saved = try await session.mediaCardSets(accountId: account.id, appId: app.id)
             history = nil; savedSet = nil
-            if let first = saved.first { show(first) } else { creating = true }
+            if let first = saved.first { show(first) } else {
+                mediaRead?.cancel(); mediaReadId = UUID(); images.removeAll(); fonts.removeAll(); creating = true
+            }
             status = "Card set deleted from this Mac."; statusError = false
         } catch let failure as MediaCardFailure { stale = failure == .stale; status = failure.message; statusError = true }
         catch { status = "The card set could not be deleted."; statusError = true }
@@ -542,18 +554,32 @@ struct CreateMediaView: View {
 
     /// Reads the open set's screenshots as small decodes for the thumbnails, the selected card's first, then its font files.
     /// Full-size decodes are made only for the selected card and for exports.
-    private func loadScreenshots(_ set: MediaCardSet) async {
+    private func loadScreenshots(_ set: MediaCardSet, ticket: UUID) async {
         guard let session else { return }
+        @MainActor func currentRead() -> Bool { !Task.isCancelled && mediaReadId == ticket && opened?.id == set.id }
         let shots = set.cards.compactMap(\.screenshot), first = current?.screenshot?.hash
         for shot in shots.sorted(by: { ($0.hash == first ? 0 : 1) < ($1.hash == first ? 0 : 1) }) where images.thumbnail(shot.hash) == nil {
+            guard currentRead() else { return }
             do {
                 let bytes = try await session.mediaCardScreenshot(accountId: account.id, appId: app.id, hash: shot.hash)
-                images.keepThumbnail(try await ScreenshotRenderer.loadAsync(bytes, maximumEdge: MediaCardImages.thumbnailEdge), shot.hash)
-            } catch is CancellationError { return } catch { previewIssue = "A saved screenshot could not be opened. Choose it again on the cards that show an empty frame." }
+                let image = try await ScreenshotRenderer.loadAsync(bytes, maximumEdge: MediaCardImages.thumbnailEdge)
+                guard currentRead() else { return }
+                images.keepThumbnail(image, shot.hash)
+            } catch is CancellationError { return } catch {
+                guard currentRead() else { return }
+                previewIssue = "A saved screenshot could not be opened. Choose it again on the cards that show an empty frame."
+            }
         }
         for file in set.cards.compactMap(\.style.fontFile) where fonts[file.hash] == nil {
-            do { fonts[file.hash] = try await session.mediaCardFont(accountId: account.id, appId: app.id, hash: file.hash) }
-            catch is CancellationError { return } catch { previewIssue = MediaCardFailure.font.message }
+            guard currentRead() else { return }
+            do {
+                let bytes = try await session.mediaCardFont(accountId: account.id, appId: app.id, hash: file.hash)
+                guard currentRead() else { return }
+                fonts[file.hash] = bytes
+            } catch is CancellationError { return } catch {
+                guard currentRead() else { return }
+                previewIssue = MediaCardFailure.font.message
+            }
         }
     }
     /// The full-size screenshot of a card, decoded when it is not kept; nil when it cannot be read.
@@ -623,14 +649,13 @@ struct CreateMediaView: View {
 
     private func renderPreview() async {
         guard let set = opened, let card = current else { return }
+        guard card.style.typeface != .file || font(card) != nil else { return }
         // The decoded screenshot goes to the renderer directly, so one an export let go, or one too large to keep, still draws.
         var screenshot: DecodedScreenshot?
-        if let shot = card.screenshot {
+        if card.layout.usesScreenshot, let shot = card.screenshot {
             if let kept = images.full(shot.hash) { screenshot = kept } else { screenshot = await loadFull(card) }
             guard screenshot != nil else { return }
         }
-        // A saved font file still being read draws once it arrives; one that could not be read shows its message.
-        if card.style.typeface == .file, let file = card.style.fontFile, fonts[file.hash] == nil, previewIssue.isEmpty { return }
         do {
             let image = try await MediaCardRenderer.previewAsync(card, width: set.width, height: set.height, screenshot: screenshot, font: font(card))
             try Task.checkCancellation()
@@ -642,7 +667,7 @@ struct CreateMediaView: View {
         var result: [(Int, Data)] = []
         for (position, card) in cards {
             // Each card's full-size screenshot is decoded as it is exported; the budget lets earlier ones go.
-            let screenshot = await loadFull(card)
+            let screenshot = card.layout.usesScreenshot ? await loadFull(card) : nil
             do { result.append((position, try await MediaCardRenderer.exportAsync(card, width: set.width, height: set.height, screenshot: screenshot, font: font(card)))) }
             catch let failure as MediaCardFailure { throw CardExportFailure(position: position, failure: failure) }
         }
@@ -690,7 +715,17 @@ struct CreateMediaView: View {
 
 private struct CardExportFailure: Error { let position: Int; let failure: MediaCardFailure }
 
-private struct PreviewRequest: Equatable { let card: MediaCard?, width: Int, height: Int, loaded: Bool }
+/// Image and font availability change independently, including on a Text Only card without a screenshot.
+struct MediaCardPreviewRequest: Equatable {
+    let card: MediaCard?, width: Int, height: Int
+    let screenshotReady, fontReady: Bool
+    var ready: Bool { screenshotReady && fontReady }
+    init(card: MediaCard?, width: Int, height: Int, screenshotLoaded: Bool, fontLoaded: Bool) {
+        self.card = card; self.width = width; self.height = height
+        screenshotReady = card?.layout.usesScreenshot != true || card?.screenshot == nil || screenshotLoaded
+        fontReady = card?.style.typeface != .file || fontLoaded
+    }
+}
 
 /// A small rendering of one card, about the size it appears in App Store search results.
 private struct MediaCardThumbnail: View {
@@ -699,14 +734,15 @@ private struct MediaCardThumbnail: View {
     let font: Data?
     @State private var image: ScreenshotPreview?
     var body: some View {
+        let request = MediaCardPreviewRequest(card: card, width: width, height: height, screenshotLoaded: screenshot != nil, fontLoaded: font != nil)
         ZStack {
             RoundedRectangle(cornerRadius: 6).fill(StorebenchTheme.color("color-surface-sunken"))
             if let image { Image(decorative: image.image, scale: 1).resizable().clipShape(RoundedRectangle(cornerRadius: 6)) }
         }
         .aspectRatio(Double(width) / Double(height), contentMode: .fit)
         .accessibilityHidden(true)
-        .task(id: PreviewRequest(card: card, width: width, height: height, loaded: screenshot != nil && (font != nil || card.style.typeface != .file))) {
-            if card.screenshot != nil, screenshot == nil { return }
+        .task(id: request) {
+            guard request.ready else { image = nil; return }
             if let result = try? await MediaCardRenderer.previewAsync(card, width: width, height: height, screenshot: screenshot, font: font, edge: 360), !Task.isCancelled { image = result }
         }
     }

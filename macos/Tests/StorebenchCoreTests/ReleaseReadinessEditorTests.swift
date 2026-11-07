@@ -115,6 +115,25 @@ import Testing
         model.retire(); let before = notices; plan.revert(); #expect(notices > before)
         plan.removeObserver(observer)
     }
+    @Test func visibleStatusReadsKeepTheirPriorityWhileRemainingPartsUseNextPriority() async throws {
+        let plan = try await owner(), value = try snapshot(#require(plan.plan))
+        var priorities: [AppleReadPriority] = []
+        let model = ReleaseReadinessEditor(planEditor: plan, readParts: { _, parts in
+            priorities.append(AppleReadPriority.current)
+            await Task.yield()
+            return ReleaseReadinessSnapshot(scope: value.scope, plan: value.plan, steps: value.steps, materialSignature: value.materialSignature,
+                targetVersionId: value.targetVersionId, targetState: value.targetState, parts: parts)
+        })
+        defer { model.retire() }
+        model.focus = .versions
+        #expect(await AppleReadPriority.$current.withValue(.visible) { await model.refresh() })
+        let deadline = ContinuousClock.now + .seconds(5)
+        while model.filling { guard ContinuousClock.now < deadline else { throw Failure.synthetic }; try await Task.sleep(for: .milliseconds(10)) }
+        #expect(priorities.first == .visible && priorities.count > 1)
+        #expect(priorities.dropFirst().allSatisfy { $0 == .next })
+        #expect(model.checkedParts == .all && model.confirmed && !model.busy)
+        #expect(AppleReadPriority.current == .visible)
+    }
     @Test func openingAgainConfirmsARecentStatusWithOneVersionStateRead() async throws {
         let plan = try await owner(), saved = try #require(plan.plan), now = Date(timeIntervalSince1970: 2_000_000_000)
         var reads = 0, probes = 0, state: String? = "PREPARE_FOR_SUBMISSION", material = "synthetic-saved-material"

@@ -713,17 +713,22 @@ struct StorebenchReadButton: View {
     let action: @MainActor () async -> Void
     @State private var reading = false
     @State private var context = UUID()
+    @State private var operation: Task<Void, Never>?
     init(_ title: String, action: @escaping @MainActor () async -> Void) { self.title = title; self.action = action }
+    /// Explicit reads see current answers; local-only actions still only reread their local store.
+    @MainActor static func perform(_ action: @MainActor () async -> Void) async {
+        await ScreenReads.reading(fresh: true) { await action() }
+    }
     var body: some View {
         Button {
             guard !reading else { return }
             reading = true; let expected = context
-            Task {
-                await action()
-                if context == expected { reading = false }
+            operation = Task {
+                await Self.perform(action)
+                if context == expected { reading = false; operation = nil }
             }
         } label: { StorebenchBusyLabel(title, loading: "Reading…", busy: reading) }
-            .storebenchWorking(reading).onDisappear { context = UUID(); reading = false }
+            .storebenchWorking(reading).onDisappear { operation?.cancel(); operation = nil; context = UUID(); reading = false }
     }
 }
 

@@ -41,6 +41,10 @@ public struct PricingProfileInputs: Equatable, Sendable {
         indexRows = profile.index.sorted { $0.key < $1.key }.map { Override(id: "index-" + $0.key, territory: $0.key, percentage: JSONText.number($0.value)) }
     }
     public var pricingMethod: PricingMethod? { PricingMethod(rawValue: method) }
+    /// Same for all does not use country adjustments or price limits. Hidden inputs remain in the editor until needed again.
+    public var usesCountryAdjustments: Bool { pricingMethod?.exactOnly != true }
+    public var effectiveFloor: String { usesCountryAdjustments ? floor : "" }
+    public var effectiveCeiling: String { usesCountryAdjustments ? ceiling : "" }
     /// True when the recipe uses your own index, as its method or mixed in.
     public var usesOwnIndex: Bool { method == PricingMethod.own.rawValue || effectiveMixMethod == PricingMethod.own.rawValue }
     /// Replaces rows with values read from a CSV file, keeping rows for other countries.
@@ -50,9 +54,10 @@ public struct PricingProfileInputs: Equatable, Sendable {
     /// The rounding the chosen method really uses.
     public var effectiveRounding: String { PricingMethod(rawValue: method)?.rounding(rounding) ?? rounding }
     public func validated() throws -> PricingProfile {
-        guard overrides.count <= 250 else { throw PricingFailure.invalid("A profile can contain at most 250 territory overrides.") }
+        let activeOverrides = usesCountryAdjustments ? overrides : []
+        guard activeOverrides.count <= 250 else { throw PricingFailure.invalid("A profile can contain at most 250 territory overrides.") }
         var percentages: [String: Double] = [:]
-        for row in overrides {
+        for row in activeOverrides {
             let territory = TextSemantics.trim(row.territory).uppercased(), text = TextSemantics.trim(row.percentage)
             guard let number = Double(text), !text.isEmpty else { throw PricingFailure.invalid("A territory percentage must be between 0 and 1,000 with at most two decimals.") }
             guard percentages[territory] == nil else { throw PricingFailure.invalid("Each country can appear only once.") }
@@ -65,10 +70,10 @@ public struct PricingProfileInputs: Equatable, Sendable {
             return value
         }
         let mix = try effectiveMixMethod.isEmpty ? nil : PricingMix(method: mixMethod, share: number(mixShare, "Enter the mixed-in share in percent.") ?? 0)
-        let limits = PricingMethod(rawValue: method)?.exactOnly == true ? (nil, nil) : (try number(floor, "Enter the lowest price in percent, or leave it empty."), try number(ceiling, "Enter the highest price in percent, or leave it empty."))
-        guard indexRows.count <= 250 else { throw PricingFailure.invalid("Your own index can contain at most 250 countries.") }
+        let limits = (try number(effectiveFloor, "Enter the lowest price in percent, or leave it empty."), try number(effectiveCeiling, "Enter the highest price in percent, or leave it empty."))
         var index: [String: Double] = [:]
         if usesOwnIndex {
+            guard indexRows.count <= 250 else { throw PricingFailure.invalid("Your own index can contain at most 250 countries.") }
             for row in indexRows {
                 let territory = TextSemantics.trim(row.territory).uppercased()
                 guard let value = try number(row.percentage, "Enter a number for each value in your own index.") else { throw PricingFailure.invalid("Enter a number for each value in your own index.") }

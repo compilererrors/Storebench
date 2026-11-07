@@ -24,6 +24,7 @@ public enum AccountFailure: Error, Equatable {
         case let value as AccountFailure: value
         case let value as CredentialAccessFailure: value
         case let value as PasswordVaultStorage.Failure: value
+        case is CancellationError: error
         case AppStoreConnectClient.Failure.status(401): AccountFailure.auth
         case AppStoreConnectClient.Failure.status(403): AccountFailure.access
         case AppStoreConnectClient.Failure.agreement: AccountFailure.agreement
@@ -75,6 +76,7 @@ extension WorkspaceSession {
         do {
             let client = AppStoreConnectClient(token: try AppleToken(account: account, privateKeyPEM: privateKeyPEM), origin: origin, configuration: configuration, accessCheck: sessionRequestCheck())
             let selection = try Self.appSelection(await client.list("/v1/apps?limit=200"))
+            try Task.checkCancellation()
             guard !selection.ids.isEmpty else { throw AccountFailure.empty }
             let connected = Account(id: account.id, name: account.name, keyId: account.keyId, keyType: keyType, issuerId: account.issuerId, appIds: selection.ids, appNames: selection.names)
             try storeAccess { store in
@@ -114,7 +116,8 @@ extension WorkspaceSession {
     public func refreshAccountApps(_ account: Account, client: AppStoreConnectClient) async throws -> Account {
         do {
             _ = try currentAccount(account, client: client, exact: true)
-            let selection = try Self.appSelection(await client.list("/v1/apps?limit=200"))
+            let selection = try await ScreenReads.reading(fresh: true) { try Self.appSelection(await client.list("/v1/apps?limit=200")) }
+            try Task.checkCancellation()
             let updated = Account(id: account.id, name: account.name, keyId: account.keyId, keyType: account.keyType, issuerId: account.issuerId, appIds: selection.ids, appNames: selection.names)
             try storeAccess { store in
                 try FileMutex.withLock(store.directory.appendingPathComponent("accounts.mutex")) {

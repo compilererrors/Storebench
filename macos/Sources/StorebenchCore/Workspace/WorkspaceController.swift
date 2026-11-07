@@ -17,6 +17,10 @@ import Security
     public private(set) var showingSampleData = false
     /// True while the sample workspace is being created and filled.
     public private(set) var loadingSampleData = false
+    public private(set) var refreshingApps = false
+    public private(set) var appRefreshMessage = ""
+    public private(set) var appRefreshFailed = false
+    @ObservationIgnored private var appRefresh: (id: UUID, session: WorkspaceSession, task: Task<AppCatalogRefresh, Error>)?
     @ObservationIgnored private var sampleWorkspace: SampleWorkspace.Opened?
     private let workspace: Workspace
     private let choosesStorage: Bool
@@ -44,7 +48,7 @@ import Security
         self.authenticator = authenticator; self.protectedStorage = protectedStorage ?? TouchIDKeychainStorage(dataRoot: workspace.root)
         self.backupDelay = backupDelay; self.availabilityDelay = availabilityDelay; self.releaseWarmDelay = releaseWarmDelay
     }
-    deinit { backupTask?.cancel(); availabilityTask?.cancel(); releaseWarmTask?.cancel(); memoryPressure?.cancel() }
+    deinit { backupTask?.cancel(); availabilityTask?.cancel(); releaseWarmTask?.cancel(); appRefresh?.task.cancel(); memoryPressure?.cancel() }
 
     public func start() async {
         guard !transitioning, session == nil else { return }
@@ -355,6 +359,45 @@ import Security
         guard session === current, !transitioning, let accounts else { return }; state = .unlocked(accounts)
     }
 
+    /// Refresh Apps is explicit Apple discovery, shared by the app lists and their keyboard command. Local polling uses reloadAccounts.
+    public func refreshApps() async throws -> AppCatalogRefresh {
+        try await refreshApps(using: { try await $0.refreshAppCatalog() })
+    }
+
+    func refreshApps(using refresh: @escaping @Sendable (WorkspaceSession) async throws -> AppCatalogRefresh) async throws -> AppCatalogRefresh {
+        guard !transitioning, let current = session, !Task.isCancelled else { throw CancellationError() }
+        if showingSampleData {
+            let accounts = try await current.accounts()
+            guard session === current, !transitioning else { throw CancellationError() }
+            state = .unlocked(accounts)
+            let result = AppCatalogRefresh(accounts: accounts.count, refreshedAccounts: 0, appCount: accounts.reduce(0) { $0 + $1.appIds.count }, issues: [], sample: true)
+            appRefreshMessage = result.message; appRefreshFailed = false
+            return result
+        }
+        if let existing = appRefresh, existing.session === current { return try await existing.task.value }
+        let id = UUID()
+        refreshingApps = true; appRefreshFailed = false; appRefreshMessage = "Reading apps from App Store Connect…"
+        let task = Task { [weak self] in
+            do {
+                let result = try await refresh(current)
+                try Task.checkCancellation()
+                let accounts = try await current.accounts()
+                guard let self, self.session === current, !self.transitioning else { throw CancellationError() }
+                self.state = .unlocked(accounts)
+                self.appRefreshMessage = result.message; self.appRefreshFailed = !result.complete
+                return result
+            } catch {
+                if let self, self.session === current, !self.transitioning, !Task.isCancelled {
+                    self.appRefreshMessage = AppCatalogRefresh.failureMessage(error); self.appRefreshFailed = true
+                }
+                throw error
+            }
+        }
+        appRefresh = (id, current, task)
+        defer { if appRefresh?.id == id { appRefresh = nil; refreshingApps = false } }
+        return try await task.value
+    }
+
     private func accept(_ opened: WorkspaceSession) async throws {
         do {
             let accounts = try await opened.accounts(), preferences = try? await opened.editingPreferences()
@@ -376,6 +419,7 @@ import Security
     }
     private func drop(_ expected: WorkspaceSession) {
         guard session === expected else { return }
+        appRefresh?.task.cancel(); appRefresh = nil; refreshingApps = false; appRefreshMessage = ""; appRefreshFailed = false
         backupTask?.cancel(); backupTask = nil; availabilityTask?.cancel(); availabilityTask = nil; releaseWarmTask?.cancel(); releaseWarmTask = nil
         memoryPressure?.cancel(); memoryPressure = nil
         session = nil; editingPreferences = nil

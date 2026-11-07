@@ -19,7 +19,7 @@ struct ConnectedAppsView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
-                StorebenchPageHeader(title: "Apps", description: "Saved revisions and download progress across your configured apps. Missing reports remain unknown.", eyebrow: "YOUR WORKSPACE", help: "sync")
+                StorebenchPageHeader(title: "Apps", description: "Saved revisions and download progress across your configured apps. Missing reports remain unknown.", eyebrow: "YOUR WORKSPACE", feedback: AnyView(StorebenchFeedback(text: model.appRefreshMessage, height: 34, error: model.appRefreshFailed)), help: "sync")
                 SampleDataNotice(model: model)
                 actions
                 if failed { Text("The saved library could not be read. Previously read cards remain here; refresh before starting another download.").foregroundStyle(StorebenchTheme.muted) }
@@ -66,11 +66,14 @@ struct ConnectedAppsView: View {
         }
     }
     private var refreshButton: some View {
-        StorebenchReadButton("Refresh Apps") { await model.reloadAccounts(); await load(context) }.help("Refresh Connected Apps").accessibilityLabel("Refresh Connected Apps").storebenchWorking(loading || model.session == nil)
-            .shortcutAction(.refresh, enabled: !loading && model.session != nil) { await model.reloadAccounts(); await load(context) }
+        LibraryAppRefreshButton(model: model, identity: "connected-apps") { await load(context, wait: true) }
     }
-    private func load(_ id: UUID) async {
-        guard !readGate.active, let session = model.session else { return }
+    private func load(_ id: UUID, wait: Bool = false) async {
+        while wait && readGate.active {
+            guard context == id, !Task.isCancelled else { return }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        guard context == id, !Task.isCancelled, !readGate.active, let session = model.session else { return }
         let ticket = readGate.begin(); if !ready { loading = true }
         defer { if readGate.accepts(ticket) { readGate.end() }; if context == id { loading = false } }
         do {

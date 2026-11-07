@@ -364,7 +364,10 @@ public enum MediaCardRenderer {
         guard width > 0, height > 0, width <= ScreenshotEditing.maximumSide, height <= ScreenshotEditing.maximumSide, width * height <= ScreenshotEditing.maximumPixels else { throw MediaCardFailure.invalid }
         if card.layout.usesScreenshot, edge == nil, screenshot == nil || card.screenshot == nil { throw MediaCardFailure.screenshot }
         if card.style.typeface == .file, font.flatMap(fontFamily) == nil { throw MediaCardFailure.font }
-        if let screenshot, let shot = card.screenshot, screenshot.width != shot.width || screenshot.height != shot.height { throw MediaCardFailure.screenshot }
+        if let screenshot, let shot = card.screenshot {
+            guard screenshot.sourceWidth == shot.width, screenshot.sourceHeight == shot.height,
+                  edge != nil || (screenshot.width == shot.width && screenshot.height == shot.height) else { throw MediaCardFailure.screenshot }
+        }
         let ratio = edge.map { min(1, $0 / Double(max(width, height))) } ?? 1
         let pixelWidth = max(1, Int((Double(width) * ratio).rounded())), pixelHeight = max(1, Int((Double(height) * ratio).rounded()))
         let placement = MediaCards.placement(card, width: width, height: height), short = Double(min(width, height)), style = card.style

@@ -126,4 +126,111 @@ import Testing
         window.clearReads()
         #expect(await window.rememberedDecoded(read: "synthetic/large", as: [String: [Int]].self) == nil)
     }
+    @MainActor @Test func evictedReadsReloadFromEncryptedSQLWithoutPreloadingTheWholeCache() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let epoch = await session.viewReadEpoch, window = NavigationPresentation(), at = Date().addingTimeInterval(-60)
+        let data = try JSONEncoder().encode(["synthetic", "saved"])
+        await session.saveViewRead(key: "synthetic/exact", data: data, readAt: at, epoch: epoch)
+        window.restore = { key, epoch in await session.savedViewRead(key: key, epoch: epoch) }
+        window.preload([:], epoch: epoch, clearCount: window.clearCount)
+        window.readCapacity = CachePolicy.Limit(count: 1, bytes: 1_000_000)
+        let first = await window.rememberedDecoded(read: "synthetic/exact", as: [String].self)
+        #expect(first?.value == ["synthetic", "saved"])
+        #expect(abs((first?.readAt.timeIntervalSince(at)) ?? 100) < 1)
+        window.remember(42, read: "synthetic/evicting")
+        #expect(window.remembered(read: "synthetic/exact", as: [String].self) == nil)
+        #expect(await window.rememberedDecoded(read: "synthetic/exact", as: [String].self)?.value == ["synthetic", "saved"])
+        window.releaseReads()
+        #expect(window.rememberedReadCount == 0)
+        #expect(await window.rememberedDecoded(read: "synthetic/exact", as: [String].self)?.value == ["synthetic", "saved"])
+        let nextEpoch = await session.clearCachedReads()
+        #expect(await session.savedViewRead(key: "synthetic/exact", epoch: epoch) == nil)
+        #expect(await session.savedViewRead(key: "synthetic/exact", epoch: nextEpoch) == nil)
+    }
+
+    private actor SavedReadGate {
+        private var continuation: CheckedContinuation<(data: Data, readAt: Date)?, Never>?
+        private(set) var calls = 0
+        func load() async -> (data: Data, readAt: Date)? {
+            calls += 1
+            return await withCheckedContinuation { continuation = $0 }
+        }
+        func release() { continuation?.resume(returning: (Data("[1]".utf8), Date())); continuation = nil }
+        var open: Bool { continuation != nil }
+    }
+    private func until(_ condition: @Sendable () async -> Bool) async throws {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while await !condition() {
+            guard ContinuousClock.now < deadline else { throw CancellationError() }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+    @MainActor @Test func simultaneousSQLRestoresShareWorkAndANewerMemoryResultWins() async throws {
+        let window = NavigationPresentation(), gate = SavedReadGate()
+        window.preload([:], epoch: 1, clearCount: window.clearCount)
+        window.restore = { _, _ in await gate.load() }
+        let first = Task { await window.rememberedDecoded(read: "synthetic/shared", as: [Int].self) }
+        try await until { await gate.open }
+        let second = Task { await window.rememberedDecoded(read: "synthetic/shared", as: [Int].self) }
+        // Give the second caller a turn on the main actor before releasing the shared SQL read.
+        await Task.yield()
+        window.remember([2], read: "synthetic/shared")
+        await gate.release()
+        #expect(await first.value?.value == [2])
+        #expect(await second.value?.value == [2])
+        #expect(await gate.calls == 1)
+    }
+    @MainActor @Test(arguments: [false, true]) func aLateSQLRestoreCannotRefillClearedOrTrimmedMemory(clear: Bool) async throws {
+        let window = NavigationPresentation(), gate = SavedReadGate()
+        window.preload([:], epoch: 1, clearCount: window.clearCount)
+        window.restore = { _, _ in await gate.load() }
+        let task = Task { await window.rememberedDecoded(read: "synthetic/late", as: [Int].self) }
+        try await until { await gate.open }
+        if clear { window.clearReads(); window.resume(epoch: 2) } else { window.releaseReads() }
+        await gate.release()
+        #expect(await task.value == nil)
+        #expect(window.rememberedReadCount == 0 && window.retainedReadBytes == 0)
+    }
+    @MainActor @Test func aCancelledSQLReaderDoesNotPopulateMemory() async throws {
+        let window = NavigationPresentation(), gate = SavedReadGate()
+        window.preload([:], epoch: 1, clearCount: window.clearCount)
+        window.restore = { _, _ in await gate.load() }
+        let task = Task { await window.rememberedDecoded(read: "synthetic/cancelled", as: [Int].self) }
+        try await until { await gate.open }
+        task.cancel()
+        #expect(await task.value == nil)
+        #expect(await gate.open)
+        #expect(window.rememberedReadCount == 0 && window.retainedReadBytes == 0)
+        await gate.release()
+    }
+    @MainActor @Test func anOldSQLReadCannotResurrectAReplacedResultAfterEviction() async throws {
+        let window = NavigationPresentation(), gate = SavedReadGate()
+        window.readCapacity = CachePolicy.Limit(count: 1, bytes: 1_000_000)
+        window.preload([:], epoch: 1, clearCount: window.clearCount)
+        window.restore = { _, _ in await gate.load() }
+        let task = Task { await window.rememberedDecoded(read: "synthetic/replaced", as: [Int].self) }
+        try await until { await gate.open }
+        window.remember([2], read: "synthetic/replaced")
+        window.remember([3], read: "synthetic/other")
+        await gate.release()
+        #expect(await task.value == nil)
+        #expect(window.remembered(read: "synthetic/replaced", as: [Int].self) == nil)
+        #expect(window.remembered(read: "synthetic/other", as: [Int].self)?.value == [3])
+    }
+    @MainActor @Test func anOlderStartupPreloadCannotReplaceANewerSavedResult() async throws {
+        let window = NavigationPresentation(), newer = Date(), older = newer.addingTimeInterval(-60)
+        window.preload(["synthetic/order": (Data("[2]".utf8), newer)], epoch: 1, clearCount: window.clearCount)
+        window.preload(["synthetic/order": (Data("[1]".utf8), older)], epoch: 1, clearCount: window.clearCount)
+        #expect(await window.rememberedDecoded(read: "synthetic/order", as: [Int].self)?.value == [2])
+    }
+    @MainActor @Test func anOversizedSQLResultDoesNotEvictUsefulMemory() async throws {
+        let window = NavigationPresentation()
+        window.readCapacity = CachePolicy.Limit(count: 2, bytes: 100)
+        window.preload(["synthetic/kept": (Data("[2]".utf8), Date())], epoch: 1, clearCount: window.clearCount)
+        window.restore = { _, _ in (Data(count: 101), Date()) }
+        #expect(await window.rememberedDecoded(read: "synthetic/oversized", as: [Int].self) == nil)
+        #expect(window.rememberedReadCount == 1)
+        #expect(await window.rememberedDecoded(read: "synthetic/kept", as: [Int].self)?.value == [2])
+        #expect(window.retainedReadBytes <= 100)
+    }
 }

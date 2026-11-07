@@ -64,6 +64,80 @@ import Testing
         await #expect(throws: AccountFailure.self) { try await session.recordAppOpened(accountId: "synthetic-account", appId: "1001") }
     }
 
+    @MainActor @Test func allSelectedLocalHistoriesArriveInRankOrderWithoutAppleCredentials() async throws {
+        let (session, root, account) = try await preparationSession(appCount: 3)
+        defer { try? FileManager.default.removeItem(at: root) }
+        await #expect(throws: ReviewsFailure.noKey) { try await session.readClient(for: account) }
+        try await session.recordAppOpened(accountId: account.id, appId: account.appIds[1], now: start)
+        let results = PreparationResults(cancelAfter: 3), now = start
+        let worker = Task {
+            await session.prepareApps(current: (account.id, account.appIds[2]), now: { now }, prepared: { results.receive($0) })
+        }
+        await worker.value
+        #expect(results.values.map(\.appId) == [account.appIds[2], account.appIds[1], account.appIds[0]])
+        #expect(results.values.allSatisfy { $0.accountId == account.id && $0.history != nil && $0.builds == nil && $0.pricing == nil && $0.testFlight == nil })
+        let shown = try #require(results.values.last?.history)
+        let saved = try await session.revisions(accountId: account.id, appId: account.appIds[0])
+        #expect(!shown.isEmpty && shown.map(\.id) == saved.map(\.id))
+    }
+
+    @MainActor @Test func localPreparationStaysBoundedWhenApplesRequestBudgetIsLow() async throws {
+        let (session, root, account) = try await preparationSession(appCount: 8)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await session.setBackgroundPreparation(BackgroundPreparation(appLimit: 10))
+        let response = try #require(HTTPURLResponse(url: URL(string: "https://preparation-budget.appstoreconnect.test")!, statusCode: 429, httpVersion: nil, headerFields: nil))
+        AppleRequestBudget.record(response, keyId: account.keyId)
+        #expect(!AppleRequestBudget.allowsReadingAhead(keyId: account.keyId))
+        let results = PreparationResults(cancelAfter: Int.max)
+        let worker = Task {
+            await session.prepareApps(current: (account.id, account.appIds[7]), prepared: { results.receive($0) })
+        }
+        await worker.value
+        #expect(results.values.map(\.appId) == [account.appIds[7]] + Array(account.appIds.prefix(PreparedApp.presentedLimit - 1)))
+        #expect(results.values.count == PreparedApp.presentedLimit && results.values.allSatisfy { $0.history != nil })
+    }
+
+    @MainActor @Test func cancellationStopsLocalDeliveryAndAPreCancelledPreparationDeliversNothing() async throws {
+        let (session, root, account) = try await preparationSession(appCount: 3)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = PreparationResults(cancelAfter: 1)
+        let worker = Task {
+            await session.prepareApps(current: nil, prepared: { first.receive($0) })
+        }
+        await worker.value
+        #expect(first.values.map(\.appId) == [account.appIds[0]])
+        let cancelled = PreparationResults(cancelAfter: 1)
+        let stopped = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            await session.prepareApps(current: nil, prepared: { cancelled.receive($0) })
+        }
+        await stopped.value
+        #expect(cancelled.values.isEmpty)
+    }
+
+    private func preparationSession(appCount: Int) async throws -> (WorkspaceSession, URL, Account) {
+        let (session, root) = try DraftTests().session()
+        let original = try #require(try await session.accounts().first)
+        let account = Account(id: original.id, name: "Synthetic preparation", keyId: "SYNTHPREPARATION\(appCount)", keyType: original.keyType, issuerId: original.issuerId,
+                              appIds: (1...appCount).map { String(1_000_000_000 + $0) }, appNames: nil)
+        try await session.storeAccess { store in
+            try FileMutex.withLock(store.directory.appendingPathComponent("accounts.mutex")) {
+                try store.transaction { _ in [.put(namespace: "accounts", key: "all", json: JSONText.array([WorkspaceSession.json(account)]).data)] }
+            }
+        }
+        return (session, root, account)
+    }
+
+    @MainActor private final class PreparationResults {
+        var values: [PreparedApp] = []
+        let cancelAfter: Int
+        init(cancelAfter: Int) { self.cancelAfter = cancelAfter }
+        func receive(_ app: PreparedApp) {
+            values.append(app)
+            if values.count == cancelAfter { withUnsafeCurrentTask { $0?.cancel() } }
+        }
+    }
+
     @MainActor @Test func aNewerSuggestionReplacesOnlyUneditedInputsWithoutAPlan() async throws {
         let date = start
         let old = ReleasePlanInputs(start: .copy, sourceRevisionId: "synthetic-import-1", baseVersionId: "synthetic-version-1", targetVersion: "1.1", date: date)

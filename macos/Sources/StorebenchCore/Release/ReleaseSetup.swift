@@ -11,6 +11,11 @@ public enum ReleaseSetup {
         public let revision: Revision, version: Revision.Version
         public var rawState: String { version.fields["appVersionState"]?.text ?? version.fields["appStoreState"]?.text ?? "" }
         public var inProgress: Bool { !revision.isLocalDraft && ReleaseSetup.inProgress.contains(rawState) }
+        /// A version awaiting App Review or release is still the version to continue, even when its listing is no longer editable.
+        public var canContinue: Bool {
+            !revision.isLocalDraft && (inProgress || rawState == "ACCEPTED" ||
+                ReleaseReadiness.submitted.contains(rawState) && !["READY_FOR_SALE", "READY_FOR_DISTRIBUTION"].contains(rawState))
+        }
     }
 
     /// Imported versions, newest import first; local drafts follow and are only offered for copying.
@@ -31,7 +36,7 @@ public enum ReleaseSetup {
         let latest = candidates.first { !$0.revision.isLocalDraft }?.revision.id
         let all = candidates.filter { $0.revision.id == latest || (latest == nil && $0.revision.isLocalDraft) }
         // A version still being prepared at Apple is the one to work on.
-        if let current = all.first(where: \.inProgress) { return inputs(.reuse, current, history: history, date: date) }
+        if let current = all.first(where: \.canContinue) { return inputs(.reuse, current, history: history, date: date) }
         let released: Set<String> = ["READY_FOR_SALE", "READY_FOR_DISTRIBUTION", "REPLACED_WITH_NEW_VERSION"]
         if let latest = all.first(where: { released.contains($0.rawState) }) ?? all.first { return inputs(.copy, latest, history: history, date: date) }
         return ReleasePlanInputs(start: .empty(platform: "IOS", locale: "en-US"), targetVersion: "1.0", date: date)

@@ -63,9 +63,9 @@ enum PricingInputChanges {
         fields += [("method", "Pricing method", PricingMethod.name(saved.method), PricingMethod.name(edited.method)), ("rounding", "Rounding", saved.effectiveRounding, edited.effectiveRounding)]
         func mix(_ input: PricingProfileInputs) -> String { input.effectiveMixMethod.isEmpty ? "No mix" : "\(input.mixShare)% \(PricingMethod.name(input.effectiveMixMethod))" }
         func rows(_ rows: [PricingProfileInputs.Override], _ unit: String) -> String { rows.map { "\($0.territory): \($0.percentage)\(unit)" }.joined(separator: "\n") }
-        fields += [("mix", "Mix With", mix(saved), mix(edited)), ("floor", "Lowest price", saved.floor, edited.floor), ("ceiling", "Highest price", saved.ceiling, edited.ceiling)]
-        fields.append(("countries", "Country percentages", rows(saved.overrides, "%"), rows(edited.overrides, "%")))
-        fields.append(("index", "Your own index", rows(saved.indexRows, ""), rows(edited.indexRows, "")))
+        fields += [("mix", "Mix With", mix(saved), mix(edited)), ("floor", "Lowest price", saved.effectiveFloor, edited.effectiveFloor), ("ceiling", "Highest price", saved.effectiveCeiling, edited.effectiveCeiling)]
+        fields.append(("countries", "Country percentages", rows(saved.usesCountryAdjustments ? saved.overrides : [], "%"), rows(edited.usesCountryAdjustments ? edited.overrides : [], "%")))
+        fields.append(("index", "Your own index", rows(saved.usesOwnIndex ? saved.indexRows : [], ""), rows(edited.usesOwnIndex ? edited.indexRows : [], "")))
         return fields.filter { !$0.2.utf8.elementsEqual($0.3.utf8) }.map { SavedValueChange(id: $0.0, label: $0.1, saved: $0.2, edited: $0.3) }
     }
 }

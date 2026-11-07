@@ -25,8 +25,9 @@ struct LibraryDashboardView: View {
             LazyVStack(alignment: .leading, spacing: 20) {
                 StorebenchPageHeader(title: section.rawValue, description: section == .history ? "Every successful import and local version draft is retained separately. Choose an app to compare its saved revisions." : "Track progress across your apps, continue a release and check what needs syncing.", eyebrow: section == .history ? "SAVED REVISIONS" : "AT A GLANCE", actions: AnyView(HStack {
                     Spacer(minLength: 0)
+                    LibraryAppRefreshButton(model: model, identity: section.rawValue) { await load(context, wait: true); await ScreenReads.reading(fresh: true) { await checkPlans() } }
                     Button("Manage Apps", action: manageApps).buttonStyle(StorebenchButtonStyle(.quiet))
-                }), help: section == .history ? "" : "sync")
+                }), feedback: AnyView(StorebenchFeedback(text: model.appRefreshMessage, height: 34, error: model.appRefreshFailed)), help: section == .history ? "" : "sync")
                 if section == .overview { SampleDataNotice(model: model) }
                 if failed { Text("The saved library could not be confirmed. Previously read information remains here; refresh before opening an app.").foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true) }
                 if let snapshot {
@@ -105,7 +106,6 @@ struct LibraryDashboardView: View {
         // App Store Connect is read in the background for each saved plan, so a version Apple already released never stays listed as being prepared.
         .task(id: snapshot?.releases.map(\.plan.token) ?? []) { await checkPlans() }
         .onDisappear { context = UUID(); readGate.end() }
-        .shortcutAction(.refresh, enabled: !loading && model.session != nil, identity: section.rawValue) { await load(context) }
         .trackUnsavedChanges(false, busy: loading)
     }
     private func releaseCard(_ release: LibraryOverview.Release, embedded: Bool = false) -> some View {
@@ -144,8 +144,12 @@ struct LibraryDashboardView: View {
             await load(context)
         }
     }
-    private func load(_ id: UUID) async {
-        guard !readGate.active, let session = model.session else { return }
+    private func load(_ id: UUID, wait: Bool = false) async {
+        while wait && readGate.active {
+            guard context == id, !Task.isCancelled else { return }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        guard context == id, !Task.isCancelled, !readGate.active, let session = model.session else { return }
         let ticket = readGate.begin(); if snapshot == nil { loading = true }
         defer { if readGate.accepts(ticket) { readGate.end() }; if context == id { loading = false } }
         do {

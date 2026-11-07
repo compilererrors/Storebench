@@ -14,6 +14,8 @@ struct TestFlightBuildsView: View {
     @State private var preparing = false
     @State private var publishing = false
     @State private var builds: [TestFlightBuild] = []
+    @State private var confirmed = false
+    @State private var readProblem = ""
     @State private var state = "loading"
     @State private var review: PublishReview?
     @State private var accessBusy = false
@@ -44,30 +46,31 @@ struct TestFlightBuildsView: View {
                     Fact(title: "Expired", value: state == "ready" ? "\(builds.filter { $0.expired == true }.count)" : "—")
             }
             if let build = answering, state != "failed" {
-                BuildEncryptionAnswerCard(account: account, app: app, session: session, build: build, shared: .init(review: $review, status: $status), blocked: busy || accessBusy || encryptionBusy,
+                BuildEncryptionAnswerCard(account: account, app: app, session: session, build: build, shared: .init(review: $review, status: $status), blocked: !confirmed || busy || accessBusy || encryptionBusy,
                                           busyChanged: { preparing = $0 }, answered: { answering = nil }, cancel: { answering = nil })
-                    .id("selected-build").storebenchWorking(state != "ready" || busy || accessBusy || encryptionBusy)
+                    .id("selected-build").storebenchWorking(!confirmed || busy || accessBusy || encryptionBusy)
             }
             if let selected, state != "failed" {
-                buildCard(selected).id("selected-build").storebenchWorking(state != "ready" || accessBusy || encryptionBusy || busy)
-                TestFlightBuildAccessView(account: account, app: app, build: selected, session: session, busyChanged: { accessBusy = $0 }, didPublish: { Task { await load() } }).id(selected.id).storebenchWorking(state != "ready" || loading)
-                TestFlightEncryptionView(account: account, app: app, build: selected, session: session, busyChanged: { encryptionBusy = $0 }, didPublish: { Task { await load() } }).id(selected.id).storebenchWorking(state != "ready" || loading)
+                buildCard(selected).id("selected-build").storebenchWorking(!confirmed || accessBusy || encryptionBusy || busy)
+                TestFlightBuildAccessView(account: account, app: app, build: selected, session: session, busyChanged: { accessBusy = $0 }, didPublish: { Task { await load() } }).id(selected.id).storebenchWorking(!confirmed || loading)
+                TestFlightEncryptionView(account: account, app: app, build: selected, session: session, busyChanged: { encryptionBusy = $0 }, didPublish: { Task { await load() } }).id(selected.id).storebenchWorking(!confirmed || loading)
                 TestFlightMetricsView(account: account, app: app, build: selected, session: session).id(selected.id)
             }
-            ReviewPanel(account: account, app: app, session: session, review: $review, done: { Task { await load() } }, busyChanged: { publishing = $0 })
+            ReviewPanel(account: account, app: app, session: session, review: $review, done: { Task { await load() } }, busyChanged: { publishing = $0 }).storebenchWorking(!confirmed || loading)
             // The builds you test come first; uploading a new package and Apple's delivery records follow.
             Card(title: "Uploaded builds", subtitle: "Processed builds delivered through Storebench, Xcode or Transporter. Apple controls beta review and approval.", help: "testflight", actions: AnyView(
                 Button(loading ? "Reading Builds…" : "Refresh Builds") { if !busy, !accessBusy, !encryptionBusy { Task { await load(fresh: true) } } }.storebenchWorking(busy || accessBusy || encryptionBusy)
             )) {
                 StorebenchReadAge(readAt: state == "ready" ? readAt : nil, reading: loading)
+                StorebenchFeedback(text: readProblem, height: 40)
                 switch state {
-                case "failed": Text(status).foregroundStyle(StorebenchTheme.muted)
+                case "failed": EmptyView()
                 case "ready" where builds.isEmpty: Text("No builds yet. Upload a build to App Store Connect to make it available for TestFlight groups.").foregroundStyle(StorebenchTheme.muted)
                 case "ready":
                     StorebenchCollection(items: builds, title: { $0.title }, subtitle: description, empty: "No builds yet.") { build in
                         StorebenchFormFooter {
-                            if build.missingCompliance && build.canManage { Button("Manage Compliance") { if !accessBusy, !encryptionBusy, !busy, protection?.allowLeaving() != false { answering = build; selected = nil; review = nil; reveal("selected-build") } }.help("Manage Missing Compliance").accessibilityLabel("Manage Missing Compliance").buttonStyle(StorebenchButtonStyle(.primary)).storebenchWorking(accessBusy || encryptionBusy || busy).fixedSize() }
-                            else if build.processed && build.canManage { Button("Export Compliance") { if !accessBusy, !encryptionBusy, !busy, protection?.allowLeaving() != false { answering = build; selected = nil; review = nil; reveal("selected-build") } }.help("Export Compliance Information").accessibilityLabel("Export Compliance Information").storebenchWorking(accessBusy || encryptionBusy || busy).fixedSize() }
+                            if build.missingCompliance && build.canManage { Button("Manage Compliance") { if confirmed, !accessBusy, !encryptionBusy, !busy, protection?.allowLeaving() != false { answering = build; selected = nil; review = nil; reveal("selected-build") } }.help("Manage Missing Compliance").accessibilityLabel("Manage Missing Compliance").buttonStyle(StorebenchButtonStyle(.primary)).storebenchWorking(!confirmed || accessBusy || encryptionBusy || busy).fixedSize() }
+                            else if build.processed && build.canManage { Button("Export Compliance") { if confirmed, !accessBusy, !encryptionBusy, !busy, protection?.allowLeaving() != false { answering = build; selected = nil; review = nil; reveal("selected-build") } }.help("Export Compliance Information").accessibilityLabel("Export Compliance Information").storebenchWorking(!confirmed || accessBusy || encryptionBusy || busy).fixedSize() }
                             if selected?.id != build.id { Button("View Build") { Task { await select(build) } }.storebenchWorking(accessBusy || encryptionBusy || busy).fixedSize() }
                         }
                     }
@@ -77,7 +80,8 @@ struct TestFlightBuildsView: View {
             BuildDeliveryView(account: account, app: app, session: session)
         }
         .task {
-            showRemembered()
+            await showRemembered()
+            guard !Task.isCancelled else { return }
             await load(); guard !Task.isCancelled, state == "ready" else { return }
             if restoring != nil { await applyRestoring(); return }
             guard let id = initialBuildId, let build = builds.first(where: { $0.id == id }) else { return }
@@ -143,7 +147,7 @@ struct TestFlightBuildsView: View {
     }
 
     private func prepare(_ build: TestFlightBuild, _ configure: (inout PublishRequest) -> Void) async {
-        guard !busy, !accessBusy, !encryptionBusy else { return }
+        guard confirmed, !busy, !accessBusy, !encryptionBusy else { return }
         preparing = true; defer { preparing = false }
         (review, status) = await prepareTestFlight(account, app, session, buildId: build.id, configure)
     }
@@ -156,8 +160,8 @@ struct TestFlightBuildsView: View {
         catch { status = "What to Test could not be loaded for this build." }
     }
 
-    private func showRemembered() {
-        guard builds.isEmpty, let remembered = history?.rememberedRead(readKey, as: [TestFlightBuild].self) else { return }
+    private func showRemembered() async {
+        guard builds.isEmpty, let remembered = await history?.rememberedDecodedRead(readKey, as: [TestFlightBuild].self), !Task.isCancelled, builds.isEmpty else { return }
         builds = remembered; state = "ready"; readAt = history?.rememberedReadAt(readKey)
     }
     private func applyRestoring() async {
@@ -171,17 +175,23 @@ struct TestFlightBuildsView: View {
         await ScreenReads.reading(fresh: fresh) {
             guard !loading, let session else { return }
             // A list already shown stays visible while it is read again; actions wait for the read.
-            loading = true; if builds.isEmpty || state != "ready" { state = "loading" }; if review?.state == "prepared" { review = nil }
+            loading = true; confirmed = false; readProblem = ""; if readAt == nil { state = "loading" }; if review?.state == "prepared" { review = nil }
             defer { loading = false }
             do {
                 let latest = try await session.testFlightBuilds(appId: app.id, client: try await session.readClient(for: account))
                 try Task.checkCancellation()
-                builds = latest; status = ""; state = "ready"; readAt = Date()
+                builds = latest; status = ""; state = "ready"; confirmed = true; readAt = Date()
                 if let current = selected { selected = builds.first { $0.id == current.id } }
                 history?.rememberRead(latest, readKey)
             }
-            catch AppStoreConnectClient.Failure.status(let code) where code == 401 || code == 403 { status = "Apple did not allow this API key to read TestFlight builds."; state = "failed" }
-            catch { status = "TestFlight builds could not be loaded from App Store Connect."; state = "failed" }
+            catch is CancellationError { }
+            catch {
+                guard !Task.isCancelled else { return }
+                if let failure = error as? AppStoreConnectClient.Failure, case .status(let code) = failure, code == 401 || code == 403 { readProblem = "Apple did not allow this API key to read TestFlight builds." }
+                else { readProblem = "TestFlight builds could not be loaded from App Store Connect." }
+                state = readAt == nil ? "failed" : "ready"
+                if readAt != nil { readProblem += " The last builds read are shown. Refresh Builds before changing testing access." }
+            }
         }
     }
 }

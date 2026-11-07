@@ -282,6 +282,27 @@ import Testing
 @Suite struct MediaCardImagesTests {
     init() throws { _ = try TestIsolation.require() }
 
+    @Test func smallDecodesDrawThumbnailsButCannotReplaceTheExportOriginal() async throws {
+        let bytes = try AssetLibraryTests().png(width: 1290, height: 2796)
+        let small = try await ScreenshotRenderer.loadAsync(bytes, maximumEdge: MediaCardImages.thumbnailEdge)
+        #expect(small.sourceWidth == 1290 && small.sourceHeight == 2796 && small.height == MediaCardImages.thumbnailEdge)
+        let card = try MediaCardsTests().card(.textAbove, shot: (1290, 2796)), target = MediaCards.defaultTarget
+        let thumbnail = try await MediaCardRenderer.previewAsync(card, width: target.width, height: target.height, screenshot: small, edge: 360)
+        let placeholder = try await MediaCardRenderer.previewAsync(card, width: target.width, height: target.height, screenshot: nil, edge: 360)
+        #expect(thumbnail.image.height == 360 && thumbnail.image.dataProvider?.data as Data? != placeholder.image.dataProvider?.data as Data?)
+        await #expect(throws: MediaCardFailure.screenshot) {
+            _ = try await MediaCardRenderer.exportAsync(card, width: target.width, height: target.height, screenshot: small)
+        }
+        // A different source with similar proportions still fails; preview scaling does not waive source validation.
+        let other = try await ScreenshotRenderer.loadAsync(try AssetLibraryTests().png(width: 603, height: 1311), maximumEdge: 720)
+        await #expect(throws: MediaCardFailure.screenshot) {
+            _ = try await MediaCardRenderer.previewAsync(card, width: target.width, height: target.height, screenshot: other, edge: 360)
+        }
+        let original = try await ScreenshotRenderer.loadAsync(bytes)
+        let exported = try await MediaCardRenderer.exportAsync(card, width: target.width, height: target.height, screenshot: original)
+        #expect(try ScreenshotEditing.inspect(exported).width == target.width)
+    }
+
     @Test func thumbnailsUseSmallDecodesAndFullSizeScreenshotsStayWithinTheBudget() async throws {
         let bytes = try AssetLibraryTests().png(width: 1290, height: 2796)
         let small = try await ScreenshotRenderer.loadAsync(bytes, maximumEdge: MediaCardImages.thumbnailEdge)
