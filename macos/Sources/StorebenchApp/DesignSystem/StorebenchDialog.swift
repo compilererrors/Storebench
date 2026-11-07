@@ -68,3 +68,14 @@ struct StorebenchFeedback: View {
         }
     }
 }
+
+/// How old the shown read is and whether it is being read again. Its line is always reserved, so updates never move the list.
+struct StorebenchReadAge: View {
+    let readAt: Date?
+    let reading: Bool
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            StorebenchTextSlot(text: ReadAge.text(readAt: readAt, now: context.date, reading: reading), height: 18, font: .sbCaption, color: StorebenchTheme.muted, live: true)
+        }
+    }
+}

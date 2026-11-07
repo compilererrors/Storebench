@@ -255,9 +255,11 @@ struct QuickReleaseView: View {
     }
 
     @ViewBuilder private func keywordCheck(_ language: LanguageDraftEditor, _ field: LanguageEditorState.Field, value: String, title: (name: String, subtitle: String)) -> some View {
-        let lint = SearchLint(value, name: title.name, subtitle: title.subtitle)
+        let lint = SearchLint(value, name: title.name, subtitle: title.subtitle, locale: language.locale)
+        if !lint.findings.isEmpty || !lint.nameAndSubtitle.isEmpty {
+            Text(SearchLintPresentation.lines(lint).joined(separator: " ")).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
+        }
         if lint.freedBytes > 0 {
-            Text("Keyword check: \(lint.freedBytes) bytes can be freed. " + lint.findings.map(\.message).joined(separator: " ")).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
             StorebenchActionGroup(alignment: .leading) {
                 Button("Clean Up Keywords") { change(language, field, lint.cleaned) }
                     .help("Remove repeated words and words already in the name or subtitle. Frees \(lint.freedBytes) bytes and keeps your order.")
@@ -334,7 +336,7 @@ struct QuickReleaseView: View {
         operation = Task {
             await refreshStatus(full: true)
             guard !Task.isCancelled, let session else { return }
-            await session.warmReleaseSteps(after: "send", account: account, appId: app.id, versionId: snapshot?.targetVersionId)
+            await session.warmReleaseSteps(after: "send", account: account, appId: app.id, versionId: snapshot?.targetVersionId, plan: snapshot?.plan)
         }
     }
     private func recheck() {
@@ -395,7 +397,8 @@ struct QuickReleaseView: View {
         if let listing, listing.scope.revisionId != plan.sourceRevisionId || listing.versionId != plan.baseVersionId {
             listing.retire(); self.listing = nil; protection?.remove(id: listingProtectionId)
         }
-        guard listing == nil, let owner = try? VersionListingEditor(planEditor: model, session: session) else { return }
+        // Quick Release edits text only, so no screenshot or preview editors are created or read.
+        guard listing == nil, let owner = try? VersionListingEditor(planEditor: model, session: session, media: false) else { return }
         let ownerId = listingProtectionId
         owner.didChange = { [weak owner, weak editingProtection = protection] in
             guard let owner, owner.active else { editingProtection?.remove(id: ownerId); return }
@@ -414,22 +417,23 @@ struct QuickReleaseView: View {
 
     /// `full` reads everything again, as after an approved Apple change; otherwise an unchanged saved status costs one version-state read.
     private func refreshStatus(fresh: Bool = false, full: Bool = false) async {
-        guard let model, let session, confirmedPlan != nil, !Task.isCancelled else { return }
-        if fresh { await session.invalidateAppleReads() }
-        if readiness == nil {
-            // The status remembered from an earlier visit, here or in Release, shows at once and is read again right away.
-            var seed: (snapshot: ReleaseReadinessSnapshot, checkedAt: Date)?
-            if let plan = model.plan { seed = await session.rememberedReleaseReadiness(accountId: account.id, appId: app.id, planToken: plan.token) }
-            guard readiness == nil, !Task.isCancelled else { return }
-            readiness = ReleaseReadinessEditor(planEditor: model, account: account, session: session, seed: seed)
+        await ScreenReads.reading(fresh: fresh) {
+            guard let model, let session, confirmedPlan != nil, !Task.isCancelled else { return }
+            if readiness == nil {
+                // The status remembered from an earlier visit, here or in Release, shows at once and is read again right away.
+                var seed: (snapshot: ReleaseReadinessSnapshot, checkedAt: Date)?
+                if let plan = model.plan { seed = await session.rememberedReleaseReadiness(accountId: account.id, appId: app.id, planToken: plan.token) }
+                guard readiness == nil, !Task.isCancelled else { return }
+                readiness = ReleaseReadinessEditor(planEditor: model, account: account, session: session, seed: seed)
+            }
+            readiness?.focus = .all
+            // A save can invalidate an older background read. Let that owner finish before checking the new material.
+            while readiness?.busy == true {
+                do { try await Task.sleep(for: .milliseconds(25)) } catch { return }
+                guard !Task.isCancelled, readiness?.active == true else { return }
+            }
+            _ = fresh || full ? await readiness?.refresh() : await readiness?.revalidate()
         }
-        readiness?.focus = .all
-        // A save can invalidate an older background read. Let that owner finish before checking the new material.
-        while readiness?.busy == true {
-            do { try await Task.sleep(for: .milliseconds(25)) } catch { return }
-            guard !Task.isCancelled, readiness?.active == true else { return }
-        }
-        _ = fresh || full ? await readiness?.refresh() : await readiness?.revalidate()
     }
     /// Checks App Store Connect again when the schedule says so, as Release does.
     private func syncStatus() async {

@@ -55,9 +55,9 @@ public struct ReporterClient: Sendable {
             ReplyDiagnostics.record(source, ReplyDiagnostics.describe(status: http.statusCode, contentType: http.value(forHTTPHeaderField: "Content-Type"), body: data))
             throw http.statusCode == 401 ? Failure.expiredToken : http.statusCode == 403 ? Failure.access : Failure.serviceUnavailable
         }
-        // Reports have arrived as application/a-gzip. Recognize the gzip payload itself too, so a generic or
-        // changed content type (application/gzip, application/octet-stream) still yields the report.
-        let gzip = Self.isGzip(data) || (http.value(forHTTPHeaderField: "Content-Type") ?? "").range(of: "gzip", options: [.regularExpression, .caseInsensitive]) != nil
+        // The payload's own gzip signature decides, never the content type: account and vendor lists arrive
+        // as Robot.XML labelled application/a-gzip, and reports arrive under several gzip or generic types.
+        let gzip = Self.isGzip(data)
         let markup = !gzip && (String(data: data.prefix(256), encoding: .utf8).map { TextSemantics.trim($0).hasPrefix("<") } ?? false)
         guard data.count <= (markup ? 64_000 : maxReportBytes) else { throw Failure.size }
         return Reply(gzip: gzip, ok: (200..<300).contains(http.statusCode), body: data, status: http.statusCode, contentType: http.value(forHTTPHeaderField: "Content-Type"))

@@ -174,7 +174,10 @@ extension WorkspaceSession {
             let open = current.map { $0.accountId == target.accountId && $0.appId == target.appId } ?? false
             do {
                 let importing = open && usage.preparesRelease(accountId: target.accountId, appId: target.appId, now: now())
-                try await prepare(account: account, appId: target.appId, open: open, importing: importing, presented: index < PreparedApp.presentedLimit, now: now, prepared: prepared)
+                // The open app's reads are likely next; other apps fill in behind every screen's own reads.
+                try await AppleReadPriority.$current.withValue(open ? .next : .background) {
+                    try await prepare(account: account, appId: target.appId, open: open, importing: importing, presented: index < PreparedApp.presentedLimit, now: now, prepared: prepared)
+                }
             } catch { if Task.isCancelled { return } }
         }
     }

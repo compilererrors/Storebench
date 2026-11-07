@@ -77,8 +77,17 @@ public final class EncryptedDocumentStore {
 
     /// Other connections change data_version; this connection changes total_changes, including delete/reinsert.
     func changeStamp() throws -> String {
-        guard let external = try scalar("PRAGMA data_version"), let local = try scalar("SELECT total_changes()") else { throw Failure.cannotOpen }
-        return external + ":" + local
+        guard let external = try scalar("PRAGMA data_version"), let local = try scalar("SELECT total_changes()").flatMap(Int.init) else { throw Failure.cannotOpen }
+        return external + ":" + String(local - unstampedChanges)
+    }
+    /// Rows this connection changed in writes that no cached screen data depends on, such as saved screen reads.
+    private var unstampedChanges = 0
+    /// Runs writes that cached library and pricing data do not depend on, so they leave `changeStamp` unchanged.
+    /// Writes from other connections still change it.
+    func withoutChangeStamp<T>(_ body: () throws -> T) rethrows -> T {
+        let before = (try? scalar("SELECT total_changes()")).flatMap { $0.flatMap(Int.init) }
+        defer { if let before, let after = (try? scalar("SELECT total_changes()")).flatMap({ $0.flatMap(Int.init) }) { unstampedChanges += after - before } }
+        return try body()
     }
 
     public func documents(namespace: String) throws -> [Document] {

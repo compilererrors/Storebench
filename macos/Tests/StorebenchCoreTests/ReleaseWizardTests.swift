@@ -121,4 +121,11 @@ struct ReleaseWizardTests {
                                        step("build", .ready), step("review-info", .ready), step("submission", .blocked)])
         #expect(ReleaseWizard.unfinished(before: "submit", in: sent) == nil)
     }
+
+    @Test func readingAheadWaitsForTheSharedAnswersToAgeAndBacksOffAfterFailures() {
+        #expect(ReleaseWizard.prefetchDelay(failures: 0, lifetime: .seconds(300)) == .seconds(240))
+        #expect(ReleaseWizard.prefetchDelay(failures: 0, lifetime: .seconds(5)) == .seconds(20))
+        #expect(ReleaseWizard.prefetchDelay(failures: 0, lifetime: .seconds(3_600)) == .seconds(600))
+        #expect((1...7).map { ReleaseWizard.prefetchDelay(failures: $0, lifetime: .seconds(300)) } == [20, 40, 80, 160, 300, 300, 300].map { .seconds($0) })
+    }
 }

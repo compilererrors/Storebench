@@ -42,7 +42,7 @@ public enum StoreLocales {
 }
 
 public enum LanguageFailure: Error, Equatable {
-    case versionNotFound, unknownLanguage, exists, sourceNotFound
+    case versionNotFound, unknownLanguage, exists, sourceNotFound, sourceChanged, translationFailed, translationTooLong(field: String)
 
     public var message: String {
         switch self {
@@ -50,6 +50,9 @@ public enum LanguageFailure: Error, Equatable {
         case .unknownLanguage: "Choose an App Store language."
         case .exists: "This language already exists for this version."
         case .sourceNotFound: "Source language not found."
+        case .sourceChanged: "The source language changed while it was being translated. Nothing was added; try again."
+        case .translationFailed: "The translation could not be finished. Nothing was added; try again or copy the language instead."
+        case .translationTooLong(let field): "The translated \(TextDrafts.labels[field] ?? field) is longer than 10,000 characters, so it cannot be saved. Nothing was added; shorten the source text or copy the language instead."
         }
     }
 }
@@ -87,17 +90,20 @@ extension WorkspaceSession {
 
     static func items(_ value: JSONText?) -> [JSONText] { if case .array(let items)? = value { items } else { [] } }
 
-    /// Adds a language to a version as a local draft, optionally copying another language's text.
-    public func addLanguage(accountId: String, appId: String, revisionId: String, versionId: String, locale: String, copyFrom: String?) throws -> String {
+    /// Adds a language to a version as a local draft, optionally copying or translating another language's text.
+    public func addLanguage(accountId: String, appId: String, revisionId: String, versionId: String, locale: String, copyFrom: String?, translation: LanguageTranslation? = nil) throws -> String {
         guard StoreLocales.codes.contains(locale) else { throw LanguageFailure.unknownLanguage }
         return try mutateDraft(accountId: accountId, appId: appId, revisionId: revisionId) { draft, sourceJSON in
-            try Self.addingLanguage(draft, source: try JSONDecoder().decode(Revision.self, from: sourceJSON.data), revisionId: revisionId, versionId: versionId, locale: locale, copyFrom: copyFrom)
+            try Self.addingLanguage(draft, source: try JSONDecoder().decode(Revision.self, from: sourceJSON.data), revisionId: revisionId, versionId: versionId, locale: locale,
+                                    copyFrom: copyFrom, translation: translation)
         }
     }
 
     /// The draft with one language added to a version, as a pure change that callers apply inside their own draft transaction.
-    static func addingLanguage(_ draft: JSONText, source: Revision, revisionId: String, versionId: String, locale: String, copyFrom: String?) throws -> (JSONText, String) {
+    static func addingLanguage(_ draft: JSONText, source: Revision, revisionId: String, versionId: String, locale: String, copyFrom: String?,
+                               translation: LanguageTranslation? = nil) throws -> (JSONText, String) {
         guard StoreLocales.codes.contains(locale) else { throw LanguageFailure.unknownLanguage }
+        if let translation, translation.sourceLocale != copyFrom { throw LanguageFailure.sourceChanged }
         let unique = { UUID().uuidString.lowercased() }
         do {
             let revision = Self.overlay(source, draft: draft)
@@ -110,16 +116,25 @@ extension WorkspaceSession {
             func copy(_ itemId: String, _ fields: Fields, _ names: [String]) -> JSONText {
                 .object(names.map { name in (name, .string(texts[itemId]?[name]?.text ?? fields[name].map(Self.text) ?? "")) })
             }
-            var nextTexts = texts, marks: [(String, String, String, String)] = []
+            var nextTexts = texts, marks: [(target: String, field: String, sourceId: String, copied: String, reviewed: String)] = []
+            func mark(_ target: String, _ sourceId: String, original: JSONText, placed: JSONText, _ fields: [String]) {
+                for field in fields {
+                    if let value = placed[field]?.text, !TextSemantics.trim(value).isEmpty { marks.append((target, field, sourceId, value, original[field]?.text ?? "")) }
+                }
+            }
             if let original {
                 let copied = copy(original.id, original.fields, TextDrafts.versionFields)
-                nextTexts = nextTexts.setting(id, copied)
-                for field in TextDrafts.versionFields { if let value = copied[field]?.text, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { marks.append((id, field, original.id, value)) } }
+                let placed = try translation?.applying(to: copied, scope: .version) ?? copied
+                nextTexts = nextTexts.setting(id, placed)
+                mark(id, original.id, original: copied, placed: placed, TextDrafts.versionFields)
                 let appLocales = revision.appInfos.flatMap(\.localizations)
                 if let info = appLocales.first(where: { $0.fields["locale"]?.text == copyFrom }), !appLocales.contains(where: { $0.fields["locale"]?.text == locale }) {
                     let target = "local-app-info-\(locale)", copiedInfo = copy(info.id, info.fields, TextDrafts.appInfoFields)
-                    nextTexts = nextTexts.setting(target, copiedInfo)
-                    for field in TextDrafts.appInfoFields { if let value = copiedInfo[field]?.text, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { marks.append((target, field, info.id, value)) } }
+                    let placedInfo = try translation?.applying(to: copiedInfo, scope: .appInfo) ?? copiedInfo
+                    nextTexts = nextTexts.setting(target, placedInfo)
+                    mark(target, info.id, original: copiedInfo, placed: placedInfo, TextDrafts.appInfoFields)
+                } else if let translation, !translation.appInfo.isEmpty, !appLocales.contains(where: { $0.fields["locale"]?.text == locale }) {
+                    throw LanguageFailure.sourceChanged
                 }
             }
             var imported: [String] = []
@@ -129,8 +144,9 @@ extension WorkspaceSession {
             var result = draft.setting("texts", nextTexts)
                 .setting("addedLocalizations", .array(Self.items(draft["addedLocalizations"]) + [.object([("id", .string(id)), ("versionId", .string(versionId)), ("locale", .string(locale))])]))
                 .setting("addedScreenshotSets", .array(Self.items(draft["addedScreenshotSets"]) + types.map { .object([("id", .string("local-set-\(unique())")), ("localizationId", .string(id)), ("displayType", .string($0))]) }))
-            for (target, field, sourceId, value) in marks {
-                let marker = JSONText.object([("revisionId", .string(revisionId)), ("localizationId", .string(sourceId)), ("copiedValue", .string(value)), ("reviewedValue", .string(value))])
+            for (target, field, sourceId, copied, reviewed) in marks {
+                var marker = JSONText.object([("revisionId", .string(revisionId)), ("localizationId", .string(sourceId)), ("copiedValue", .string(copied)), ("reviewedValue", .string(reviewed))])
+                if translation != nil, !TextSemantics.same(copied, reviewed) { marker = marker.setting("translated", .bool(true)) }
                 let sources = result["textSources"] ?? .object([])
                 result = result.setting("textSources", sources.setting(target, (sources[target] ?? .object([])).setting(field, marker)))
             }

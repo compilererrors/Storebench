@@ -14,23 +14,31 @@ func diffText(_ segments: [AsoTextSegment]) -> Text {
 
 struct AsoProgressView: View {
     let account: Account, app: Account.App, session: WorkspaceSession?
-    @State private var baseRows: [AsoProgressRow] = []
+    @State private var baseRows: [AsoProgressRow] = [] { didSet { dataRevision += 1 } }
     @State private var locales: [String] = []
     @State private var locale = ""
     @State private var fieldFilter = AsoProgress.FieldFilter.all
+    @State private var reveal: StorebenchCollectionReveal<String>?
     @State private var measures: [String] = []
     @State private var granularity = AsoProgress.Granularity.day
     @State private var indexed = false
     @State private var choices = ViewPeriods()
-    @State private var points: [String: [AsoPoint]] = [:]
+    @State private var points: [String: [AsoPoint]] = [:] { didSet { dataRevision += 1 } }
     @State private var reports = AsoProgress.Reports([:])
     @State private var status = ""
     @State private var loadId = UUID()
     @State private var loading = false
     @State private var keepChoices = false
+    @State private var notes: [ChartNote] = [] { didSet { dataRevision += 1 } }
+    @State private var noteDate = Date()
+    @State private var noteText = ""
+    @State private var noteStatus = ""
+    @State private var savingNote = false
+    @State private var dataRevision = 0
+    @State private var presented: (input: PresentationInput, value: AsoProgress.Presentation)?
     @Environment(\.navigationPresentation) private var history
     private struct Choices: Equatable { var locale: String; var fieldFilter: AsoProgress.FieldFilter; var measures: [String]; var granularity: AsoProgress.Granularity; var indexed: Bool }
-    private struct Read: Codable { let rows: [AsoProgressRow], locales: [String], primary: String, points: [String: [AsoPoint]], status: String }
+    private struct Read: Codable, Sendable { let rows: [AsoProgressRow], locales: [String], primary: String, points: [String: [AsoPoint]], status: String }
     private var readKey: String { "aso-progress/\(account.id)/\(app.id)" }
     /// Choices restored by Back stay through the read that follows, while they still exist in the saved data.
     private var choiceValue: Binding<Choices> {
@@ -43,9 +51,23 @@ struct AsoProgressView: View {
     private var available: [String] { AsoProgress.metrics.map(\.key).filter { !(points[$0] ?? []).isEmpty } }
     private var latest: String { (points.values.flatMap { $0.map(\.date) } + baseRows.map(\.date)).max() ?? "" }
     private var range: PeriodDateRange? { try? choices.range(.asoProgressRange).resolve(latest: latest) }
-    private var rows: [AsoProgressRow] { AsoProgress.filteredRows(baseRows, locale: locale, fields: fieldFilter.fields) }
-    private var changed: [AsoProgressRow] { AsoProgress.changedRows(rows, range: range) }
-    private var markers: [SavedTimeSeries.Marker] { changed.filter { $0.dateKnown }.map { .init(date: $0.date, label: "\($0.version) \($0.isUpdate ? "update" : "release observed")") } }
+    /// Everything that changes what is drawn. The data's own revision stands in for the saved listings, reports and notes.
+    private struct PresentationInput: Equatable, Sendable {
+        let revision: Int, locale: String, fields: AsoProgress.FieldFilter, range: PeriodDateRange?, measures: [String], granularity: AsoProgress.Granularity, indexed: Bool
+    }
+    private var presentationInput: PresentationInput {
+        PresentationInput(revision: dataRevision, locale: locale, fields: fieldFilter, range: range, measures: measures, granularity: granularity, indexed: indexed)
+    }
+    /// The last prepared presentation. While a newer one is prepared, the earlier one stays on screen.
+    private var presentation: AsoProgress.Presentation { presented?.value ?? .empty }
+    private var rows: [AsoProgressRow] { presentation.rows }
+    private var changed: [AsoProgressRow] { presentation.changed }
+    private var markers: [SavedTimeSeries.Marker] { presentation.markers }
+    /// Marker colors by kind: what a listing change changed, or your own note.
+    static let markerKinds: [(kind: String, title: String, color: Color)] = AsoProgress.MarkerKind.allCases.map { kind in
+        let token = switch kind { case .keywords: "color-warning"; case .names: "color-nav"; case .screenshots: "color-danger"; case .text: "chart-axis"; case .note: "color-success" }
+        return (kind.rawValue, kind.title, StorebenchTheme.color(token))
+    }
     private func title(_ metric: String) -> String { AsoProgress.metrics.first { $0.key == metric }?.title ?? metric }
     private func impact(_ metric: String, _ row: AsoProgressRow) -> AsoImpact? { reports.comparison(metric, row: row, days: days, today: today) }
 
@@ -68,7 +90,7 @@ struct AsoProgressView: View {
                         DisclosureGroup("How to read the version comparison") {
                             Text("Change compares the same period after and before a listing change. /day is an average per reported day. Waiting for data means the period is not over or Apple has not delivered its reports, usually 2–3 days late. No reports before or after means nothing is saved for that side; Too few reports means fewer than half the days. Coverage shows saved days on each side.").font(.sbCallout).fixedSize(horizontal: false, vertical: true)
                         }
-                        SavedComparisonTable(rows: changed, columns: [.init(id: "version", title: "Version", width: 180), .init(id: "changed", title: "Changed", width: 220)] + available.map { .init(id: $0, title: title($0), width: 200) }, cell: cell, numeric: { row, key in guard let value = impact(key, row), value.basis != .missing else { return nil }; return value.change }) { id in withAnimation { reader.scrollTo(id, anchor: .top) } }
+                        SavedComparisonTable(rows: changed, columns: [.init(id: "version", title: "Version", width: 180), .init(id: "changed", title: "Changed", width: 220)] + available.map { .init(id: $0, title: title($0), width: 200) }, cell: cell, numeric: { row, key in guard let value = impact(key, row), value.basis != .missing else { return nil }; return value.change }) { id in reveal = .init(id: id) }
                     }
                 }
                 Card(title: indexed ? "Measures indexed to their average (100)" : "Measures per \(granularity.rawValue)", subtitle: indexed ? "Each line is scaled so its average is 100. Dashed lines mark listing changes." : "Weeks and months show the average per reported day. Dashed lines mark listing changes. Use Indexed to compare measures of different size.") {
@@ -86,29 +108,37 @@ struct AsoProgressView: View {
                         StorebenchPicker("Group by", selection: $granularity) { selectionOptions(AsoProgress.Granularity.allCases) { SelectionOption($0.rawValue.capitalized, value: $0) } }
                         StorebenchPicker("Scale", selection: $indexed) { SelectionOption("Reported values", value: false); SelectionOption("Indexed (average = 100)", value: true) }
                     }
-                    SavedReportChart(series: series, markers: markers, format: format)
+                    SavedReportChart(series: series, markers: markers, format: format, markerKinds: Self.markerKinds) { target in
+                        if target.hasPrefix("note:") { withAnimation { reader.scrollTo("chart-notes", anchor: .top) } } else { reveal = .init(id: target) }
+                    }
                 }
+                notesCard.id("chart-notes")
                 Text("Versions in detail").font(.sbTitle3)
-                StorebenchCollection(items: changed.enumerated().map { StorebenchCollectionEntry(id: $0.element.id, value: ($0.offset, $0.element)) }, title: { $0.value.1.version }, subtitle: { $0.value.1.date }, empty: "No versions with listing changes yet. Changes appear after a later sync reads a new version.") { entry in
-                    let (index, row) = entry.value
-                    version(row, newer: index > 0 ? changed[index - 1] : nil).id(row.id)
+                StorebenchCollection(items: changed.enumerated().map { StorebenchCollectionEntry(id: $0.element.id, value: ($0.offset, $0.element)) }, title: { $0.value.1.version }, subtitle: { $0.value.1.date }, empty: "No versions with listing changes yet. Changes appear after a later sync reads a new version.",
+                                     reveal: reveal, onRevealed: { id in withAnimation { reader.scrollTo(id, anchor: .top) } }) { entry in
+                    let (_, row) = entry.value
+                    version(row).id(row.id)
                 }
                 ForEach(rows.filter(\.baseline).reversed()) { row in
                     Text("\(row.version)\(row.dateKnown ? " (release observed \(row.date))" : "") is the first saved snapshot for \(row.platform). Later versions are compared with it; earlier listing text is unknown.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
-        .task { showRemembered(); await choices.load(session, scope: try? PeriodScope(accountId: account.id, appId: app.id)); await load() }
+        .task { await showRemembered(); await choices.load(session, scope: try? PeriodScope(accountId: account.id, appId: app.id)); await load() }
         .historyValue("aso-progress", choiceValue)
         .onDisappear { loadId = UUID(); loading = false }
-    }
-    private var series: [SavedTimeSeries.Series] {
-        measures.map { metric in
-            let buckets = AsoProgress.buckets((points[metric] ?? []).filter { range?.contains($0.date) ?? true }, granularity: granularity)
-            let values = indexed ? AsoProgress.indexed(buckets.map(\.value)) : buckets.map(\.value)
-            return .init(key: metric, label: title(metric), points: buckets.enumerated().map { index, bucket in .init(start: bucket.start, end: bucket.end, value: values[index]) })
+        .task(id: presentationInput) {
+            let input = presentationInput, rows = baseRows, notes = notes, points = points
+            let worker = Task.detached(priority: .userInitiated) {
+                AsoProgress.presentation(baseRows: rows, locale: input.locale, fields: input.fields, range: input.range, notes: notes,
+                                         measures: input.measures, points: points, granularity: input.granularity, indexed: input.indexed)
+            }
+            let value = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
+            guard !Task.isCancelled, presentationInput == input else { return }
+            presented = (input, value)
         }
     }
+    private var series: [SavedTimeSeries.Series] { presentation.series }
     private func format(_ value: Double) -> String { indexed ? AsoProgress.count(value.rounded()) : granularity == .day ? AsoProgress.count(value) : AsoProgress.count(Double(AsoProgress.fixed(value, digits: 1)) ?? 0) }
     private func cell(_ row: AsoProgressRow, _ key: String) -> (value: String, detail: String, explanation: String) {
         if key == "version" { return (row.version + (row.isUpdate ? " · update" : ""), row.dateKnown ? row.date : "Date unknown", "\(row.version): \(row.dateKnown ? row.date : "Version date unknown")") }
@@ -120,7 +150,7 @@ struct AsoProgressView: View {
         guard let value = impact(key, row) else { return ("No date", "Version date unknown", "\(title(key)): Apple did not provide when this released listing was observed.") }
         let description = AsoProgress.describe(value, label: title(key)); return (description.value, description.detail ?? "", description.title)
     }
-    private func version(_ row: AsoProgressRow, newer: AsoProgressRow?) -> some View {
+    private func version(_ row: AsoProgressRow) -> some View {
         Card(title: "\(row.version) · \(row.isUpdate ? "Listing update" : "New version")", subtitle: "\(!row.dateKnown ? "Version date unknown" : row.isUpdate ? "Seen at the sync on \(row.date)" : "Release first observed \(row.date)")\(row.previousVersion.map { " · compared with \(row.isUpdate ? "its earlier state" : $0)" } ?? "")") {
             Text("Listing changes · \(row.changes.count) fields changed. Removed text is red, added text green.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
             VStack(alignment: .leading, spacing: 0) {
@@ -161,8 +191,59 @@ struct AsoProgressView: View {
                     }
                 }
             }
-            if AsoProgress.overlaps(row, newer: newer, days: days), let newer { Text("The next change on \(newer.date) falls inside this comparison window, so its effect is mixed in.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
+            let mixed = AsoProgress.overlapping(row, among: baseRows, days: days), noted = row.dateKnown ? ChartNotes.within(notes, date: row.date, days: days) : []
+            if !mixed.isEmpty {
+                Text("Other listing changes fall inside this comparison window, so their effect is mixed in: " + mixed.map { "\($0.version) on \($0.date)" }.joined(separator: ", ") + ".")
+                    .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
+            }
+            if !noted.isEmpty {
+                Text("Your notes inside this comparison window: " + noted.map { "\($0.date) \($0.text)" }.joined(separator: "; ") + ".")
+                    .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
+            }
         }
+    }
+    /// Your own dated notes, such as a campaign or a price change, shown on the chart and beside comparisons they fall inside.
+    private var notesCard: some View {
+        Card(title: "Your chart notes", subtitle: "Mark what else happened, such as a campaign, a feature or a price change. Notes show on the chart and beside comparisons whose window they fall inside. They stay on this Mac.") {
+            StorebenchFormGrid {
+                StorebenchDateField("Date", selection: $noteDate, displayedComponents: .date)
+                StorebenchTextField("Note", text: $noteText, hint: "Up to \(ChartNotes.textLimit) characters, such as Spring campaign started.")
+            }
+            StorebenchFormFooter {
+                StorebenchCommand(title: "Add Note", running: "Saving…", busy: savingNote, unavailable: noteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Write the note first." : nil, primary: true) { Task { await addNote() } }
+            }
+            StorebenchFeedback(text: noteStatus, height: 34)
+            if notes.isEmpty { Text("No notes yet.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
+            else {
+                VStack(alignment: .leading, spacing: StorebenchTheme.space(2)) {
+                    ForEach(notes.reversed()) { note in
+                        HStack(alignment: .firstTextBaseline, spacing: StorebenchTheme.space(2)) {
+                            Text(note.date).font(.sbCallout.monospacedDigit()).foregroundStyle(StorebenchTheme.muted)
+                            Text(note.text).font(.sbCallout).textSelection(.enabled).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+                            Button { Task { await removeNote(note) } } label: { StorebenchIcon(name: "close", size: 14) }
+                                .buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).help("Remove Note").accessibilityLabel("Remove note from \(note.date)").storebenchWorking(savingNote)
+                        }
+                    }
+                }
+            }
+        }.environment(\.timeZone, TimeZone(secondsFromGMT: 0)!)
+    }
+    private func addNote() async {
+        guard let session, !savingNote else { return }
+        savingNote = true; defer { savingNote = false }
+        do {
+            let note = try await session.addChartNote(accountId: account.id, appId: app.id, date: PeriodDates.text(noteDate), text: noteText)
+            notes = try await session.chartNotes(accountId: account.id, appId: app.id); noteText = ""; noteStatus = "Note added for \(note.date)."
+        } catch let failure as ChartNoteFailure { noteStatus = failure.message }
+        catch { noteStatus = "The note could not be saved. Your text is still here; try again." }
+    }
+    private func removeNote(_ note: ChartNote) async {
+        guard let session, !savingNote else { return }
+        savingNote = true; defer { savingNote = false }
+        do { try await session.removeChartNote(accountId: account.id, appId: app.id, id: note.id); noteStatus = "Note from \(note.date) removed." }
+        catch let failure as ChartNoteFailure { noteStatus = failure.message }
+        catch { noteStatus = "The note could not be removed. Try again." }
+        notes = (try? await session.chartNotes(accountId: account.id, appId: app.id)) ?? notes
     }
     private func delta(_ value: AsoImpact, title: String) -> some View {
         let shown = AsoProgress.describe(value, label: title)
@@ -193,6 +274,9 @@ struct AsoProgressView: View {
         do { loadedSales = try await session.salesPresentation(account: account, appId: app.id) }
         catch { messages.append("Sales reports could not be read; Sales measures show no days.") }
         guard loadId == id, !Task.isCancelled else { return }
+        do { notes = try await session.chartNotes(accountId: account.id, appId: app.id) }
+        catch { messages.append("Your chart notes could not be read.") }
+        guard loadId == id, !Task.isCancelled else { return }
         points = Dictionary(uniqueKeysWithValues: AsoProgress.metrics.map { ($0.key, AsoProgress.points($0.key, analytics: loadedAnalytics, sales: loadedSales)) })
         reports = AsoProgress.Reports(points)
         chooseMeasures(); status = messages.joined(separator: " ")
@@ -205,8 +289,9 @@ struct AsoProgressView: View {
         let kept = measures.filter { !(points[$0] ?? []).isEmpty }
         measures = keepChoices && !kept.isEmpty ? kept : AsoProgress.initialMeasures(points)
     }
-    private func showRemembered() {
-        guard baseRows.isEmpty, points.isEmpty, let read = history?.rememberedRead(readKey, as: Read.self) else { return }
+    /// Two years of daily measures decode away from the main thread.
+    private func showRemembered() async {
+        guard baseRows.isEmpty, points.isEmpty, let read = await history?.rememberedDecodedRead(readKey, as: Read.self), baseRows.isEmpty, points.isEmpty else { return }
         baseRows = read.rows; locales = read.locales; points = read.points; reports = AsoProgress.Reports(read.points); status = read.status
         chooseLocale(read.primary); chooseMeasures()
     }

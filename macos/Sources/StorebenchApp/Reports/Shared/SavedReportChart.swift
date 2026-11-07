@@ -10,10 +10,28 @@ struct SavedReportChart: View {
     @State private var prepared: Prepared?
     private var input: Input { Input(series: series, markers: markers) }
     let format: (Double) -> String, note: String?, emptyText: String
-    init(series: [SavedTimeSeries.Series], markers: [SavedTimeSeries.Marker] = [], format: @escaping (Double) -> String = AsoProgress.count, note: String? = nil, emptyText: String = "Choose at least one measure with saved reports. Missing reports are not zero activity.") {
-        self.series = series; self.markers = markers; self.format = format; self.note = note; self.emptyText = emptyText
+    /// Marker colors by kind with their legend names, and what choosing a marker opens. The caller decides what kinds mean.
+    let markerKinds: [(kind: String, title: String, color: Color)], onMarker: ((String) -> Void)?
+    init(series: [SavedTimeSeries.Series], markers: [SavedTimeSeries.Marker] = [], format: @escaping (Double) -> String = AsoProgress.count, note: String? = nil, emptyText: String = "Choose at least one measure with saved reports. Missing reports are not zero activity.",
+         markerKinds: [(kind: String, title: String, color: Color)] = [], onMarker: ((String) -> Void)? = nil) {
+        self.series = series; self.markers = markers; self.format = format; self.note = note; self.emptyText = emptyText; self.markerKinds = markerKinds; self.onMarker = onMarker
+    }
+    private func color(_ marker: SavedTimeSeries.Marker) -> Color {
+        markerKinds.first { $0.kind == marker.kind }?.color ?? (marker.active ? StorebenchTheme.ink : StorebenchTheme.muted)
+    }
+    private func dash(_ marker: SavedTimeSeries.Marker) -> [CGFloat] { marker.active ? [] : marker.kind == "note" ? [1, 3] : [4, 4] }
+    /// A marker in the chosen period, shown as a command when it opens something.
+    @ViewBuilder private func markerLine(_ marker: SavedTimeSeries.Marker, font: Font) -> some View {
+        if let onMarker, let target = marker.target {
+            Button { onMarker(target) } label: { Text(marker.label).font(font).multilineTextAlignment(.leading) }
+                .buttonStyle(StorebenchButtonStyle(.quiet)).help("Show this in the list below")
+        } else { Text(marker.label).font(font) }
     }
     @State private var active: Int?
+    /// One chart type for every chart, remembered on this Mac.
+    @AppStorage("chart.style") private var styleName = SavedTimeSeries.Style.line.rawValue
+    private var style: SavedTimeSeries.Style { SavedTimeSeries.Style(rawValue: styleName) ?? .line }
+    private func day(_ value: Double) -> Date { Date(timeIntervalSince1970: value * 86_400) }
     @FocusState private var focused: Bool
     private let colors: [Color] = (1...4).map { StorebenchTheme.color("chart-series-\($0)") }
 
@@ -35,9 +53,20 @@ struct SavedReportChart: View {
     @ViewBuilder private var content: some View {
         if let prepared, prepared.input == input, let layout = prepared.layout {
             let selected = active.flatMap { layout.slots.isEmpty ? nil : layout.slots[min(max(0, $0), layout.slots.count - 1)] }
+            // Bars keep every report period; lines and areas may thin a long series to its drawing envelope.
+            let drawn = style == .bars ? layout.runs : prepared.drawing
+            StorebenchChoicePicker("Chart type", selection: $styleName, options: SavedTimeSeries.Style.allCases.map { ($0.rawValue, $0.title) }).storebenchFormColumn()
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 180))], alignment: .leading) {
                 ForEach(Array(layout.series.enumerated()), id: \.element.key) { index, item in
                     HStack(spacing: 7) { Circle().fill(colors[index]).frame(width: 8, height: 8).accessibilityHidden(true); Text(item.label).foregroundStyle(StorebenchTheme.ink) }.font(.sbCaption)
+                }
+            }
+            let shownKinds = markerKinds.filter { kind in layout.markers.contains { $0.kind == kind.kind } }
+            if !shownKinds.isEmpty {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 180))], alignment: .leading) {
+                    ForEach(shownKinds, id: \.kind) { kind in
+                        HStack(spacing: 7) { Rectangle().fill(kind.color).frame(width: 3, height: 12).accessibilityHidden(true); Text(kind.title).foregroundStyle(StorebenchTheme.ink) }.font(.sbCaption)
+                    }
                 }
             }
             Text("Report dates: \(PeriodDates.text(layout.startDay)) – \(PeriodDates.text(layout.endDay))").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
@@ -48,18 +77,31 @@ struct SavedReportChart: View {
                             .foregroundStyle(StorebenchTheme.color("chart-gap"))
                     }
                     ForEach(Array(layout.series.enumerated()), id: \.element.key) { index, item in
-                        ForEach(Array(prepared.drawing[index].enumerated()), id: \.offset) { runIndex, run in
+                        ForEach(Array(drawn[index].enumerated()), id: \.offset) { runIndex, run in
                             ForEach(run, id: \.start) { point in
-                                LineMark(x: .value("Report period", point.date), y: .value("Value", point.value!), series: .value("Run", "\(item.key):\(runIndex)"))
-                                    .foregroundStyle(colors[index])
-                                PointMark(x: .value("Report period", point.date), y: .value("Value", point.value!))
-                                    .foregroundStyle(colors[index]).symbolSize(18)
+                                if style == .bars {
+                                    if let span = SavedTimeSeries.barSpan(point, index: index, count: layout.series.count) {
+                                        BarMark(xStart: .value("Report period from", day(span.start)), xEnd: .value("Report period through", day(span.end)), y: .value("Value", point.value!))
+                                            .foregroundStyle(colors[index])
+                                    }
+                                } else {
+                                    if style == .area {
+                                        AreaMark(x: .value("Report period", point.date), y: .value("Value", point.value!), series: .value("Run", "\(item.key):\(runIndex)"), stacking: .unstacked)
+                                            .foregroundStyle(colors[index].opacity(0.18))
+                                    }
+                                    LineMark(x: .value("Report period", point.date), y: .value("Value", point.value!), series: .value("Run", "\(item.key):\(runIndex)"))
+                                        .foregroundStyle(colors[index])
+                                    if style == .line || run.count == 1 {
+                                        PointMark(x: .value("Report period", point.date), y: .value("Value", point.value!))
+                                            .foregroundStyle(colors[index]).symbolSize(18)
+                                    }
+                                }
                             }
                         }
                     }
                     ForEach(Array(layout.markers.enumerated()), id: \.offset) { _, marker in
                         RuleMark(x: .value("Listing date", PeriodDates.date(marker.date)!))
-                            .foregroundStyle(marker.active ? StorebenchTheme.ink : StorebenchTheme.muted).lineStyle(StrokeStyle(lineWidth: marker.active ? 2 : 1, dash: marker.active ? [] : [4, 4]))
+                            .foregroundStyle(color(marker)).lineStyle(StrokeStyle(lineWidth: marker.active || marker.kind != nil ? 2 : 1, dash: dash(marker)))
                     }
                     if let selected {
                         RuleMark(x: .value("Selected period", Date(timeIntervalSince1970: selected.middle * 86_400)))
@@ -86,6 +128,11 @@ struct SavedReportChart: View {
                             }
                             .gesture(DragGesture(minimumDistance: 0).onChanged { gesture in
                                 focused = true; inspect(gesture.location.x, proxy: proxy, geometry: geometry, layout: layout)
+                            }.onEnded { gesture in
+                                // A click without dragging opens the first marker in the chosen period.
+                                guard abs(gesture.translation.width) < 4, let onMarker, let slot = active.flatMap({ layout.slots.isEmpty ? nil : layout.slots[min(max(0, $0), layout.slots.count - 1)] }),
+                                      let target = layout.markers.first(where: { $0.date >= slot.start && $0.date <= slot.end && $0.target != nil })?.target else { return }
+                                onMarker(target)
                             })
                     }
                 }
@@ -105,7 +152,7 @@ struct SavedReportChart: View {
                 VStack(alignment: .leading, spacing: 4) {
                     if let selected {
                         Text(selected.label).font(.sbCallout.weight(.semibold))
-                        ForEach(Array(layout.markers.filter { $0.date >= selected.start && $0.date <= selected.end }.enumerated()), id: \.offset) { _, marker in Text(marker.label).font(.sbCaption) }
+                        ForEach(Array(layout.markers.filter { $0.date >= selected.start && $0.date <= selected.end }.enumerated()), id: \.offset) { _, marker in markerLine(marker, font: .sbCaption) }
                         ForEach(Array(layout.series.enumerated()), id: \.element.key) { index, item in
                             Text("\(item.label): \(item.points.first { $0.start == selected.start && $0.end == selected.end }?.exactLabel ?? selected.values[index].map(format) ?? "Not reported")").font(.sbCallout)
                         }
@@ -113,7 +160,7 @@ struct SavedReportChart: View {
                 }.frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
             }.frame(height: min(132, max(56, Double(32 + layout.series.count * 21)))).accessibilityElement(children: .combine)
             Text(note ?? (layout.gaps.isEmpty ? "Missing reports are not zero activity." : "Shaded days have no saved report. Missing reports are not zero.")).font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
-            if prepared.drawing.flatMap({ $0 }).reduce(0, { $0 + $1.count }) < layout.runs.flatMap({ $0 }).reduce(0, { $0 + $1.count }) {
+            if drawn.flatMap({ $0 }).reduce(0, { $0 + $1.count }) < layout.runs.flatMap({ $0 }).reduce(0, { $0 + $1.count }) {
                 Text("Long series use a min/max drawing envelope. Inspection and saved values retain every exact report.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
             }
             DisclosureGroup("Read saved report values and listing dates") {

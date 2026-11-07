@@ -103,4 +103,27 @@ import Testing
         store.remember(1, read: "synthetic-read-0"); store.remember(2, read: "synthetic-read-0")
         #expect(store.remembered(read: "synthetic-read-0", as: Int.self)?.value == 2 && store.rememberedReadCount == NavigationPresentation.readLimit)
     }
+
+    @Test func theAgeOfAShownReadIsWrittenOutAndReadingAgainIsNamed() {
+        let now = Date(timeIntervalSince1970: 2_000_000_000)
+        #expect(ReadAge.text(readAt: nil, now: now, reading: false).isEmpty)
+        #expect(ReadAge.text(readAt: nil, now: now, reading: true) == "Reading App Store Connect…")
+        #expect(ReadAge.text(readAt: now.addingTimeInterval(-20), now: now, reading: false) == "Last read just now")
+        #expect(ReadAge.text(readAt: now.addingTimeInterval(-60), now: now, reading: true) == "Last read 1 minute ago · Reading again…")
+        #expect(ReadAge.text(readAt: now.addingTimeInterval(-7_300), now: now, reading: false) == "Last read 2 hours ago")
+        #expect(ReadAge.text(readAt: now.addingTimeInterval(-3 * 86_400), now: now, reading: false) == "Last read 3 days ago")
+        // A clock that moved back never shows a negative age.
+        #expect(ReadAge.text(readAt: now.addingTimeInterval(120), now: now, reading: false) == "Last read just now")
+    }
+
+    @MainActor @Test func aSavedReadDecodedAwayFromTheMainThreadIsKeptAndNotRestoredAfterClearCache() async throws {
+        let window = NavigationPresentation()
+        let data = try JSONEncoder().encode(["synthetic": [1, 2, 3]]), at = Date(timeIntervalSince1970: 2_000_000_000)
+        window.preload(["synthetic/large": (data, at)], epoch: 1, clearCount: window.clearCount)
+        let decoded = await window.rememberedDecoded(read: "synthetic/large", as: [String: [Int]].self)
+        #expect(decoded?.value == ["synthetic": [1, 2, 3]] && decoded?.readAt == at)
+        #expect(window.remembered(read: "synthetic/large", as: [String: [Int]].self)?.value == ["synthetic": [1, 2, 3]])
+        window.clearReads()
+        #expect(await window.rememberedDecoded(read: "synthetic/large", as: [String: [Int]].self) == nil)
+    }
 }

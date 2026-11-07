@@ -164,7 +164,7 @@ public actor WorkspaceSession {
     var reportTasks: [String: (id: String, cancel: @Sendable () -> Void)] = [:]
     var reportTaskFailures: Set<String> = []
     /// Reviews prepared before their step opens, so the step shows them at once. Each is used once.
-    var reviewsAhead: [(request: PublishRequest, started: ContinuousClock.Instant, task: Task<PublishReview, Error>)] = []
+    var reviewsAhead: [ReviewAhead] = []
     func vaultEntry(_ key: String) throws -> String? { try credentialCapture(key) }
 
     /// A client scoped to one connected account and signed with its stored private key.

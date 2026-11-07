@@ -347,7 +347,7 @@ struct AppOverview: View {
 
     private var mediaChosenInRelease: some View {
         StorebenchNotice(title: "Choose screenshots in Release", description: "Add, order and save app previews and screenshots in Release step 2, Text and Screenshots. This page shows what is saved.", icon: "info") {
-            Button("Open Text and Screenshots") { openRelease(ReleaseWizard.phase(containing: "local:") ?? "listing") }
+            Button("Open Release Step 2") { openRelease(ReleaseWizard.phase(containing: "local:") ?? "listing") }
                 .buttonStyle(StorebenchButtonStyle(.primary)).help("Open Release step 2, Text and Screenshots")
         }
     }

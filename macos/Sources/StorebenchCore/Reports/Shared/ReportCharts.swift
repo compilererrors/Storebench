@@ -27,6 +27,24 @@ public enum ReportCharts {
         return Sales(measure: measure, series: [.init(key: measure.rawValue, label: salesLabel(measure), points: points)], total: known.isEmpty ? nil : known.reduce(0, +), totalLabel: "Total\(partial ? " · partial" : "")",
                      note: partial ? "Some periods lack Apple’s original report rows; their value is not reported and breaks the line." : nil)
     }
+    public static let salesEstimateKey = "proceeds"
+    /// One series per chosen measure, in the order chosen, for one chart.
+    public static func salesOverlay(_ analysis: SalesPresentation.Analysis, measures: [SalesPresentation.Measure]) -> [SavedTimeSeries.Series] {
+        measures.flatMap { sales(analysis, measure: $0).series }
+    }
+    /// Estimated proceeds per report period in the display currency. A period whose amounts or product coverage are not
+    /// verified, or whose currencies cannot all be converted, stays unknown.
+    public static func salesEstimate(_ periods: [SalesPresentation.Period], context: ReportMoney.Context) -> SavedTimeSeries.Series {
+        let points = periods.sorted { $0.beginDate < $1.beginDate }.map { period -> SavedTimeSeries.Point in
+            guard period.moneyComplete, period.productsComplete else { return .init(start: period.beginDate, end: period.endDate, value: nil) }
+            let amounts = period.rows.flatMap(\.proceeds)
+            guard !amounts.isEmpty else { return .init(start: period.beginDate, end: period.endDate, value: 0) }
+            let conversion = ReportMoney.convert(amounts, context: context)
+            guard conversion.complete, let amount = conversion.amount else { return .init(start: period.beginDate, end: period.endDate, value: nil) }
+            return moneyPoint(.init(currency: context.currency, amount: amount), start: period.beginDate, end: period.endDate)
+        }
+        return .init(key: salesEstimateKey, label: "Estimated proceeds · " + context.currency, points: points)
+    }
     public static func financial(_ periods: [FinancialPresentation.Period], metric: String, currency: String = "") throws -> [SavedTimeSeries.Series] {
         _ = try FinancialPresentation.summary(periods)
         guard ["paid", "returned", "net", "other", "proceeds"].contains(metric) else { throw FinanceFailure.format }
@@ -43,12 +61,16 @@ public enum ReportCharts {
         let label = ["paid": "Paid units", "returned": "Returned units", "net": "Net units", "other": "Other net units", "proceeds": "Reported proceeds · " + currency][metric]!
         return [.init(key: metric + ":" + currency, label: label, points: points)]
     }
+    /// Report periods whose proceeds stay unknown in the chart because their amounts or product coverage are not verified.
+    public static func unverifiedProceeds(_ periods: [SalesPresentation.Period]) -> Int { periods.filter { !$0.moneyComplete || !$0.productsComplete }.count }
     public static func salesProceeds(_ periods: [SalesPresentation.Period], currency: String) throws -> [SavedTimeSeries.Series] {
         _ = try SalesPresentation.analyze(periods)
         let points = periods.sorted { $0.beginDate < $1.beginDate }.map { period -> SavedTimeSeries.Point in
             guard period.moneyComplete, period.productsComplete else { return .init(start: period.beginDate, end: period.endDate, value: nil) }
-            let analysis = try? SalesPresentation.analyze([period])
-            return moneyPoint(analysis?.proceeds.first { $0.currency == currency }, start: period.beginDate, end: period.endDate)
+            guard let analysis = try? SalesPresentation.analyze([period]) else { return .init(start: period.beginDate, end: period.endDate, value: nil) }
+            // A verified report without proceeds in this currency reported none that day; only unverified days stay unknown.
+            guard let amount = analysis.proceeds.first(where: { $0.currency == currency }) else { return .init(start: period.beginDate, end: period.endDate, value: 0) }
+            return moneyPoint(amount, start: period.beginDate, end: period.endDate)
         }
         return [.init(key: "proceeds:" + currency, label: "Reported proceeds · " + currency, points: points)]
     }

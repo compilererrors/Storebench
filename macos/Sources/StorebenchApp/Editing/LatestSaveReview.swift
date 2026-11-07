@@ -60,9 +60,12 @@ enum PricingInputChanges {
     static func compare(_ saved: PricingProfileInputs, _ edited: PricingProfileInputs, identity: Bool) -> [SavedValueChange] {
         var fields: [(String, String, String, String)] = []
         if identity { fields += [("name", "Profile name", saved.name, edited.name), ("guide", "Guide country", saved.guideTerritory, edited.guideTerritory)] }
-        fields += [("method", "Pricing method", saved.method, edited.method), ("rounding", "Rounding", saved.method == "same" ? "exact" : saved.rounding, edited.method == "same" ? "exact" : edited.rounding)]
-        func percentages(_ input: PricingProfileInputs) -> String { input.overrides.map { "\($0.territory): \($0.percentage)%" }.joined(separator: "\n") }
-        fields.append(("countries", "Country percentages", percentages(saved), percentages(edited)))
+        fields += [("method", "Pricing method", PricingMethod.name(saved.method), PricingMethod.name(edited.method)), ("rounding", "Rounding", saved.effectiveRounding, edited.effectiveRounding)]
+        func mix(_ input: PricingProfileInputs) -> String { input.effectiveMixMethod.isEmpty ? "No mix" : "\(input.mixShare)% \(PricingMethod.name(input.effectiveMixMethod))" }
+        func rows(_ rows: [PricingProfileInputs.Override], _ unit: String) -> String { rows.map { "\($0.territory): \($0.percentage)\(unit)" }.joined(separator: "\n") }
+        fields += [("mix", "Mix With", mix(saved), mix(edited)), ("floor", "Lowest price", saved.floor, edited.floor), ("ceiling", "Highest price", saved.ceiling, edited.ceiling)]
+        fields.append(("countries", "Country percentages", rows(saved.overrides, "%"), rows(edited.overrides, "%")))
+        fields.append(("index", "Your own index", rows(saved.indexRows, ""), rows(edited.indexRows, "")))
         return fields.filter { !$0.2.utf8.elementsEqual($0.3.utf8) }.map { SavedValueChange(id: $0.0, label: $0.1, saved: $0.2, edited: $0.3) }
     }
 }
@@ -72,6 +75,7 @@ enum PricingInputChanges {
 struct PricingInputFields: View {
     @Binding var inputs: PricingProfileInputs
     let identity: Bool
+    private var method: PricingMethod? { inputs.pricingMethod }
 
     var body: some View {
         VStack(alignment: .leading, spacing: StorebenchTheme.space(3)) {
@@ -79,31 +83,58 @@ struct PricingInputFields: View {
                 StorebenchTextField("Profile name", text: $inputs.name)
                 StorebenchSearchPicker("Guide country", selection: $inputs.guideTerritory, hint: "The guide country stays at 100%.") { Self.territories(including: inputs.guideTerritory) }
             }
-            StorebenchPicker("Method", selection: $inputs.method) { selectionOptions(PricingProfile.methods) { SelectionOption($0.1, value: $0.0) } }
-            if inputs.method != "same" { StorebenchPicker("Rounding", selection: $inputs.rounding) { selectionOptions(PricingProfile.roundings) { SelectionOption($0.1, value: $0.0) } } }
-            if identity || inputs.method == "custom" {
-                StorebenchDivider().padding(.vertical, StorebenchTheme.space(1))
-                StorebenchHeader(stackAt: 420) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Country percentages").font(.sbHeadline)
-                        Text("A percentage from 0 to 1,000 of the guide country price, with up to two decimals. Each country can appear once.")
-                            .font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
+            StorebenchPicker("Method", selection: Binding(get: { inputs.method }, set: { inputs.choose(method: $0) }), hint: method?.explanation ?? "") { selectionOptions(PricingMethod.allCases) { SelectionOption($0.name, value: $0.rawValue) } }
+            if method?.exactOnly != true { StorebenchPicker("Rounding", selection: $inputs.rounding) { selectionOptions(PricingRounding.allCases) { SelectionOption($0.name, value: $0.rawValue) } } }
+            if method?.mixes == true {
+                StorebenchFormGrid {
+                    StorebenchPicker("Mix With", selection: $inputs.mixMethod, hint: "Blend in a second method, such as Currency conversion to soften an index.") {
+                        SelectionOption("No mix", value: "")
+                        selectionOptions(PricingMethod.allCases.filter { $0.mixes && $0 != method }) { SelectionOption($0.name, value: $0.rawValue) }
                     }
-                } actions: {
-                    if inputs.overrides.count < 250 { Button { inputs.overrides.append(.init()) } label: { StorebenchLabel("Add Country", icon: "plus", size: 14) }.help("Add a country percentage") }
+                    if !inputs.mixMethod.isEmpty { StorebenchTextField("Mixed-In Share (%)", text: $inputs.mixShare, hint: "Above 0 and below 100. 30 means 70% of the method and 30% of the mix.") }
                 }
-                if inputs.overrides.isEmpty { Text("No country percentages added.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
-                else {
-                    VStack(spacing: StorebenchTheme.space(2)) {
-                        ForEach($inputs.overrides) { $row in
-                            let taken = Set(inputs.overrides.filter { $0.id != row.id }.map(\.territory) + [inputs.guideTerritory])
-                            HStack(alignment: .center, spacing: StorebenchTheme.space(2)) {
-                                StorebenchSearchPicker("Country", selection: $row.territory) { Self.territories(including: row.territory).filter { !taken.contains($0.value) } }.labelsHidden()
-                                StorebenchTextField("Percent", text: $row.percentage).labelsHidden().frame(width: 84)
-                                Text("%").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
-                                Button { inputs.overrides.removeAll { $0.id == row.id } } label: { StorebenchIcon(name: "close", size: 14) }
-                                    .buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).help("Remove Country").accessibilityLabel("Remove " + WorkspaceSession.countryName(row.territory))
-                            }
+            }
+            if method?.exactOnly != true {
+                StorebenchFormGrid {
+                    StorebenchTextField("Lowest Price (%)", text: $inputs.floor, hint: "Optional. Never below this share of the guide price converted at exchange rates.")
+                    StorebenchTextField("Highest Price (%)", text: $inputs.ceiling, hint: "Optional. Never above this share of the guide price converted at exchange rates.")
+                }
+                rows(title: "Country percentages", description: method?.usesCountryPercentages == true
+                     ? "The countries this method prices, each a percentage from 0 to 1,000 of the guide price, with up to two decimals."
+                     : "Optional. Scales a country's price by a percentage from 0 to 1,000, with up to two decimals.",
+                     empty: "No country percentages added.", unit: "%", kind: .percentages, values: $inputs.overrides, exclude: inputs.guideTerritory)
+            }
+            if inputs.usesOwnIndex {
+                rows(title: "Your own index", description: "A value per country in its own currency. Prices scale by each country's value divided by the guide country's, so include the guide country.",
+                     empty: "No index values added. Import a CSV file or add countries.", unit: "", kind: .index, values: $inputs.indexRows, exclude: nil)
+            }
+        }
+    }
+
+    /// Editable country rows with Add Country, Import CSV… and Copy CSV Format.
+    private func rows(title: String, description: String, empty: String, unit: String, kind: PricingCSV.Kind, values: Binding<[PricingProfileInputs.Override]>, exclude: String?) -> some View {
+        VStack(alignment: .leading, spacing: StorebenchTheme.space(2)) {
+            StorebenchDivider().padding(.vertical, StorebenchTheme.space(1))
+            StorebenchHeader(stackAt: 420) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.sbHeadline)
+                    Text(description).font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
+                }
+            } actions: {
+                if values.wrappedValue.count < 250 { Button { values.wrappedValue.append(.init(percentage: kind == .index ? "" : "100")) } label: { StorebenchLabel("Add Country", icon: "plus", size: 14) }.help("Add a country to \(title.lowercased())") }
+            }
+            PricingCSVButtons(kind: kind, territories: []) { values.wrappedValue = PricingProfileInputs.merge(values.wrappedValue, $0) }
+            if values.wrappedValue.isEmpty { Text(empty).font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
+            else {
+                VStack(spacing: StorebenchTheme.space(2)) {
+                    ForEach(values) { $row in
+                        let taken = Set(values.wrappedValue.filter { $0.id != row.id }.map(\.territory) + (exclude.map { [$0] } ?? []))
+                        HStack(alignment: .center, spacing: StorebenchTheme.space(2)) {
+                            StorebenchSearchPicker("Country", selection: $row.territory) { Self.territories(including: row.territory).filter { !taken.contains($0.value) } }.labelsHidden()
+                            StorebenchTextField(kind == .index ? "Value" : "Percent", text: $row.percentage).labelsHidden().frame(width: 96)
+                            if !unit.isEmpty { Text(unit).font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
+                            Button { values.wrappedValue.removeAll { $0.id == row.id } } label: { StorebenchIcon(name: "close", size: 14) }
+                                .buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).help("Remove Country").accessibilityLabel("Remove " + WorkspaceSession.countryName(row.territory))
                         }
                     }
                 }

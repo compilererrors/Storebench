@@ -86,6 +86,54 @@ import Testing
         #expect(model.languages.count == 2 && model.languages.last?.text.editor?.selections.count == 2 && model.workflow.dirty)
         let result = await model.run(); #expect(result.complete && result.saves == 2 && model.workflow.ready)
     }
+    /// Adds a synthetic Swedish App Information locale to a saved revision, without a version locale.
+    nonisolated private static func addSwedishAppInformation(_ session: WorkspaceSession, key: String) async throws {
+        try await session.storeAccess { store in
+            try store.transaction { current in
+                let revision = try JSONText.parse(try #require(try current("revisions", key)).payload)
+                let infos = WorkspaceSession.items(revision["appInfos"]), info = try #require(infos.first)
+                let swedish = JSONText.object([("id", .string("app-info-locale-sv")), ("fields", .object([("locale", .string("sv")), ("subtitle", .string("Synthetic Swedish subtitle"))]))])
+                let changed = info.setting("localizations", .array(WorkspaceSession.items(info["localizations"]) + [swedish]))
+                return [.put(namespace: "revisions", key: key, json: revision.setting("appInfos", .array([changed] + infos.dropFirst())).data)]
+            }
+        }
+    }
+    @Test func anAppInformationOnlyLanguageGainsVersionTextAndMediaAndReadsAgain() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let plan = try await plan(session), saved = try #require(plan.plan)
+        let key = "\(saved.accountId):\(saved.appId):\(saved.sourceRevisionId)"
+        try await Self.addSwedishAppInformation(session, key: key)
+        let model = try VersionListingEditor(planEditor: plan, session: session); await model.load()
+        let english = try #require(model.languages.first { $0.locale == "en-US" }), swedish = try #require(model.languages.first { $0.locale == "sv" })
+        #expect(swedish.text.editor?.selections.map(\.scope) == [.appInfo] && swedish.media.isEmpty && model.availableLocales.contains("sv"))
+        let englishField = try textField(english); try english.text.change(englishField, to: "Synthetic retained dirty text")
+        let subtitle = try #require(swedish.text.editor?.fields.first { $0.key == "subtitle" })
+        try swedish.text.change(subtitle, to: "Unsaved Swedish subtitle")
+        #expect(await model.addLanguage("sv") == false && model.status.hasPrefix("Save the Swedish App Information text") && model.languages.count == 2)
+        swedish.text.revert()
+
+        #expect(await model.addLanguage("sv")); #expect(!model.catalogFailed)
+        let grown = try #require(model.languages.first { $0.locale == "sv" })
+        #expect(grown.text !== swedish.text && !swedish.text.active && grown.text.editor?.selections.count == 2 && grown.media.count == 1)
+        let grownSubtitle = try #require(grown.text.editor?.fields.first { $0.key == "subtitle" })
+        #expect(grown.text.editor?.value(grownSubtitle) == "Synthetic Swedish subtitle")
+        #expect(model.languages.first { $0.locale == "en-US" }?.text === english.text && english.text.editor?.value(englishField) == "Synthetic retained dirty text")
+        #expect((await model.run()).complete)
+
+        let again = try VersionListingEditor(planEditor: plan, session: session); await again.load()
+        #expect(!again.catalogFailed && again.languages.first { $0.locale == "sv" }?.text.editor?.selections.count == 2 && again.languages.first { $0.locale == "sv" }?.media.count == 1)
+        again.retire(); model.retire()
+    }
+    @Test func aTextOnlyListingReadsNoMediaAndStillAddsAndSavesLanguages() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let plan = try await plan(session), model = try VersionListingEditor(planEditor: plan, session: session, media: false); await model.load()
+        let english = try #require(model.languages.first)
+        #expect(!model.catalogFailed && english.media.isEmpty && english.text.editor?.selections.count == 2)
+        try english.text.change(try textField(english), to: "Synthetic text-only description")
+        #expect(await model.addLanguage("sv")); #expect(!model.catalogFailed && model.languages.allSatisfy { $0.media.isEmpty })
+        #expect((await model.run()).complete && model.workflow.ready)
+        model.retire()
+    }
     @Test func pagingSortingAndCollapseKeepDirtyOwnersAndPendingOriginalsInTheListingSave() async throws {
         let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
         let plan = try await plan(session), saved = try #require(plan.plan), model = try VersionListingEditor(planEditor: plan, session: session)

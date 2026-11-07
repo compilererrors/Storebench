@@ -142,7 +142,7 @@ struct ConnectAccountView: View {
                         .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
                     }
                     StorebenchSetupStep(number: 2, title: "Create the key in App Store Connect",
-                        detail: keyType == "team" ? "Click Users and Access at the top, then Integrations; App Store Connect API opens. Click Team Keys, then Generate API Key (or + if a key exists). Enter a name, choose App Manager or Admin under Access and click Generate." : "Click your name at the top right, then Edit Profile. Under Individual API Key, click Generate Key.", done: !privateKey.isEmpty) {
+                        detail: keyType == "team" ? "Click Users and Access at the top, then the Integrations tab. Select App Store Connect API in the left sidebar and the Team Keys tab, then click Generate API Key (or + if a key exists). Enter a name, choose App Manager or Admin under Access and click Generate." : "Click your name at the top right, then Edit Profile. Scroll down to Individual API Key and click Generate API Key.", done: !privateKey.isEmpty, path: keyType == "team" ? .teamKey : .individualKey) {
                         StorebenchActionLink("Open in Browser", destination: URL(string: keyType == "team" ? "https://appstoreconnect.apple.com/access/integrations/api" : "https://appstoreconnect.apple.com/")!, help: "Open App Store Connect")
                     }
                     StorebenchSetupStep(number: 3, title: "Download the key file", detail: "Right after creating the key, click Download, then Download in the dialog, to save its .p8 file. Apple lets you download it only once, so keep it somewhere private.", done: !privateKey.isEmpty)
@@ -155,7 +155,7 @@ struct ConnectAccountView: View {
                         .info("The 10-character identifier App Store Connect shows next to the key, such as 2X9R4HXF34.")
                     }
                     if keyType == "team" {
-                        StorebenchSetupStep(number: 5, title: "Copy the issuer ID", detail: "In Users and Access → Integrations → App Store Connect API → Team Keys, it is shown above the list of keys. Paste it here.", done: !issuerId.trimmingCharacters(in: .whitespaces).isEmpty) {
+                        StorebenchSetupStep(number: 5, title: "Copy the issuer ID", detail: "In Users and Access → Integrations → App Store Connect API → Team Keys, it is shown above the list of keys. Paste it here.", done: !issuerId.trimmingCharacters(in: .whitespaces).isEmpty, path: .issuerID) {
                             StorebenchTextField("Issuer ID", text: $issuerId, hint: "A long identifier with dashes.")
                             .info("Identifies your team. It is shown above the list of team keys under Users and Access → Integrations → App Store Connect API.")
                         }

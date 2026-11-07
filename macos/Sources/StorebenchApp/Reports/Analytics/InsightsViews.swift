@@ -80,7 +80,7 @@ struct AnalyticsView: View {
             case "failed": Card(title: "Saved Analytics reports could not be read", subtitle: "Existing reports have not been changed.") { EmptyView() }
             case "ready" where periods.isEmpty: Card(title: "No Analytics reports yet", subtitle: "Import reports or download existing instances once Apple has prepared them.") { EmptyView() }
             case "ready":
-                AnalyticsActivityView(periods: selected, kind: kind, openLocalizations: openLocalizations, filters: AnyView(analysisFilters), actions: AnyView(downloadAction))
+                AnalyticsActivityView(periods: selected, kind: kind, range: try? choices.range(.analyticsRange).resolve(latest: latest), openLocalizations: openLocalizations, filters: AnyView(analysisFilters), actions: AnyView(downloadAction))
             default: AnalyticsActivityView.placeholder(filters: AnyView(analysisFilters), actions: AnyView(downloadAction))
             }
             ReportContextView(kind: .analytics, coverage: state == "failed" ? .unavailable : state == "ready" ? .saved(periods.map(\.endDate)) : .loading)

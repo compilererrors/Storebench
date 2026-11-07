@@ -41,21 +41,20 @@ import Testing
         capture("many commands", StorebenchActionGroup(alignment: .trailing) { ForEach(0..<7) { Button("Command \($0)") {} } })
     }
 
-    /// A command fits its label on one line within the shared bounds; a group gives every command its widest label's width.
-    @Test func commandsFitTheirLabelWithinTheSharedBounds() {
+    /// Every standard command has the one shared width, whatever its label, and keeps its label on one line.
+    @Test func commandsShareOneWidthWhateverTheirLabel() {
         let size = CGSize(width: CGFloat.infinity, height: .infinity)
         func width<V: View>(_ view: V) -> CGFloat { NSHostingController(rootView: view).sizeThatFits(in: size).width }
         let short = width(Button("OK") {}.buttonStyle(StorebenchButtonStyle()))
         let medium = width(Button("Read Current Connection") {}.buttonStyle(StorebenchButtonStyle()))
-        #expect(abs(short - CGFloat(StorebenchTheme.actionMinWidth)) <= 1, "A short label keeps the shared minimum width")
-        #expect(medium > short && medium <= CGFloat(StorebenchTheme.actionMaxWidth) + 1, "A longer label widens its command up to the maximum")
+        #expect(abs(short - CGFloat(StorebenchTheme.actionWidth)) <= 1 && abs(medium - short) <= 1, "Short and long labels get the same shared width")
         let oneLine = NSHostingController(rootView: Button("Read Current Connection") {}.buttonStyle(StorebenchButtonStyle())).sizeThatFits(in: size).height
         #expect(abs(oneLine - CGFloat(StorebenchTheme.controlHeight)) <= 1, "Commands keep the shared control height")
         let renderer = ImageRenderer(content: StorebenchActionGroup { Button("OK") {}; Button("Read Current Connection") {} }.frame(width: 900))
         renderer.scale = 1
         #expect(renderer.cgImage != nil)
         let grid = ComponentLayout.actionGrid(width: 900, heights: [42, 42], cell: Double(medium))
-        #expect(grid.frames.count == 2 && grid.frames.allSatisfy { abs(Double($0.width) - Double(medium)) <= 1 }, "Commands in one group share the widest command's width")
+        #expect(grid.frames.count == 2 && grid.frames.allSatisfy { abs(Double($0.width) - Double(medium)) <= 1 }, "Commands in a group keep the shared width")
     }
 
     @Test func longLabelsWrapWithinTheMaximumWidth() {

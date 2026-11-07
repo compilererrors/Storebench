@@ -3,6 +3,18 @@ import Foundation
 /// Step-by-step navigation over the release guide's phases. Moving between phases never approves or starts an Apple change;
 /// every write still goes through a prepared review.
 public enum ReleaseWizard {
+    /// The build the Build step selects. A chosen build stays while only part of the list is read, so a choice from a later page
+    /// is not replaced by the first page; only a complete list that lacks it lets the build Apple has, then the first valid one, take over.
+    public static func chosenBuild(_ current: String?, matching: [TestFlightBuild], attachedId: String?, complete: Bool) -> String? {
+        if let current, matching.contains(where: { $0.id == current }) || !complete { return current }
+        return matching.first(where: { $0.id == attachedId })?.id ?? matching.first(where: { $0.processingState == "VALID" })?.id ?? matching.first?.id
+    }
+    /// When the open step reads its next step ahead again. After a read it waits until shortly before the shared answers expire,
+    /// at least 20 seconds and at most 10 minutes; after failed reads it waits 20, 40, 80 and 160 seconds, then 5 minutes each time.
+    public static func prefetchDelay(failures: Int, lifetime: Duration) -> Duration {
+        guard failures <= 0 else { return min(.seconds(20 * (1 << min(failures - 1, 4))), .seconds(300)) }
+        return min(max(lifetime * 0.8, .seconds(20)), .seconds(600))
+    }
     /// Where inside a phase to continue.
     public enum Focus: Equatable, Sendable {
         case plan, language(String), information(String), build(id: String?, action: String?), reviewInformation(String?), publish(PublishRequest)
@@ -26,6 +38,30 @@ public enum ReleaseWizard {
         case "submit": [.versions, .appConfiguration, .ageRating, .accessibility, .availability]
         default: .all
         }
+    }
+
+    /// Whether a phase needs the listing editors for every language and its media. Only Text and Screenshots shows them, and New Version
+    /// warms them for it; Build and the steps after it never wait for them. An editor already open keeps its owner and unsaved edits.
+    public static func needsListing(_ phase: String) -> Bool { ["plan", "listing"].contains(phase) }
+
+    /// What Add for Review needs besides the build, read in the background while Build is open, even before its export compliance is answered.
+    /// It is what Add for Review's review verifies (`WorkspaceSession.submissionChecks`) apart from the build and the text saved in step 3,
+    /// the App Information checks its step lists as needed or not read yet, and the price Apple checks when a version is added.
+    /// Only read-only screens are warmed; nothing is chosen or answered for you.
+    public static func submissionAhead(_ guide: ReleaseGuide.Guide) -> Set<AppleProblem.Area> {
+        let saved: Set<AppleProblem.Area> = [.listing, .copyright, .version]
+        let verified = Set(WorkspaceSession.submissionChecks).subtracting(WorkspaceSession.submissionBuildChecks).subtracting(saved)
+        let listed = guide.phases.first { $0.id == "submit" }?.steps.filter { [.blocked, .unknown].contains($0.state) }.compactMap { AppleProblem.Area(rawValue: $0.id) } ?? []
+        return verified.union(listed).union([.pricing])
+    }
+
+    /// What a review prepared ahead for Add for Review was based on: the version, its Apple state and every check Build, App Review Information
+    /// and Add for Review show. A confirmed build change or compliance answer changes it, so an older preparation is replaced, even while
+    /// the version's state at Apple stays the same.
+    public static func submissionBasis(_ snapshot: ReleaseReadinessSnapshot) -> String {
+        let shown = snapshot.steps.filter { ["build", "review-information", "submit"].contains(phase(containing: $0.id) ?? "") }
+            .map { JSONText.array([.string($0.id), .string($0.state.rawValue), .string($0.detail)]) }
+        return JSONText.array([.string(snapshot.targetVersionId ?? ""), .string(snapshot.targetState ?? ""), .array(shown)]).sha256
     }
 
     /// Opens on the first step not yet done when it comes before the phase that needs action, else that phase, else the step where

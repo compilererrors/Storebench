@@ -13,6 +13,8 @@ struct VersionListingView: View {
     @State private var protectionId = UUID().uuidString
     @State private var newLocale = ""
     @State private var copyFrom = ""
+    @State private var translatable: Set<String> = []
+    @State private var translation: ListingTranslationRequest?
     @State private var status = ""
     @State private var loadAttempt = 0
     @Environment(\.editorProtection) private var protection
@@ -88,6 +90,17 @@ struct VersionListingView: View {
             }
         }
         .environment(\.draftWorkflowBusy, model?.busy == true)
+        .listingTranslation(translation) { request, translate in
+            guard let model else { return }
+            await add(model, request.target, copyFrom: request.source, translate: translate)
+        } finished: { translation = nil }
+        .task(id: JSONText.array([.string(newLocale)] + (model?.version?.localizations ?? []).map { .string($0.locale) }).stringify()) {
+            let sources = model?.version?.localizations.map(\.locale) ?? [], target = newLocale
+            let found = await ListingTranslation.translatableSources(sources, target: target)
+            guard !Task.isCancelled, target == newLocale else { return }
+            translatable = found
+            if let source = Self.translationSource(copyFrom), !found.contains(source) { copyFrom = "" }
+        }
         .task(id: "\(identity)/\(loadAttempt)") {
             guard let session, !Task.isCancelled else { return }
             do {
@@ -135,17 +148,28 @@ struct VersionListingView: View {
         StorebenchPicker("Starting text and media", selection: $copyFrom) {
             SelectionOption("Start empty", value: "")
             selectionOptions(model.version?.localizations ?? []) { SelectionOption("Copy \(StoreLocales.name($0.locale))", value: $0.locale) }
+            selectionOptions((model.version?.localizations ?? []).filter { translatable.contains($0.locale) }) {
+                SelectionOption("Translate \(StoreLocales.name($0.locale))", value: Self.translationPrefix + $0.locale)
+            }
         }.storebenchFormColumn()
+        .help("Translate uses Apple’s translation on this Mac. The name and links are copied unchanged.")
         if !newLocale.isEmpty && (copyFrom.isEmpty || model.workflow.ready) {
-            Button(model.adding ? "Adding…" : "Add Language") {
+            let translating = Self.translationSource(copyFrom) != nil
+            Button(model.adding || translation != nil ? (translating ? "Translating…" : "Adding…") : "Add Language") {
                 let code = newLocale, source = copyFrom
-                operation = Task {
-                    let added = await model.addLanguage(code, copyFrom: source.isEmpty ? nil : source)
-                    guard model.active, !Task.isCancelled else { return }
-                    if added { newLocale = model.availableLocales.first ?? "" }; status = model.status
-                }
-            }.storebenchWorking(model.busy)
+                if let original = Self.translationSource(source) { translation = ListingTranslationRequest(source: original, target: code); return }
+                operation = Task { await add(model, code, copyFrom: source.isEmpty ? nil : source) }
+            }.storebenchWorking(model.busy || translation != nil)
         }
+    }
+    private static let translationPrefix = "translate:"
+    private static func translationSource(_ choice: String) -> String? {
+        choice.hasPrefix(translationPrefix) ? String(choice.dropFirst(translationPrefix.count)) : nil
+    }
+    private func add(_ model: VersionListingEditor, _ code: String, copyFrom source: String?, translate: VersionListingEditor.Translate? = nil) async {
+        let added = await model.addLanguage(code, copyFrom: source, translate: translate)
+        guard model.active, !Task.isCancelled else { return }
+        if added { newLocale = model.availableLocales.first ?? ""; copyFrom = "" }; status = model.status
     }
     private func run(_ model: VersionListingEditor) {
         guard model.active, !model.busy, !model.workflow.blocked else { return }

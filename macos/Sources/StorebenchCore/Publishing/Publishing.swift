@@ -2,6 +2,12 @@ import CryptoKit
 import Darwin
 import Foundation
 
+/// A review being prepared before its step opens, with what its caller saw at Apple when it asked.
+struct ReviewAhead {
+    let id: UUID, request: PublishRequest, basis: String, started: ContinuousClock.Instant
+    let task: Task<PublishReview, Error>
+}
+
 /// Issued only by `approvePublishing` for one consumed review; Apple writes require it.
 struct PublishGrant { let accountId, appId, reviewId: String; fileprivate init(accountId: String, appId: String, reviewId: String) { self.accountId = accountId; self.appId = appId; self.reviewId = reviewId } }
 
@@ -98,13 +104,39 @@ extension WorkspaceSession {
 
     /// Prepares a review before its step opens, such as Add for Review while the earlier Release steps are open.
     /// It is prepared exactly as the step would prepare it and saved like any review; nothing is sent to Apple.
-    public func preparePublishingAhead(account: Account, request: PublishRequest) {
+    /// `basis` names what the caller saw at Apple when it asked. A preparation for the same request and basis is kept; one made on an
+    /// older basis, or one that failed, is replaced by a new one.
+    public func preparePublishingAhead(account: Account, request: PublishRequest, basis: String = "") {
+        guard let client = try? client(for: account) else { return }
+        preparePublishingAhead(account: account, request: request, basis: basis, client: client)
+    }
+
+    func preparePublishingAhead(account: Account, request: PublishRequest, basis: String, client: AppStoreConnectClient) {
         let now = ContinuousClock.now
-        reviewsAhead.removeAll { now - $0.started >= Self.reviewAheadLifetime }
-        guard !reviewsAhead.contains(where: { $0.request == request }), let client = try? client(for: account) else { return }
-        let task = Task { try await self.preparePublishing(account: account, request: request, client: client) }
-        reviewsAhead.append((request, now, task))
-        if reviewsAhead.count > 4 { reviewsAhead.removeFirst().task.cancel() }
+        for old in reviewsAhead where now - old.started >= Self.reviewAheadLifetime { dropReviewAhead(old.id) }
+        if let existing = reviewsAhead.first(where: { $0.request == request }) {
+            guard existing.basis != basis else { return }
+            dropReviewAhead(existing.id)
+        }
+        let id = UUID()
+        // A preparation that fails leaves at once, so the next request prepares again. It removes only its own entry, never a newer one.
+        let task = Task {
+            do { return try await AppleReadPriority.$current.withValue(.next) { try await self.preparePublishing(account: account, request: request, client: client) } }
+            catch { self.dropReviewAhead(id, cancel: false); throw error }
+        }
+        reviewsAhead.append(ReviewAhead(id: id, request: request, basis: basis, started: now, task: task))
+        if reviewsAhead.count > 4 { dropReviewAhead(reviewsAhead[0].id) }
+    }
+
+    func dropReviewAhead(_ id: UUID, cancel: Bool = true) {
+        guard let index = reviewsAhead.firstIndex(where: { $0.id == id }) else { return }
+        let entry = reviewsAhead.remove(at: index)
+        if cancel { entry.task.cancel() }
+    }
+
+    /// An approved Apple change can make every review prepared ahead for the app out of date; none of them is offered afterwards.
+    func discardReviewsAhead(accountId: String, appId: String) {
+        for entry in reviewsAhead where entry.request.accountId == accountId && entry.request.appId == appId { dropReviewAhead(entry.id) }
     }
 
     /// The review prepared ahead for exactly this request, waiting for it if it is still being prepared. Nil when there is none,
@@ -202,10 +234,10 @@ extension WorkspaceSession {
             let result = try await SessionContext.$lease.withValue(lease) {
                 try await approvePublishingAdmitted(account: account, appId: appId, id: id, fingerprint: fingerprint, client: client, now: now)
             }
-            await invalidateAppleReads(); return result
+            await invalidateAppleReads(); discardReviewsAhead(accountId: account.id, appId: appId); return result
         } catch {
             // A failed run can have completed earlier writes. No screen may reuse the pre-write observations.
-            await invalidateAppleReads(); throw error
+            await invalidateAppleReads(); discardReviewsAhead(accountId: account.id, appId: appId); throw error
         }
     }
     private func approvePublishingAdmitted(account: Account, appId: String, id: String, fingerprint: String, client: AppStoreConnectClient, now: @Sendable () -> Date) async throws -> PublishReview {

@@ -14,10 +14,13 @@ public enum CopiedTextFailure: Error, Equatable {
 public enum CopiedText {
     public struct Marker: Sendable, Equatable {
         public let revisionId, localizationId, copiedValue, reviewedValue: String
+        /// The destination started as a translation of the source rather than an exact copy.
+        public let translated: Bool
         init?(_ json: JSONText) {
             guard let revision = json["revisionId"]?.text, let localization = json["localizationId"]?.text,
                   let copied = json["copiedValue"]?.text, let reviewed = json["reviewedValue"]?.text else { return nil }
             revisionId = revision; localizationId = localization; copiedValue = copied; reviewedValue = reviewed
+            translated = json["translated"] == .bool(true)
         }
     }
     public struct Review: Sendable, Equatable {

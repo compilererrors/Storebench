@@ -29,6 +29,23 @@ public enum AnalyticsPresentation {
         public let key: String, name: String, count: Double, share: Double?
         public var id: String { Data(key.utf8).base64EncodedString() }
     }
+    /// The activity days with a saved report against the days a date range asks for. Days without one stay unknown.
+    public struct Coverage: Sendable, Equatable {
+        public let from, to: String, savedDays, requestedDays: Int
+        public var complete: Bool { savedDays == requestedDays }
+    }
+    /// Coverage of the chosen range, or of the first through the last saved activity day when no range is chosen.
+    public static func coverage(_ periods: [AnalyticsPeriod], range: PeriodDateRange? = nil) -> Coverage? {
+        var days = Set<Int>()
+        for period in periods {
+            guard let first = PeriodDates.number(period.date), let last = PeriodDates.number(period.endDate), last >= first, last - first < 400 else { continue }
+            days.formUnion(first...last)
+        }
+        guard let earliest = days.min(), let latest = days.max() else { return nil }
+        let from = range.flatMap { PeriodDates.number($0.from) } ?? earliest, to = range.flatMap { PeriodDates.number($0.to) } ?? latest
+        guard to >= from else { return nil }
+        return Coverage(from: PeriodDates.text(from), to: PeriodDates.text(to), savedDays: days.filter { $0 >= from && $0 <= to }.count, requestedDays: to - from + 1)
+    }
     public static func territoryName(_ key: String) -> String { Territories.alpha3.values.contains(key) ? Territories.name(key) : "Unspecified territory" }
     static func add(_ left: Double, _ right: Double) throws -> Double {
         guard right.isFinite, right >= 0, right.rounded() == right, right <= 9_007_199_254_740_991 - left else { throw AnalyticsFailure.format }

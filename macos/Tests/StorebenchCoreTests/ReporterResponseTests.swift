@@ -22,6 +22,19 @@ struct ReporterResponseTests {
         #expect(try await reporter.dailySales(account: "1234567", vendor: "80000001", day: "2026-10-13") == .report(bytes))
     }
 
+    @Test func accountAndVendorListsLabelledAsGzipAreRead() async throws {
+        let declaration = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
+        let accounts = try client("xml-accounts-gzip-type.reporting.test", type: "application/a-gzip",
+                                  body: Data((declaration + "<Accounts>\n    <Account>\n        <Name>Synthetic Developer</Name>\n        <Number>1234567</Number>\n    </Account>\n</Accounts>\n").utf8))
+        #expect(try await accounts.accounts() == [ReporterAccount(number: "1234567", name: "Synthetic Developer")])
+        let vendors = try client("xml-vendors-gzip-type.reporting.test", type: "application/a-gzip",
+                                 body: Data((declaration + "<Vendors>\n    <Vendor>80000001</Vendor>\n</Vendors>\n").utf8))
+        #expect(try await vendors.vendors(account: "1234567") == ["80000001"])
+        let noSales = try client("xml-error-gzip-type.reporting.test", status: 404, type: "application/a-gzip",
+                                 body: Data((declaration + "<Error>\n    <Code>213</Code>\n    <Message>Synthetic message</Message>\n</Error>\n").utf8))
+        #expect(try await noSales.dailySales(account: "1234567", vendor: "80000001", day: "2026-10-12") == .noSales)
+    }
+
     @Test func plainTextNoSalesAndUnavailableKeepTheirMeaning() async throws {
         let noSales = try client("plain-no-sales.reporting.test", type: "text/plain", body: Data("There were no sales for the date specified.".utf8))
         #expect(try await noSales.dailySales(account: "1234567", vendor: "80000001", day: "2026-10-12") == .noSales)

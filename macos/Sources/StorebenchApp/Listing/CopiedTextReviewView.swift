@@ -8,7 +8,7 @@ struct CopiedTextReviewView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(review.needsReview ? "Source \(review.sourceLocale.isEmpty ? "unavailable" : review.sourceLocale) changed · compare the destination wording." : "Copied from \(StoreLocales.name(review.sourceLocale)) · source reviewed.")
+            Text(review.needsReview ? "Source \(review.sourceLocale.isEmpty ? "unavailable" : review.sourceLocale) changed · compare the destination wording." : "\(review.marker.translated ? "Translated" : "Copied") from \(StoreLocales.name(review.sourceLocale)) · \(review.marker.translated ? "read the translation before sending it." : "source reviewed.")")
                 .font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
             if review.needsReview {
                 DisclosureGroup("Compare destination with current source") {

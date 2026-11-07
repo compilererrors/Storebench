@@ -3074,6 +3074,7 @@
     }
   ],
   "layout": {
+    "statusColumn": 124,
     "fieldLabel": 18,
     "fieldHint": 34,
     "factLabel": 190,

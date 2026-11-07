@@ -241,11 +241,12 @@ struct PublishActionPanel: View {
         }
     }
     private func loadChoices(fresh: Bool = false) async {
-        guard !working, !publishing, let session else { return }; working = true; defer { working = false }
-        if fresh { await session.invalidateAppleReads() }
-        do { let value = try await session.publishingWorkspace(account: account, appId: app.id, includeBuilds: editor.action == .submit, client: try await session.readClient(for: account)); try Task.checkCancellation(); try editor.receive(value); issueCode = nil; status = value.issues.isEmpty ? "Current choices read. Your existing inputs and selections are kept." : "Some choices remain unknown. Retry the read before preparing those changes." }
-        catch is CancellationError { }
-        catch { status = "Publishing choices could not be read. Your existing inputs remain here."; issueCode = RecoveryIssue.apple(error) ?? "SB-PUBLISH-PREPARE" }
+        await ScreenReads.reading(fresh: fresh) {
+            guard !working, !publishing, let session else { return }; working = true; defer { working = false }
+            do { let value = try await session.publishingWorkspace(account: account, appId: app.id, includeBuilds: editor.action == .submit, client: try await session.readClient(for: account)); try Task.checkCancellation(); try editor.receive(value); issueCode = nil; status = value.issues.isEmpty ? "Current choices read. Your existing inputs and selections are kept." : "Some choices remain unknown. Retry the read before preparing those changes." }
+            catch is CancellationError { }
+            catch { status = "Publishing choices could not be read. Your existing inputs remain here."; issueCode = RecoveryIssue.apple(error) ?? "SB-PUBLISH-PREPARE" }
+        }
     }
     private var reviewKey: String { "publish-review:" + (presentation?.scope ?? "") + ":" + actions.map(\.rawValue).joined(separator: ",") }
     private func openReview(_ id: String, scroll: Bool = true) async {

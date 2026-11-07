@@ -31,29 +31,29 @@ You changed a subtitle or replaced some keywords. Which wording was there before
 
 Storebench saves each listing revision you import for each app, together with downloaded reports, in your encrypted workspace. Later syncs add new snapshots without replacing the earlier ones. You can go back to the saved text and screenshots, compare versions, and read the history on your Mac.
 
-In **ASO Progress**, choose a language and the listing fields you want to compare. Overlay up to four report measures on the same graph: impressions, App Store product page views, Get taps, first-time downloads or purchases, including search-specific measures where available. Use the indexed scale to compare lines with different sizes. Markers show where a changed released listing was first observed at a sync.
+In **ASO Progress**, choose a language and the listing fields you want to compare. Overlay up to four report measures on the same graph: impressions, App Store product page views, Get taps, first-time downloads or purchases, including search-specific measures where available. Use the indexed scale to compare measures with different sizes, draw the graph as lines, bars or areas, and pick the dates with 7, 30 or 90 days, 6 months, 1 year, this year, all saved dates or your own range. Markers show where a changed released listing was first observed at a sync, colored by what changed: keywords, name or subtitle, screenshots or other text. Add your own dated notes, such as a campaign or a price change, and they appear on the same graph. Click a marker to open that version or note.
 
 Select a change to read the old and new text and compare the same number of days before and after it. For example, compare seven days around a keyword update, then inspect the next update on the same timeline. This helps you decide what to try next from your own saved history.
 
-The comparison shows observed changes, not proof that an ASO edit caused them. Other updates in the same window are identified. Missing reports stay missing, and the observed date is not a verified publication time. History builds from the listings and reports you import; text from before your first saved snapshot cannot be reconstructed.
+The comparison shows observed changes, not proof that an ASO edit caused them. Other listing updates and your notes in the same window are identified, whichever language or field you are viewing. Missing reports stay missing, and the observed date is not a verified publication time. History builds from the listings and reports you import; text from before your first saved snapshot cannot be reconstructed.
 
 [See the ASO timeline and before/after comparison](#aso-history).
 
 ## Follow a full release from setup to App Review
 
-Use **Version setup**, the full release guide, for a new app, a new platform or a release that needs the full setup. Work through the version, text and screenshots, build, export compliance, App Review Information and submission in order. The guide shows what Apple still needs, with the relevant editor or action beside the problem, instead of leaving you to find it across separate pages.
+Use **Release** for a new app, a new platform or a release that needs the full setup. Work through the version, text and screenshots, build, export compliance, App Review Information and submission in order. The guide shows what Apple still needs, with the relevant editor or action beside the problem, instead of leaving you to find it across separate pages.
 
 App information, age rating, availability, accessibility and other required declarations are surfaced before submission. Available actions depend on your account and Apple's current state; App Privacy and Tax Category use a separate Apple ID sign-in. Each change at Apple still has its own review and approval.
 
-For an existing app's next version, **Quick Release** keeps the essentials together: choose the version, create it in App Store Connect, update the text, select the build and its export compliance answer, then Add for Review. It uses the same version plan and drafts as Version setup. If Apple needs something outside those steps, continue in the full guide without starting over.
+For an existing app's next version, **Quick Release** keeps the essentials together: choose the version, create it in App Store Connect, update the text, select the build and its export compliance answer, then Add for Review. It uses the same version plan and drafts as Release. If Apple needs something outside those steps, continue in the full guide without starting over.
 
 [See Release and Quick Release](#release-and-quick-release).
 
 ## Prepare screenshots without moving between tools
 
-Add screenshots from files or Asset Library in **Version setup → Text and Screenshots**. Check the language and display size, drag screenshots into the order you want, and save the layout. Upload prepares a review of what will change at Apple.
+Add screenshots from files or Asset Library in **Release → Text and Screenshots**. Check the language and display size, drag screenshots into the order you want, and save the layout. Upload prepares a review of what will change at Apple.
 
-Use **Create Media** to turn your app screenshots into App Store cards with titles, text, backgrounds and reusable styles. Save the finished PNGs to **Asset Library**, choose them for a release, and arrange them with your other screenshots. Asset Library keeps encrypted local originals and their history so you can reuse earlier material.
+Use **Create Media** to turn your app screenshots into App Store cards with titles, text, backgrounds and reusable styles. Choose the Mac's system fonts, any installed font or a font file of your own, and edit the settings beside a preview that stays in view. A finished card set can be translated into another language on the Mac with Apple's translation, keeping the same look and screenshots. Save the finished PNGs to **Asset Library**, choose them for a release, and arrange them with your other screenshots. Asset Library keeps encrypted local originals and their history so you can reuse earlier material.
 
 [See screenshot ordering and card creation](#screenshots-and-card-creation), or [see Asset Library](#asset-library).
 
@@ -73,9 +73,11 @@ Use **Overview** or **Apps** to download app material and reports. The sidebar o
 
 Prepare a version from existing app material, copy an earlier version or start with an empty local plan. Edit listing text across languages, select a build and check what is still needed before submitting the version.
 
-**Localizations** keeps each language's text, character budgets and comparison with imported values together. Text reuse previews changes before applying them locally. Copied wording retains its source so a later source change can be reviewed without overwriting the destination.
+**Localizations** keeps each language's text, character budgets and comparison with imported values together. Text reuse previews changes before applying them locally. Copied wording retains its source so a later source change can be reviewed without overwriting the destination. A new language can start empty, as a copy of a saved language or as a translation of it made on the Mac with Apple's translation; the name and links stay unchanged and every translated field shows its source for review.
 
 Local drafts and release plans remain separate from what Apple currently has. **History** preserves imported material and saved revisions; **Change journal** records before-and-after values and lets you add local notes. A detected change does not establish when it became public on the App Store.
+
+[See language editing](#localizations).
 
 ## Screenshots, app previews and Asset Library
 
@@ -115,7 +117,7 @@ Read **Sales and Trends**, **Analytics**, **Financial Reports** and **Ratings an
 
 Sync downloads data and keeps saved drafts. It shows incomplete sources separately so a partial download is not presented as a complete sync. Missing reports and unverified values remain unknown. An explicit, validated day without sales is recorded separately from a report Apple has not delivered.
 
-Sales analysis shows report coverage, original currencies, trends and country totals. Analytics and ASO views help compare reported activity with recorded changes while retaining coverage and source information. Generating Analytics reports at Apple requires an approved review. Financial downloads have a separate local review before replacing saved reports.
+Sales, Analytics and ASO views share the same date choices: 7, 30 or 90 days, 6 months, 1 year, this year, all saved dates or your own range. Sales analysis shows report coverage, original currencies, trends and country totals. Analytics and ASO views help compare reported activity with recorded changes while retaining coverage and source information. Generating Analytics reports at Apple requires an approved review. Financial downloads have a separate local review before replacing saved reports.
 
 ## Keyword ideas
 
@@ -126,6 +128,8 @@ Keep a local notebook of keyword ideas by language and territory, with evidence 
 **App Store changes** shows the exact operations prepared for one account and app. Preparing a review does not send those operations. Approval applies once to that review, and Storebench reads Apple again to check that the reviewed state is still current.
 
 A changed draft, changed Apple state or expired review requires a new review. If publishing is interrupted, some earlier operations may already have reached Apple. Storebench records the result and requires a new review instead of replaying the interrupted run.
+
+[See the review before sending](#review-before-sending).
 
 ## Storage and backups
 
@@ -154,6 +158,8 @@ scripts/package-mac.sh
 
 The public packaging command builds a universal app with placeholder version metadata and ad-hoc signatures for local execution. The installer is unsigned. Packaging does not start, install or upload the app.
 
+The app's screens are built from shared design components. [Design components](docs/design-components.md) describes how buttons, labels, button groups and status rows are sized and placed, so new screens look and behave like the rest of the app.
+
 ## Tests
 
 Run tests through the isolated runner:
@@ -180,13 +186,13 @@ One guide price, several country-pricing models, and a saved recipe you can reus
 
 ### ASO history
 
-Saved listing changes overlaid on impressions, product page views and downloads, with a before/after comparison.
+Saved listing changes overlaid on impressions, product page views and downloads, colored by what changed, with your own notes and a before/after comparison.
 
-![ASO timeline with observed listing-change markers, overlaid measures and reported values before and after an update](docs/images/aso-progress.png)
+![ASO timeline with listing-change markers colored by field, a note of your own, overlaid measures and reported values before and after an update](docs/images/aso-progress.png)
 
 ### Release and Quick Release
 
-Version setup brings the full release and its missing requirements into one flow. Quick Release keeps the five essential steps for an existing app's next version.
+The full release guide brings setup and missing requirements into one flow. Quick Release keeps the five essential steps for an existing app's next version.
 
 ![Full release guide with app information and compliance requirements before App Review](docs/images/release-guide.png)
 

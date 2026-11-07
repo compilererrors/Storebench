@@ -24,7 +24,7 @@ import Testing
         // Your country percentages: 10 USD at 85.5 % and 10.5 SEK per USD gives 89.775 SEK, rounded to the nearest point.
         let rows = try PricingModels.calculate(custom, base: "10", countries: [Territory(code: "USA", name: "United States", currency: "USD"), Territory(code: "SWE", name: "Sweden", currency: "SEK"), Territory(code: "NOR", name: "Norway", currency: "NOK")],
                                                guideCurrency: "USD", rates: ["SEK": FxRate(rate: "10.5", date: "2026-03-01", source: "frankfurter", providers: nil, fetchedAt: nil)],
-                                               points: [PricePoint(id: "a", territory: "SWE", customerPrice: "89"), PricePoint(id: "b", territory: "SWE", customerPrice: "99"), PricePoint(id: "c", territory: "USA", customerPrice: "9.99"), PricePoint(id: "d", territory: "USA", customerPrice: "10.99")], index: nil)
+                                               points: [PricePoint(id: "a", territory: "SWE", customerPrice: "89"), PricePoint(id: "b", territory: "SWE", customerPrice: "99"), PricePoint(id: "c", territory: "USA", customerPrice: "9.99"), PricePoint(id: "d", territory: "USA", customerPrice: "10.99")], indexes: [])
         #expect(rows.map(\.territory) == ["USA", "SWE"])
         #expect(rows[1].calculated == "89.775" && rows[1].amount == "89" && rows[0].amount == "9.99")
     }

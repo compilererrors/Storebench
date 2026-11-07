@@ -24,6 +24,8 @@ struct TransferView: View {
 
 struct TransferCard: View {
     let account: Account, app: Account.App, session: WorkspaceSession?, kind: TransferKind, title: String, subtitle: String
+    /// Runs after an import was saved, so a screen showing the same data reads it again.
+    var onImported: (() async -> Void)? = nil
     @State private var model: TransferEditor?
     @State private var operation: Task<Void, Never>?
     @State private var protectionId = UUID().uuidString
@@ -63,7 +65,7 @@ struct TransferCard: View {
                 StorebenchFormFooter {
                     Button("Cancel Import Review") { model.discardPreview() }.storebenchWorking(!model.ready)
                     if model.busy || model.dirty && !model.saveBlocked {
-                        Button(model.busy ? "Working…" : "Import Changes") { if model.canSave { operation = Task { _ = await model.apply() } } }.help(model.busy ? "Working…" : "Import Reviewed Changes").accessibilityLabel(model.busy ? "Working…" : "Import Reviewed Changes")
+                        Button(model.busy ? "Working…" : "Import Changes") { if model.canSave { operation = Task { if await model.apply() { await onImported?() } } } }.help(model.busy ? "Working…" : "Import Reviewed Changes").accessibilityLabel(model.busy ? "Working…" : "Import Reviewed Changes")
                             .buttonStyle(StorebenchButtonStyle(.primary)).storebenchWorking(!model.ready)
                     }
                 }

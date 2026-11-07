@@ -16,35 +16,49 @@ struct OriginalReportChart: View {
     }
     let source: Source
     @State private var metric = "paid"
-    @State private var currency = ""
-    private struct Input: Equatable, Sendable { let source: Source, metric: String, currency: String }
+    @State private var currencies = ""
+    @State private var indexed = false
+    private struct Input: Equatable, Sendable { let source: Source, metric: String, currencies: [String], indexed: Bool }
     private struct Prepared: Sendable { let input: Input, series: [SavedTimeSeries.Series]? }
     @State private var prepared: Prepared?
-    private var selectedCurrency: String { source.currencies.contains(currency) ? currency : source.currencies.first ?? "" }
+    /// The currencies drawn together; the first reported currency until others are chosen.
+    private var chosen: [String] { ChartMeasures.chosen(currencies, allowed: source.currencies, fallback: Array(source.currencies.prefix(1))) }
     private var selectedMetric: String { source.financial ? metric : "proceeds" }
-    private var input: Input { Input(source: source, metric: selectedMetric, currency: selectedCurrency) }
+    /// The scale the chart actually draws: reported values whenever the scale choice is not shown.
+    private var drawnIndexed: Bool { ChartMeasures.indexed(indexed, metric: selectedMetric, currencies: source.currencies.count) }
+    private var input: Input { Input(source: source, metric: selectedMetric, currencies: chosen, indexed: drawnIndexed) }
+    private func label(_ value: Double) -> String {
+        if drawnIndexed { return AsoProgress.count(value.rounded()) }
+        guard selectedMetric == "proceeds" else { return AsoProgress.count(value) }
+        let digits = chosen.count == 1 ? ReportMoney.fractionDigits(chosen[0]) : 2, amount = String(format: "%.*f", locale: Locale(identifier: "en_US_POSIX"), digits, value)
+        return chosen.count == 1 ? ReportMoney.label(amount, currency: chosen[0]) : amount
+    }
     var body: some View {
         Card(title: source.financial ? "Financial periods" : "Original proceeds over time", subtitle: "Complete saved report intervals. Original currencies stay separate; missing amounts remain unknown. These are reported proceeds, not bank payouts.") {
-            StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 230) {
-                if source.financial {
-                    StorebenchPicker("Measure", selection: $metric) {
-                        SelectionOption("Paid units", value: "paid"); SelectionOption("Returned units", value: "returned")
-                        SelectionOption("Net units", value: "net"); SelectionOption("Other net units", value: "other")
-                        SelectionOption("Reported proceeds", value: "proceeds")
-                    }
-                }
-                if selectedMetric == "proceeds" && !source.currencies.isEmpty {
-                    StorebenchPicker("Original report currency", selection: Binding(get: { selectedCurrency }, set: { currency = $0 })) {
-                        selectionOptions(source.currencies) { SelectionOption($0, value: $0) }
+            if source.financial {
+                StorebenchPicker("Measure", selection: $metric) {
+                    SelectionOption("Paid units", value: "paid"); SelectionOption("Returned units", value: "returned")
+                    SelectionOption("Net units", value: "net"); SelectionOption("Other net units", value: "other")
+                    SelectionOption("Reported proceeds", value: "proceeds")
+                }.storebenchFormColumn()
+            }
+            if ChartMeasures.scaleOffered(metric: selectedMetric, currencies: source.currencies.count) {
+                StorebenchCardSection(title: "Original report currencies") {
+                    ChartMeasureToggles(options: source.currencies.map { (key: $0, title: $0) }, chosen: chosen) { currencies = $0 }
+                    ChartScalePicker(indexed: $indexed)
+                    if chosen.count > 1 && !indexed {
+                        Text("Amounts in different currencies share one axis and are not converted. Choose Indexed to compare their shape.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
                     }
                 }
             }
             if selectedMetric == "proceeds", source.currencies.isEmpty {
                 Text("No original currency amounts are available in this selection.").foregroundStyle(StorebenchTheme.muted)
             } else if let prepared, prepared.input == input, let series = prepared.series {
-                SavedReportChart(series: series, format: { value in
-                    selectedMetric == "proceeds" ? ReportMoney.label(String(format: "%.*f", locale: Locale(identifier: "en_US_POSIX"), ReportMoney.fractionDigits(selectedCurrency), value), currency: selectedCurrency) : AsoProgress.count(value)
-                }, note: "The inspection shows original amounts. Gaps and unavailable details are never filled with zero.")
+                if case .sales(let periods) = source, case let unverified = ReportCharts.unverifiedProceeds(periods), unverified > 0 {
+                    Text("\(unverified) of \(periods.count) report \(periods.count == 1 ? "period is" : "periods are") not plotted: their proceeds or product coverage need verification, so their amounts stay unknown here and the totals above are partial. Download those reports again to verify them.")
+                        .foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
+                }
+                SavedReportChart(series: series, format: label, note: "The inspection shows original amounts. Gaps and unavailable details are never filled with zero.")
             } else if prepared?.input != input {
                 ProgressView("Preparing saved reports…").frame(maxWidth: .infinity, minHeight: 320)
             } else {
@@ -54,12 +68,14 @@ struct OriginalReportChart: View {
             let expected = input
             let worker = Task.detached(priority: .userInitiated) {
                 guard !Task.isCancelled else { return nil as Prepared? }
-                let series: [SavedTimeSeries.Series]?
+                let reported: [SavedTimeSeries.Series]?
                 switch expected.source {
-                case .sales(let periods): series = try? ReportCharts.salesProceeds(periods, currency: expected.currency)
-                case .financial(let periods): series = try? ReportCharts.financial(periods, metric: expected.metric, currency: expected.currency)
+                case .sales(let periods): reported = try? expected.currencies.flatMap { try ReportCharts.salesProceeds(periods, currency: $0) }
+                case .financial(let periods):
+                    reported = expected.metric == "proceeds" ? try? expected.currencies.flatMap { try ReportCharts.financial(periods, metric: expected.metric, currency: $0) }
+                        : try? ReportCharts.financial(periods, metric: expected.metric)
                 }
-                return Prepared(input: expected, series: series)
+                return Prepared(input: expected, series: expected.indexed ? reported.map(SavedTimeSeries.indexed) : reported)
             }
             let next = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
             guard !Task.isCancelled, input == expected else { return }; prepared = next

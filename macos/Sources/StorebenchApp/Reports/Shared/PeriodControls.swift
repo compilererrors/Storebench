@@ -33,14 +33,20 @@ struct PeriodRangeField: View {
     @Binding var choice: PeriodRangeChoice
     let latest: String
     var title = "Dates shown"
-    private let presets = [7, 30, 90, 180, 365]
-    private var selection: Int { switch choice { case .all: -1; case .latest(let days): presets.contains(days) ? days : 0; case .custom: 0 } }
+    /// Day counts for the latest windows, then This year (-2), All saved dates (-1) and Custom (0).
+    private let presets = [7, 30, 90, 180, 365, -2, -1, 0]
+    private var selection: Int {
+        switch choice { case .all: -1; case .year: -2; case .latest(let days): presets.contains(days) ? days : 0; case .custom: 0 }
+    }
     private var resolved: PeriodDateRange? { try? choice.resolve(latest: latest) }
-    private var custom: Bool { if case .custom = choice { return true }; return false }
-    private var menuTitle: String {
-        if custom { return "Custom dates" }
-        if case .latest(let days) = choice, ![7, 30, 90].contains(days) { return "Latest " + PeriodDaysField.label(days) }
-        return "More dates"
+    private var custom: Bool { selection == 0 }
+    private func label(_ preset: Int) -> (title: String, help: String) {
+        switch preset {
+        case -2: ("This year", "From January 1 through the newest saved date")
+        case -1: ("All saved dates", "Every saved report date")
+        case 0: ("Custom…", "Choose the first and last date")
+        default: (PeriodDaysField.label(preset), "The latest \(PeriodDaysField.label(preset)) through the newest saved date")
+        }
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -48,16 +54,10 @@ struct PeriodRangeField: View {
             if latest.isEmpty { Text("Date choices appear once reports are saved.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
             else {
             StorebenchFlow(spacing: 8) {
-                ForEach([7, 30, 90, -1], id: \.self) { days in
-                    Button { select(days) } label: { Text(days == -1 ? "All saved dates" : "\(days) days") }
-                        .buttonStyle(StorebenchButtonStyle(selection == days ? .secondary : .quiet))
-                        .accessibilityAddTraits(selection == days ? .isSelected : [])
-                }
-                StorebenchMenu(menuTitle, icon: "calendar") {
-                    Button("Latest 6 Months") { select(180) }
-                    Button("Latest 1 Year") { select(365) }
-                    Divider()
-                    Button("Custom Range…") { select(0) }
+                ForEach(presets, id: \.self) { preset in
+                    Button { select(preset) } label: { Text(label(preset).title) }
+                        .buttonStyle(StorebenchButtonStyle(selection == preset ? .secondary : .quiet)).help(label(preset).help)
+                        .accessibilityAddTraits(selection == preset ? .isSelected : [])
                 }
             }.environment(\.naturalActions, true)
             }
@@ -67,12 +67,13 @@ struct PeriodRangeField: View {
                 StorebenchDateField("Through", selection: Binding(get: { last }, set: { update(from: range.from, to: PeriodDates.text($0)) }), in: first..., displayedComponents: .date)
                 }
             }
-            Text(resolved.map { "\($0.from) through \($0.to). Latest windows follow the newest saved data." } ?? "All saved dates. Missing reports stay unknown.")
+            Text(resolved.map { "\($0.from) through \($0.to). Latest windows and This year follow the newest saved data." } ?? "All saved dates. Missing reports stay unknown.")
                 .font(.sbCaption).foregroundStyle(StorebenchTheme.muted).frame(maxWidth: .infinity, minHeight: 18, alignment: .topLeading)
         }.environment(\.timeZone, TimeZone(secondsFromGMT: 0)!)
     }
     private func select(_ selected: Int) {
         if selected == -1 { choice = .all }
+        else if selected == -2 { choice = .year }
         else if selected > 0 { choice = .latest(selected) }
         else if let range = resolved ?? (try? PeriodRangeChoice.latest(30).resolve(latest: latest)) { choice = .custom(range) }
     }

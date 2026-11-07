@@ -11,6 +11,7 @@ struct TestFlightBuildAccessView: View {
     @State private var email = ""
     @State private var automatic = ""
     @State private var loaded = false
+    @State private var readAt: Date?
     @State private var reading = false
     @State private var publishing = false
     @State private var status = ""
@@ -40,6 +41,7 @@ struct TestFlightBuildAccessView: View {
                     }
                 }
                 StorebenchDivider()
+                StorebenchReadAge(readAt: loaded ? readAt : nil, reading: reading)
                 if loaded && build.processed {
                     StorebenchPicker("Existing app tester", selection: $testerId) {
                         SelectionOption("Choose a tester", value: "")
@@ -94,7 +96,7 @@ struct TestFlightBuildAccessView: View {
         .task(id: build.id) {
             automatic = baseline
             // The testers last read, or read ahead by Start Testing, show at once while Apple's current answer is read.
-            if !loaded, let read = history?.rememberedRead(readKey, as: Read.self) { assigned = read.assigned; testers = read.testers; loaded = true }
+            if !loaded, let read = history?.rememberedRead(readKey, as: Read.self) { assigned = read.assigned; testers = read.testers; loaded = true; readAt = history?.rememberedReadAt(readKey) }
             await load()
         }
         .onChange(of: busy) { busyChanged(busy) }
@@ -103,18 +105,19 @@ struct TestFlightBuildAccessView: View {
         .trackUnsavedChanges(!email.isEmpty || (!automatic.isEmpty && automatic != baseline), busy: busy)
     }
     private func load(fresh: Bool = false) async {
-        guard !busy, let session else { return }
-        reading = true; status = ""
-        defer { reading = false }
-        do {
-            if fresh { await session.invalidateAppleReads() }
-            let (members, candidates) = try await session.individualBuildAccess(account: account, appId: app.id, buildId: build.id)
-            try Task.checkCancellation()
-            assigned = members; testers = candidates; loaded = true
-            history?.rememberRead(Read(assigned: members, testers: candidates), readKey)
-            if !testers.contains(where: { $0.id == testerId }) || assigned.contains(where: { $0.id == testerId }) { testerId = "" }
-        } catch is CancellationError { }
-        catch { assigned = []; testers = []; status = "Individual tester access could not be confirmed. Refresh before preparing a review." }
+        await ScreenReads.reading(fresh: fresh) {
+            guard !busy, let session else { return }
+            reading = true; status = ""
+            defer { reading = false }
+            do {
+                let (members, candidates) = try await session.individualBuildAccess(account: account, appId: app.id, buildId: build.id)
+                try Task.checkCancellation()
+                assigned = members; testers = candidates; loaded = true; readAt = Date()
+                history?.rememberRead(Read(assigned: members, testers: candidates), readKey)
+                if !testers.contains(where: { $0.id == testerId }) || assigned.contains(where: { $0.id == testerId }) { testerId = "" }
+            } catch is CancellationError { }
+            catch { assigned = []; testers = []; status = "Individual tester access could not be confirmed. Refresh before preparing a review." }
+        }
     }
     /// Prepares one review. Its command shows Preparing… meanwhile, and a problem shows under the card it came from.
     private func prepare(_ action: String, _ configure: (inout PublishRequest) -> Void) async {

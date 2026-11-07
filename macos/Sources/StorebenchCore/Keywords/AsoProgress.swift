@@ -148,7 +148,7 @@ public enum AsoProgress {
     }
 
     public static func locales(_ revisions: [Revision]) -> [String] {
-        Array(Set(ASO.versionSnapshots(revisions, releasedOnly: true).flatMap { $0.fields.map { locale($0.key) } }.filter { !$0.isEmpty })).sorted()
+        Array(Set(ASO.versionSnapshots(revisions.filter { $0.origin == nil }, releasedOnly: true).flatMap { $0.fields.map { locale($0.key) } }.filter { !$0.isEmpty })).sorted()
     }
 
     /// Saved daily reports prefer the first standard report for a date, matching Progress and Compare.
@@ -166,9 +166,12 @@ public enum AsoProgress {
             chosen[period.date] = period
         }
         return chosen.values.map { period in
-            AsoPoint(date: period.date, value: period.facts.filter { $0.metric == measured && $0.source == "App Store search" }.reduce(0) { $0 + $1.count })
+            AsoPoint(date: period.date, value: period.facts.filter { $0.metric == measured && searchSource($0.source) }.reduce(0) { $0 + $1.count })
         }.sorted { $0.date < $1.date }
     }
+
+    /// Apple's Source Type for App Store search. Report files spell it "App Store Search"; the comparison ignores case so either spelling counts.
+    static func searchSource(_ source: String) -> Bool { source.compare("App Store search", options: [.caseInsensitive, .literal]) == .orderedSame }
 
     static func coverage(_ points: [AsoPoint], _ date: String, _ days: Int) -> (before: [Double?], after: [Double?])? {
         Reports(["metric": points]).coverage("metric", date: date, days: days)

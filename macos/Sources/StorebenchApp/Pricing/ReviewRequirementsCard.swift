@@ -69,13 +69,13 @@ struct ReviewRequirementsCard: View {
 
     private func row<Action: View>(_ title: String, detail: String, status: Bool?, @ViewBuilder action: () -> Action) -> some View {
         let command = action()
-        return StorebenchStatusRow(title: title, detail: detail, actionWidth: 220) {
+        return StorebenchStatusRow(title: title, detail: detail) {
             StorebenchFact(label: "Status", value: status == nil ? "Unknown" : status! ? "Done" : "Needed", problem: status == false, done: status == true)
         } action: { command } details: { EmptyView() }
     }
 
     private func manual(_ title: String, _ detail: String, separator: Bool = true) -> some View {
-        StorebenchStatusRow(title: title, detail: detail, separator: separator, actionWidth: 220) {
+        StorebenchStatusRow(title: title, detail: detail, separator: separator) {
             StorebenchFact(label: "Status", value: "Check in App Store Connect")
         } action: {
             StorebenchActionLink("App Store Connect", destination: Self.connect, help: "Open \(title) in App Store Connect")
@@ -84,23 +84,24 @@ struct ReviewRequirementsCard: View {
 
     /// The products' requirements and, when `fresh`, the app price too, so Check Again rereads everything the card shows.
     private func load(fresh: Bool = false) async {
-        guard let session else { return }
-        let current = UUID(); ticket = current; reading = true
-        defer { if ticket == current { reading = false } }
-        if fresh { await session.invalidateAppleReads() }
-        async let priceRead = fresh ? Self.appPrice(session, account: account, appId: app.id) : nil
-        let products: Result<ProductReadinessCheck, Error>
-        do { products = .success(try await session.productReadiness(account: account, appId: app.id, fresh: false, limit: limit)) } catch { products = .failure(error) }
-        let read = await priceRead
-        guard ticket == current else { return }
-        if let read { checkedPrice = read }
-        switch products {
-        case .success(let value): check = value.keeping(check); problem = ""
-        case .failure(let error):
-            guard !(error is CancellationError) else { return }
-            problem = (error as? PublishFailure)?.message ?? "The products' requirements could not be read from App Store Connect. Check Again tries again."
+        await ScreenReads.reading(fresh: fresh) {
+            guard let session else { return }
+            let current = UUID(); ticket = current; reading = true
+            defer { if ticket == current { reading = false } }
+            async let priceRead = fresh ? Self.appPrice(session, account: account, appId: app.id) : nil
+            let products: Result<ProductReadinessCheck, Error>
+            do { products = .success(try await session.productReadiness(account: account, appId: app.id, fresh: false, limit: limit)) } catch { products = .failure(error) }
+            let read = await priceRead
+            guard ticket == current else { return }
+            if let read { checkedPrice = read }
+            switch products {
+            case .success(let value): check = value.keeping(check); problem = ""
+            case .failure(let error):
+                guard !(error is CancellationError) else { return }
+                problem = (error as? PublishFailure)?.message ?? "The products' requirements could not be read from App Store Connect. Check Again tries again."
+            }
+            if fresh { done() }
         }
-        if fresh { done() }
     }
 
     /// The app price as Apple reports it now; unknown when it could not be read.

@@ -26,7 +26,7 @@
         ],
         [
           "3. Return to Storebench and retry",
-          "Return to the affected app in Overview or Apps and choose Retry unfinished. This starts a new download and keeps earlier revisions, reports and drafts. Refresh Status only reads the saved result; it cannot check whether accepting the terms restored API access."
+          "Return to the affected app in Overview or Apps and choose Retry Unfinished. This starts a new download and keeps earlier revisions, reports and drafts. Refresh Status only reads the saved result; it cannot check whether accepting the terms restored API access."
         ],
         [
           "Why did sync work before?",
@@ -69,7 +69,7 @@
       "questions": [
         [
           "Why does Refresh Status show the same old error?",
-          "Refresh Status reads the saved job; it does not repeat the download or test your Apple key. When a completed job contains an old unverified-download result, choose Retry unfinished to run those sources again. Storebench keeps previous revisions and reports. A new attempt reports any authentication, permission or Keychain failure separately."
+          "Refresh Status reads the saved job; it does not repeat the download or test your Apple key. When a completed job contains an old unverified-download result, choose Retry Unfinished to run those sources again. Storebench keeps previous revisions and reports. A new attempt reports any authentication, permission or Keychain failure separately."
         ],
         [
           "What should I do when status is unavailable?",
@@ -77,7 +77,7 @@
         ],
         [
           "What should I do after an interruption?",
-          "Open History for app material, or the source’s view for saved reports and reviews. Return to the app’s sync details and choose Retry unfinished. Completed results remain available. Missing reports and partial results are never counted as zero activity or a complete sync."
+          "Open History for app material, or the source’s view for saved reports and reviews. Return to the app’s sync details and choose Retry Unfinished. Completed results remain available. Missing reports and partial results are never counted as zero activity or a complete sync."
         ],
         [
           "What if local storage needs attention?",
@@ -105,7 +105,7 @@
         ],
         [
           "What if Apple asks you to complete setup?",
-          "Follow Complete Apple setup and restore sync: the Account Holder checks the Apple Developer account's updated-terms banner and, in App Store Connect, the Agreements tab under Business for the same team. Then return to Storebench and choose Retry unfinished. Reimporting the key does not accept these terms."
+          "Follow Complete Apple setup and restore sync: the Account Holder checks the Apple Developer account's updated-terms banner and, in App Store Connect, the Agreements tab under Business for the same team. Then return to Storebench and choose Retry Unfinished. Reimporting the key does not accept these terms."
         ],
         [
           "What if Mac Keychain access is blocked?",
@@ -351,6 +351,18 @@
         [
           "What does Too few reports mean?",
           "Fewer than half of the days on one side have a saved report. Comparing so few days would be misleading, so no number is shown."
+        ],
+        [
+          "What do the colors on the chart mean?",
+          "Each marker is a listing change, colored by the most search-relevant field it changed: keywords first, then name or subtitle, then screenshots, then description or promotional text. Dotted green markers are your own notes. Point to a date to read what changed, and click a marker to open that version or note."
+        ],
+        [
+          "How do I add my own notes?",
+          "Under Your chart notes, choose a date and write what happened, such as a campaign, a feature or a price change. Notes are saved in the encrypted workspace on this Mac. They show on the chart and beside every comparison whose before or after days include them, so you can see what else may have moved the numbers."
+        ],
+        [
+          "Why does a comparison say other changes are mixed in?",
+          "Another listing change falls inside the days before or after this one. It is listed even when the language or field filter hides it, because any change can move the same impressions, page views and downloads."
         ]
       ],
       "links": []
@@ -562,7 +574,7 @@
         ],
         [
           "How do local and App Store saves work?",
-          "Languages opens the latest imported Apple version by default. Choose Upload to App Store to save all sections locally and open the exact changes. Confirm upload to App Store there to send them. Save keeps an optional draft; Sync new data only downloads from Apple. The difference count compares with the last import, even after publishing. Open a version draft explicitly if you intend to create another version. If that planned version is missing at Apple, approve its creation review, then review the exact saved text and media in a separate review. Submitting a version for Apple review is a later action."
+          "Languages opens the latest imported Apple version by default. Choose Upload to App Store to save all sections locally and open the exact changes. Confirm upload to App Store there to send them. Save keeps an optional draft; Sync New Data only downloads from Apple. The difference count compares with the last import, even after publishing. Open a version draft explicitly if you intend to create another version. If that planned version is missing at Apple, approve its creation review, then review the exact saved text and media in a separate review. Submitting a version for Apple review is a later action."
         ],
         [
           "Can I keep sections minimized between sessions?",
@@ -598,7 +610,7 @@
     {
       "id": "sync",
       "title": "Sync data from Apple",
-      "summary": "Sync new data downloads one app’s data from Apple; Sync all apps downloads across your library. Local edits stay local. The Sync app data card shows results, Check Setup and recovery actions.",
+      "summary": "Sync New Data downloads one app’s data from Apple; Sync All Apps downloads across your library. Local edits stay local. The Sync app data card shows results, Check Setup and recovery actions.",
       "questions": [
         [
           "What does the source count mean?",
@@ -606,7 +618,7 @@
         ],
         [
           "Can I leave the view or retry?",
-          "Yes. Progress is saved and survives leaving the view or quitting Storebench. Retry unfinished keeps recently successful items; older results are checked again. Sync new data discovers recent reports and reuses verified data; Download all again, in the More menu, bypasses the freshness and report caches for the same reporting window. Concurrent starts share the same running sync. Choose Open beside a source to see its data; each result shows when it was checked. Check Setup, also in the More menu, checks reporting access without downloading reports. Refresh Status reads saved progress again, and Stop ends a running sync. If status is unavailable, choose Refresh Status before starting another sync."
+          "Yes. Progress is saved and survives leaving the view or quitting Storebench. Retry Unfinished keeps recently successful items; older results are checked again. Sync New Data discovers recent reports and reuses verified data; Download All Again, in the More menu, bypasses the freshness and report caches for the same reporting window. Concurrent starts share the same running sync. Choose Open beside a source to see its data; each result shows when it was checked. Check Setup, also in the More menu, checks reporting access without downloading reports. Refresh Status reads saved progress again, and Stop ends a running sync. If status is unavailable, choose Refresh Status before starting another sync."
         ],
         [
           "Which periods and connections are used?",
@@ -614,7 +626,7 @@
         ],
         [
           "How does syncing avoid unnecessary downloads?",
-          "Sources run one at a time. Prices use a five-minute cache; successful material, Finance and review checks can be reused for five minutes. Sales starts with the newest completed day, rechecking recent days hourly, older days daily and unavailable days after 15 minutes. Analytics checks available instance metadata and segment checksums before downloading changed files. Receipts are invalid if the saved report changes or disappears. Download all again bypasses report caches; use individual report views to fetch older history."
+          "Sources run one at a time. Prices use a five-minute cache; successful material, Finance and review checks can be reused for five minutes. Sales starts with the newest completed day, rechecking recent days hourly, older days daily and unavailable days after 15 minutes. Analytics checks available instance metadata and segment checksums before downloading changed files. Receipts are invalid if the saved report changes or disappears. Download All Again bypasses report caches; use individual report views to fetch older history."
         ],
         [
           "Does syncing publish changes or set up Analytics?",
@@ -799,6 +811,14 @@
         [
           "Does Save model change App Store Connect?",
           "No. Model settings, country overrides and temporary drafts are saved locally. The Apple price column is the last imported current price and does not change when you edit the plan. Open the app’s App Store changes, choose Pricing and prepare a review. Only Publish reviewed changes to Apple sends the saved prices."
+        ],
+        [
+          "How do I make my own pricing model?",
+          "Open Settings → Pricing and edit or duplicate a profile. A profile is a recipe: a guide country, a method and a rounding rule. Most methods can mix in a second method by share, such as 70% World Bank purchasing power (PPP) and 30% Currency conversion to soften the index. Country percentages scale single countries, and Lowest Price and Highest Price keep every price within a share of the guide price converted at exchange rates. Your own index scales prices by values you import for each country. Every result is rounded to one of Apple's price points and is only sent after you approve the Publish review."
+        ],
+        [
+          "CSV format for your own prices",
+          "Apple has no CSV format for prices, so Storebench uses the columns of its own price export. Use Apple's three-letter territory codes, such as USA or SWE, a period for decimals and one row per country or region. Your prices: territory, currency, amount, where currency is optional and must match Apple's currency; a file from Export Apple Prices… is read as it is, and its rows must have empty dates. Country percentages: territory, percentage. Your own index: territory, value, including the guide country. Copy CSV Format beside Import CSV… copies the columns with example rows. Importing only fills in the editor; nothing is saved or sent. Import Country Drafts on Country Prices reads the full export with all six columns, app_id, territory, currency, amount, start_date and end_date, where the two dates make a temporary price; it previews every change before saving drafts on this Mac."
         ]
       ],
       "links": []
@@ -1029,6 +1049,10 @@
           "Yes. Open App previews for the destination language and choose Reuse app previews from. Use app previews copies included saved local videos, order and poster times from the same version. Existing destination videos and settings stay unchanged. Copies use the same original files but have independent layouts. Review any language-specific content before publishing."
         ],
         [
+          "Can Storebench translate a new language?",
+          "Yes. Under Add language, choose the new language and then Translate followed by a saved language in Starting text and media. Apple’s translation runs on this Mac; macOS asks before downloading a language it does not have yet. The description, keywords, promotional text, What’s New and subtitle are translated, and keywords are translated one term at a time. The name and links are copied unchanged. Each translated field shows its source, and nothing is sent to Apple until you approve the review in Publish. Translate only appears for language pairs that macOS can translate."
+        ],
+        [
           "How do I populate a new language with screenshots?",
           "Open the language’s Screenshots, choose a source under Reuse screenshots from and click Use screenshots. Saved order and selection are copied; existing images remain. Each language keeps an independent layout."
         ],
@@ -1038,7 +1062,11 @@
         ],
         [
           "How do I make screenshot cards with a title and background?",
-          "Open Create Media and create a card set for one display size. Choose a card type, a screenshot, a title and text, then the background and screenshot frame. Apply Style to All Cards gives every card the same look. Save All to Asset Library adds each card as an opaque PNG local original; nothing is uploaded until you review the upload in Asset Library."
+          "Open Create Media and create a card set for one display size. Choose a card type, a screenshot, a title and text, then the background and screenshot frame. Apply Style to All Cards gives every card the same look. Save All to Asset Library adds each card as an opaque PNG local original; nothing is uploaded until you review the upload in Asset Library. Every card type keeps room for the text from the start, so the screenshot stays in place while you type; a screenshot that cannot fill its space sits with the text in the middle of the card, and Cropped at Bottom and Cropped at Top always run past the card edge. Typeface offers the Mac's System, Rounded, Serif and Monospaced fonts, any font installed on this Mac, or a TrueType or OpenType font file you add, saved encrypted with the card set. When Space for text makes the text smaller than Text size, the text settings say so. The settings scroll beside the preview, so the card stays in view."
+        ],
+        [
+          "Can I make the same cards in another language?",
+          "Yes. Under Other Languages in Create Media, choose the language the card text is written in and the language to translate to, then choose Translate Card Set. Apple’s translation runs on this Mac and creates a new card set named after the original and the language. Every title, subtitle and body text is translated; the background, layout and screenshots stay the same. The original set is not changed. Replace screenshots that show your app in another language, read each card’s text and save the cards to Asset Library. A translation that is longer than a card allows is refused, so shorten that text and translate again."
         ]
       ],
       "links": []

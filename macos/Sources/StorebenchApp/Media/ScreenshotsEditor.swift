@@ -120,7 +120,7 @@ struct ScreenshotSetEditor: View {
                                     .materialDragSource(id: id, title: item.fileName, order: inputs.order, context: editor.reorderContext, enabled: canReorder && inputs.order.count > 1, session: reorder, activate: { enlarge(id) })
                             } actions: {
                                 if scope.local {
-                                    if session != nil { Button { enlarge(id) } label: { StorebenchLabel("View screenshot", icon: "screenshots", size: 16) }
+                                    if session != nil { Button { enlarge(id) } label: { StorebenchLabel("View Screenshot", icon: "screenshots", size: 16) }
                                         .buttonStyle(StorebenchButtonStyle(.quiet, stretch: true)) }
                                 } else {
                                     HStack(spacing: StorebenchTheme.space(2)) {

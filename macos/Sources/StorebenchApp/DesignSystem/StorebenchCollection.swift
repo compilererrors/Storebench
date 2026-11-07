@@ -10,6 +10,12 @@ struct StorebenchCollectionEntry<Value>: Identifiable {
     let id: String, value: Value
 }
 
+/// A request to show one record: its page is chosen and it opens, then `onRevealed` runs once it is on screen. Every request has
+/// its own token, so asking again for the same record, even after it was closed, shows it again.
+struct StorebenchCollectionReveal<ID: Hashable>: Equatable {
+    let id: ID, token = UUID()
+}
+
 struct StorebenchResultsPerPage: View {
     @Binding var size: Int
     var body: some View {
@@ -38,6 +44,8 @@ struct StorebenchCollection<Item: Identifiable, Content: View>: View {
     /// Rows that only lead somewhere open it directly: the row shows the action and an arrow, and nothing expands.
     var activate: ((Item) -> Void)? = nil
     var action = "Open"
+    var reveal: StorebenchCollectionReveal<Item.ID>? = nil
+    var onRevealed: ((Item.ID) -> Void)? = nil
     @ViewBuilder let content: (Item) -> Content
     @State private var presentation = CollectionPresentation<Item.ID>()
     @State private var sort = "default"
@@ -92,7 +100,7 @@ struct StorebenchCollection<Item: Identifiable, Content: View>: View {
                     StorebenchCollectionCard(title: title(item), subtitle: subtitle(item), icon: icon?(item), visible: visible, surface: cardSurface,
                         expanded: Binding(get: { presentation.expanded(item.id, on: current) }, set: { value in
                             presentation.setExpanded(item.id, value); if value { onOpen?(item) }
-                        })) { content(item).transformEnvironment(\.navigationPresentation) { $0 = $0?.scoped(String(describing: item.id)) } }
+                        }), revealToken: reveal?.id == item.id ? reveal?.token : nil, onShown: { onRevealed?(item.id) }) { content(item).transformEnvironment(\.navigationPresentation) { $0 = $0?.scoped(String(describing: item.id)) } }
                         .layoutValue(key: CollectionVisible.self, value: visible)
                     }
                 }
@@ -114,6 +122,7 @@ struct StorebenchCollection<Item: Identifiable, Content: View>: View {
                 if wasInitialized, let focusedID, !old.contains(focusedID), next.contains(focusedID) { presentation.reveal(focusedID, in: ordered.map(\.id)) }
             }
             .onChange(of: focusedID) { if let focusedID { presentation.reveal(focusedID, in: ordered.map(\.id)) } }
+            .onChange(of: reveal) { if let reveal { presentation.reveal(reveal.id, in: ordered.map(\.id)) } }
     }
     private func restorePresentation() {
         guard !initialized, !items.isEmpty else { return }
@@ -262,6 +271,8 @@ private struct StorebenchCollectionCard<Content: View>: View {
     let icon: AnyView?
     let visible: Bool, surface: Bool
     @Binding var expanded: Bool
+    var revealToken: UUID? = nil
+    var onShown: () -> Void = {}
     @ViewBuilder let content: () -> Content
     @State private var mounted = false
     var body: some View {
@@ -286,6 +297,8 @@ private struct StorebenchCollectionCard<Content: View>: View {
             .overlay { if surface { RoundedRectangle(cornerRadius: StorebenchTheme.radius).strokeBorder(StorebenchTheme.border) } }
             .collectionVisibility(visible)
             .onChange(of: expanded, initial: true) { if expanded { mounted = true } }
+            // Runs after the update that opened and showed this card, so a scroll to its content finds it laid out.
+            .onChange(of: expanded && visible ? revealToken : nil, initial: true) { _, shown in if shown != nil { onShown() } }
     }
 }
 

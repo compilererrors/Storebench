@@ -194,7 +194,7 @@ struct AllAppsSyncButton: View {
     }
     @ViewBuilder private var button: some View {
         if session != nil {
-            Button { Task { await start() } } label: { StorebenchLabel(working ? "Starting syncs…" : active ? "Syncing apps…" : "Sync all apps", icon: "refresh", busy: working || active) }
+            Button { Task { await start() } } label: { StorebenchLabel(working ? "Starting syncs…" : active ? "Syncing apps…" : "Sync All Apps", icon: "refresh", busy: working || active) }
                 .buttonStyle(StorebenchButtonStyle(.primary)).storebenchWorking(working || active)
                 .help("Sync missing or updated data for every connected app. Reuses recent checks and saved reports; keeps local edits and does not publish changes.")
         }

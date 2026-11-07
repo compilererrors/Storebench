@@ -10,6 +10,7 @@ struct PricingView: View {
     @State private var setup: PricingSetupState?
     @State private var chosen: PricingModelKind?
     @State private var reading = false
+    @State private var readAt: Date?
     @State private var problem = ""
     @State private var changing = false
     @State private var proposal: PricingModelKind = .free
@@ -57,6 +58,7 @@ struct PricingView: View {
             }
             StorebenchTextSlot(text: reading ? (setup == nil ? "Reading App Store Connect…" : "Checking App Store Connect for changes…") : session == nil ? "Connect the workspace to read pricing from App Store Connect." : shown.map { $0.summary + (chosen != nil ? " Chosen on this Mac." : " Read from App Store Connect.") } ?? (setup?.guideAvailable == true ? "Choose a pricing model below to set up pricing." : ""),
                                height: 36, font: .sbCallout, color: StorebenchTheme.muted, live: true)
+            StorebenchReadAge(readAt: setup == nil ? nil : readAt, reading: false)
             if !problem.isEmpty { StorebenchAttention { Text(problem).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) } }
         }
     }
@@ -73,8 +75,8 @@ struct PricingView: View {
             if !saveProblem.isEmpty { StorebenchAttention { Text(saveProblem).fixedSize(horizontal: false, vertical: true) } }
         } actions: {
             StorebenchActionGroup {
-                Button("Use App Store Connect's Model") { Task { await choose(nil) } }.storebenchWorking(saving)
-                    .disabled(!saving && chosen == nil).help(chosen == nil ? "Pricing already follows App Store Connect." : "Show the model App Store Connect's products and price show.")
+                Button("Use Apple's Model") { Task { await choose(nil) } }.storebenchWorking(saving)
+                    .disabled(!saving && chosen == nil).help(chosen == nil ? "Pricing already follows App Store Connect." : "Use the model App Store Connect's products and price show.")
                 Button("Cancel") { changing = false }.storebenchWorking(saving)
                 StorebenchCommand(title: "Use This Model", running: "Saving…", busy: saving, unavailable: proposal == shown && chosen != nil ? "This is the current pricing model." : nil) { Task { await choose(proposal) } }
             }
@@ -175,7 +177,7 @@ struct PricingView: View {
         guard let session else { return }
         let key = Self.readKey(accountId: account.id, appId: app.id)
         if !fresh, setup == nil, let remembered = presentation?.rememberedRead(key, as: PricingSetupState.self) {
-            setup = remembered; chosen = try? await session.chosenPricingModel(accountId: account.id, appId: app.id)
+            setup = remembered; readAt = presentation?.rememberedReadAt(key); chosen = try? await session.chosenPricingModel(accountId: account.id, appId: app.id)
         }
         let current = UUID(); ticket = current; reading = true
         defer { if ticket == current { reading = false } }
@@ -183,7 +185,7 @@ struct PricingView: View {
             let saved = try await session.chosenPricingModel(accountId: account.id, appId: app.id)
             let value = try await session.pricingSetupState(account: account, appId: app.id, fresh: fresh)
             guard ticket == current, !Task.isCancelled else { return }
-            chosen = saved; if setup != value { setup = value }
+            chosen = saved; if setup != value { setup = value }; readAt = Date()
             presentation?.rememberRead(value, key)
             problem = value.complete ? "" : (value.priceProblem.map { $0 + " " } ?? "") + (value.guideAvailable ? "The setup below reads Apple again before each review." : "App Store Connect did not return the app's complete pricing. What could be read is shown; refresh before changing prices.")
         } catch {

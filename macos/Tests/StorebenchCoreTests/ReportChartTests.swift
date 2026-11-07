@@ -146,6 +146,7 @@ import Testing
                     else {
                         let amount = try SalesPresentation.analyze([period]).proceeds.first { $0.currency == currency }
                         #expect(point.exactLabel == amount.map { $0.amount + " " + currency })
+                        if amount == nil { #expect(point.value == 0) }
                     }
                 }
             }

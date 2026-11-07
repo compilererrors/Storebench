@@ -50,6 +50,8 @@ import Foundation
         guard let entry = reads[key], let value = entry.value as? Value else { return nil }
         touch(key); return (value, entry.readAt)
     }
+    /// When the remembered or saved read for `key` was taken, without decoding it.
+    public func readAt(_ key: String) -> Date? { reads[key]?.readAt ?? saved[key]?.readAt }
     private func keep(_ value: Any, key: String, date: Date, cost: Int) -> Int {
         drop(saved: key); readBytes -= reads[key]?.cost ?? 0
         generation += 1
@@ -99,8 +101,10 @@ import Foundation
             if let persist, let epoch { persist(key, data, date, epoch) }
         }
     }
+    /// The epoch to save an encoded read under, or nil when Clear Cache ran or a newer read of the same key replaced it,
+    /// so an older read that finishes encoding last never replaces the newer one on disk.
     private func encoded(_ key: String, generation: Int, bytes: Int, clears: Int) -> Int? {
-        guard clears == clearCount else { return nil }
+        guard clears == clearCount, reads[key]?.generation == generation else { return nil }
         measured(key, generation: generation, bytes: bytes)
         return epoch
     }
@@ -108,6 +112,17 @@ import Foundation
         if let entry = reads[key], let value = entry.value as? Value { touch(key); return (value, entry.readAt) }
         guard let entry = saved[key], let value = try? JSONDecoder().decode(Value.self, from: entry.data) else { return nil }
         _ = keep(value, key: key, date: entry.readAt, cost: entry.data.count * Self.decodedFactor)
+        return (value, entry.readAt)
+    }
+
+    /// As `remembered(read:as:)`, but a read saved by an earlier launch is decoded away from the main thread, for large reads.
+    public func rememberedDecoded<Value: Decodable & Sendable>(read key: String, as type: Value.Type) async -> (value: Value, readAt: Date)? {
+        if let entry = reads[key], let value = entry.value as? Value { touch(key); return (value, entry.readAt) }
+        guard let entry = saved[key] else { return nil }
+        let clears = clearCount, data = entry.data
+        guard let value = await Task.detached(priority: .userInitiated, operation: { try? JSONDecoder().decode(Value.self, from: data) }).value,
+              clears == clearCount, saved[key]?.data == data, reads[key] == nil else { return remembered(read: key, as: type) }
+        _ = keep(value, key: key, date: entry.readAt, cost: data.count * Self.decodedFactor)
         return (value, entry.readAt)
     }
 
@@ -133,14 +148,17 @@ extension WorkspaceSession {
         let at = ReportTimestamps.isoUtcText(readAt)
         let value = JSONText.object([("readAt", .string(at)), ("value", .string(data.base64EncodedString()))])
         let meta = JSONText.object([("readAt", .string(at)), ("bytes", .number(Double(data.count)))])
-        var added = false
+        var added = false, newer = true
         let saved = try? storeAccess { store in
-            try store.transaction { current in
-                added = try current(Self.viewReadMetaNamespace, key) == nil
+            try store.withoutChangeStamp { try store.transaction { current in
+                let existing = try current(Self.viewReadMetaNamespace, key)
+                added = existing == nil
+                // A read from another window that was taken later stays; this older one is not written over it.
+                if let existing, let at = (try? JSONText.parse(existing.payload))?["readAt"]?.text.flatMap(ReportTimestamps.date), at > readAt { newer = false; return [] }
                 return [.put(namespace: Self.viewReadsNamespace, key: key, json: value.data), .put(namespace: Self.viewReadMetaNamespace, key: key, json: meta.data)]
-            }
+            } }
         }
-        guard saved != nil else { return }
+        guard saved != nil, newer else { return }
         viewReadDigests[key] = digest
         if added, let count = viewReadCount { viewReadCount = count + 1 }
         let due = viewReadCleanedAt.map { ContinuousClock.now - $0 > Self.viewReadCleanupInterval } ?? true
@@ -171,7 +189,7 @@ extension WorkspaceSession {
         var removed = Set<String>()
         if !stale.isEmpty {
             _ = try? storeAccess { store in
-                try store.transaction { current in
+                try store.withoutChangeStamp { try store.transaction { current in
                     removed = []
                     var writes: [EncryptedDocumentStore.Write] = []
                     for item in stale where try current(Self.viewReadMetaNamespace, item.key)?.revision == item.revision {
@@ -180,7 +198,7 @@ extension WorkspaceSession {
                         if item.revision != nil { writes.append(.delete(namespace: Self.viewReadMetaNamespace, key: item.key)) }
                     }
                     return writes
-                }
+                } }
             }
             for key in removed { viewReadDigests[key] = nil }
         }
@@ -190,10 +208,11 @@ extension WorkspaceSession {
     }
     /// Screen reads saved by earlier launches, newest first, within the Performance setting's count and bytes, for the window to show
     /// while it reads again. Only the chosen values are read from the database.
-    public func savedViewReads() -> [String: (data: Data, readAt: Date)] {
+    /// With `containing`, only reads whose key names it, such as the open app's ID, are read; the rest can follow separately.
+    public func savedViewReads(containing part: String? = nil) -> [String: (data: Data, readAt: Date)] {
         guard (try? requireSessionAccess()) != nil else { return [:] }
         var bytes = 0, kept: [String: (data: Data, readAt: Date)] = [:]
-        for summary in cleanViewReads() where kept.count < cacheBudget.savedReads.count && bytes + summary.bytes <= cacheBudget.savedReads.bytes {
+        for summary in cleanViewReads() where (part.map { summary.key.contains($0) } ?? true) && kept.count < cacheBudget.savedReads.count && bytes + summary.bytes <= cacheBudget.savedReads.bytes {
             guard let document = try? storeAccess({ try $0.document(namespace: Self.viewReadsNamespace, key: summary.key) }),
                   let value = try? JSONText.parse(document.payload), let at = value["readAt"]?.text.flatMap(ReportTimestamps.date),
                   let data = value["value"]?.text.flatMap({ Data(base64Encoded: $0) }), data.count == summary.bytes else { continue }
@@ -210,5 +229,22 @@ extension WorkspaceSession {
                     + store.keys(namespace: Self.viewReadMetaNamespace).map { .delete(namespace: Self.viewReadMetaNamespace, key: $0) }
             }
         }
+    }
+}
+
+/// The line under a list shown from an earlier read, so the age of what is on screen is always visible.
+public enum ReadAge {
+    /// "Last read 5 minutes ago · Reading again…", or empty before anything was read.
+    public static func text(readAt: Date?, now: Date = Date(), reading: Bool) -> String {
+        guard let readAt else { return reading ? "Reading App Store Connect…" : "" }
+        let seconds = max(0, now.timeIntervalSince(readAt))
+        let age: String
+        switch seconds {
+        case ..<60: age = "just now"
+        case ..<3_600: let minutes = Int(seconds / 60); age = minutes == 1 ? "1 minute ago" : "\(minutes) minutes ago"
+        case ..<86_400: let hours = Int(seconds / 3_600); age = hours == 1 ? "1 hour ago" : "\(hours) hours ago"
+        default: let days = Int(seconds / 86_400); age = days == 1 ? "1 day ago" : "\(days) days ago"
+        }
+        return "Last read " + age + (reading ? " · Reading again…" : "")
     }
 }

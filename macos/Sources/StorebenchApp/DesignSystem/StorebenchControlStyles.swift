@@ -97,8 +97,9 @@ struct StorebenchControlSurface: ViewModifier {
         let colors = ControlColors(variant, enabled: enabled, busy: actionBusy, emphasized: emphasized)
         let icon = CGFloat(StorebenchTheme.controlHeight)
         let width: StorebenchCommandWidth = size == .icon ? .init(minimum: icon, maximum: icon, fill: false)
-            : .init(minimum: naturalActions || variant == .field ? 0 : CGFloat(StorebenchTheme.actionMinWidth),
-                    maximum: naturalActions && !stretch && !actionFill ? .infinity : CGFloat(StorebenchTheme.actionMaxWidth), fill: stretch || actionFill)
+            // Standard commands share one width, so buttons line up on the grid; only chips, fields and stretched tiles size otherwise.
+            : .init(minimum: naturalActions || variant == .field ? 0 : CGFloat(StorebenchTheme.actionWidth),
+                    maximum: naturalActions && !stretch && !actionFill ? .infinity : CGFloat(stretch ? StorebenchTheme.actionMaxWidth : StorebenchTheme.actionWidth), fill: stretch || actionFill)
         width {
             content.font(.sbCallout.weight(variant == .field ? .regular : .semibold)).lineLimit(nil).multilineTextAlignment(.center)
                 .padding(.horizontal, size == .icon ? 4 : 16)

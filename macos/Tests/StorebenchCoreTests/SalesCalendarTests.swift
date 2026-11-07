@@ -31,6 +31,14 @@ import Testing
             #expect(empty.analysis.paid == 0 && empty.analysis.coverage == nil && empty.coveredDays == 0 && !empty.complete && empty.missingDays == days)
         }
     }
+    @Test func separateRunsOfMissingDaysAreNeverJoinedIntoOneRange() throws {
+        let days = ["2026-03-01", "2026-03-02", "2026-03-03", "2026-03-04", "2026-03-09", "2026-03-12", "2026-03-13"]
+        let guidance = try SalesCalendar.guidance(days, now: Date(timeIntervalSince1970: 1_780_000_000))
+        #expect(guidance.missing.count == days.count)
+        #expect(SalesCalendar.label(guidance.missing) == "Mar 1 – Mar 4 (4 days), Mar 9, Mar 12 – Mar 13 (2 days)")
+        let scattered = try SalesCalendar.guidance(["2026-03-01", "2026-03-03", "2026-03-05", "2026-03-07", "2026-03-09", "2026-03-11", "2026-03-12"], now: Date(timeIntervalSince1970: 1_780_000_000))
+        #expect(SalesCalendar.label(scattered.missing) == "Mar 1, Mar 3, Mar 5, Mar 7, and 3 more days")
+    }
     @Test func boundedGuidanceRejectsInvalidDatesDuplicateDaysAndInvalidClocks() throws {
         let clock = Date(timeIntervalSince1970: 1_772_975_000), day = "2026-03-07"
         #expect(try SalesCalendar.guidance([], now: clock).waiting.isEmpty)

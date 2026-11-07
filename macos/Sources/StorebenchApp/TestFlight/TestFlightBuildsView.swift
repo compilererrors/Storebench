@@ -24,6 +24,7 @@ struct TestFlightBuildsView: View {
     @State private var locale = "en-US"
     @State private var whatToTest = ""
     @State private var status = ""
+    @State private var readAt: Date?
     @State private var restoring: Choices?
     @Environment(\.navigationPresentation) private var history
     private struct Choices: Equatable { var selectedId, answeringId: String?; var locale: String }
@@ -58,6 +59,7 @@ struct TestFlightBuildsView: View {
             Card(title: "Uploaded builds", subtitle: "Processed builds delivered through Storebench, Xcode or Transporter. Apple controls beta review and approval.", help: "testflight", actions: AnyView(
                 Button(loading ? "Reading Builds…" : "Refresh Builds") { if !busy, !accessBusy, !encryptionBusy { Task { await load(fresh: true) } } }.storebenchWorking(busy || accessBusy || encryptionBusy)
             )) {
+                StorebenchReadAge(readAt: state == "ready" ? readAt : nil, reading: loading)
                 switch state {
                 case "failed": Text(status).foregroundStyle(StorebenchTheme.muted)
                 case "ready" where builds.isEmpty: Text("No builds yet. Upload a build to App Store Connect to make it available for TestFlight groups.").foregroundStyle(StorebenchTheme.muted)
@@ -156,7 +158,7 @@ struct TestFlightBuildsView: View {
 
     private func showRemembered() {
         guard builds.isEmpty, let remembered = history?.rememberedRead(readKey, as: [TestFlightBuild].self) else { return }
-        builds = remembered; state = "ready"
+        builds = remembered; state = "ready"; readAt = history?.rememberedReadAt(readKey)
     }
     private func applyRestoring() async {
         guard let choice = restoring else { return }
@@ -166,19 +168,20 @@ struct TestFlightBuildsView: View {
     }
 
     private func load(fresh: Bool = false) async {
-        guard !loading, let session else { return }
-        // A list already shown stays visible while it is read again; actions wait for the read.
-        loading = true; if builds.isEmpty || state != "ready" { state = "loading" }; if review?.state == "prepared" { review = nil }
-        defer { loading = false }
-        if fresh { await session.invalidateAppleReads() }
-        do {
-            let latest = try await session.testFlightBuilds(appId: app.id, client: try await session.readClient(for: account))
-            try Task.checkCancellation()
-            builds = latest; status = ""; state = "ready"
-            if let current = selected { selected = builds.first { $0.id == current.id } }
-            history?.rememberRead(latest, readKey)
+        await ScreenReads.reading(fresh: fresh) {
+            guard !loading, let session else { return }
+            // A list already shown stays visible while it is read again; actions wait for the read.
+            loading = true; if builds.isEmpty || state != "ready" { state = "loading" }; if review?.state == "prepared" { review = nil }
+            defer { loading = false }
+            do {
+                let latest = try await session.testFlightBuilds(appId: app.id, client: try await session.readClient(for: account))
+                try Task.checkCancellation()
+                builds = latest; status = ""; state = "ready"; readAt = Date()
+                if let current = selected { selected = builds.first { $0.id == current.id } }
+                history?.rememberRead(latest, readKey)
+            }
+            catch AppStoreConnectClient.Failure.status(let code) where code == 401 || code == 403 { status = "Apple did not allow this API key to read TestFlight builds."; state = "failed" }
+            catch { status = "TestFlight builds could not be loaded from App Store Connect."; state = "failed" }
         }
-        catch AppStoreConnectClient.Failure.status(let code) where code == 401 || code == 403 { status = "Apple did not allow this API key to read TestFlight builds."; state = "failed" }
-        catch { status = "TestFlight builds could not be loaded from App Store Connect."; state = "failed" }
     }
 }

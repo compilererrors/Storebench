@@ -115,6 +115,39 @@ import Testing
         #expect(loaded.count == min(budget.count, keys.values.count) && loaded["synthetic/read-\(WorkspaceSession.viewReadKeep + 24)"] != nil)
     }
 
+    @Test func savingScreenReadsKeepsLibraryAndPricingCachesValid() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let epoch = await session.viewReadEpoch
+        let before = try await session.storeAccess { try $0.changeStamp() }
+        for index in 0..<5 { await session.saveViewRead(key: "synthetic/stamp-\(index)", data: Data("{}".utf8), readAt: Date(), epoch: epoch) }
+        #expect(await session.savedViewReads().count >= 5)
+        #expect(try await session.storeAccess { try $0.changeStamp() } == before)
+        // Any other write still changes the stamp, so cached library and pricing data are read again.
+        try await session.storeAccess { store in try store.transaction { _ in [.put(namespace: "synthetic_other", key: "k", json: Data("{}".utf8))] } }
+        #expect(try await session.storeAccess { try $0.changeStamp() } != before)
+    }
+
+    @Test func theOpenAppsSavedReadsCanBeReadFirst() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let epoch = await session.viewReadEpoch
+        for key in ["testflight-builds/a/1000000001", "release-builds/a/1000000001", "testflight-builds/a/1000000002", "library/overview"] {
+            await session.saveViewRead(key: key, data: Data("{}".utf8), readAt: Date(), epoch: epoch)
+        }
+        #expect(await session.savedViewReads(containing: "/1000000001").keys.sorted() == ["release-builds/a/1000000001", "testflight-builds/a/1000000001"])
+        #expect(await session.savedViewReads().count == 4)
+    }
+
+    @Test func anOlderSavedReadNeverReplacesANewerOne() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let epoch = await session.viewReadEpoch, now = Date()
+        await session.saveViewRead(key: "synthetic/order", data: Data("newer".utf8), readAt: now, epoch: epoch)
+        // Another window that read earlier finishes saving later.
+        await session.saveViewRead(key: "synthetic/order", data: Data("older".utf8), readAt: now.addingTimeInterval(-60), epoch: epoch)
+        #expect(await session.savedViewReads()["synthetic/order"]?.data == Data("newer".utf8))
+        await session.saveViewRead(key: "synthetic/order", data: Data("newest".utf8), readAt: now.addingTimeInterval(60), epoch: epoch)
+        #expect(await session.savedViewReads()["synthetic/order"]?.data == Data("newest".utf8))
+    }
+
     private final class SavedKeys: @unchecked Sendable {
         private let lock = NSLock(); private var values: [String] = []
         func add(_ key: String) { lock.withLock { values.append(key) } }
