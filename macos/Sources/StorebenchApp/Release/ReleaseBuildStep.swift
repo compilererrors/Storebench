@@ -26,6 +26,7 @@ struct ReleaseBuildStep: View {
     /// False while remembered builds show and App Store Connect is read again.
     @State private var confirmed = false
     @State private var reader: ReleaseBuildReader?
+    @State private var draft: LocalEditorDraftEditor?
     @Environment(\.pageScroll) private var pageScroll
     @Environment(\.navigationPresentation) private var presentation
     /// Shared with the background preparation, which reads builds without a version.
@@ -36,6 +37,7 @@ struct ReleaseBuildStep: View {
     }
     private var selected: TestFlightBuild? { matching.first { $0.id == selectedBuildId } }
     private var versionName: String { "\(Releases.platformName(plan.platform)) \(plan.targetVersion)" }
+    private var draftValue: JSONText { .string(selectedBuildId ?? "") }
     var body: some View {
         Card(title: "Build for \(plan.targetVersion)", subtitle: "Upload the build with Xcode or Transporter. It appears here once Apple has processed it, usually within 30 minutes. Then add it to the version.") {
             StorebenchLoadState(state: builds != nil ? .ready : failure.isEmpty ? .loading("Reading builds from App Store Connect…") : .failed(failure, retry: { await load() })) {
@@ -56,13 +58,16 @@ struct ReleaseBuildStep: View {
                                    height: 20, font: .sbCaption, color: StorebenchTheme.muted, live: true)
                 StorebenchFeedback(text: status, height: 40, error: !status.isEmpty)
                 StorebenchActionGroup(alignment: .leading) {
+                    if let draft {
+                        LocalDraftActions(editor: draft, value: draftValue, restore: { selectedBuildId = $0.text.flatMap { $0.isEmpty ? nil : $0 }; review = nil }, blocked: preparing || publishing)
+                    }
                     // Once its review is prepared, Send to Apple in the review below is the one next action.
                     // As in App Store Connect, a build is added once its export compliance is answered.
                     // Add Build stays in place; its hover text names what is still missing.
                     let blocker: String? = !confirmed ? "Save this step's changes on this Mac first" : versionId == nil ? "Save the version to App Store Connect in step 3 first"
                         : selected == nil ? "Choose a processed build first" : selected?.id == attachedId ? "This build is already added to \(versionName)"
                         : selected?.usesNonExemptEncryption == nil ? "Answer Export Compliance for this build first" : review != nil ? "Approve or discard the prepared review below" : nil
-                    StorebenchBusyButton(title: "Add Build", loadingTitle: "Preparing…", busy: preparing, variant: .primary) { Task { await addBuild() } }
+                    StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Preparing…", busy: preparing) { Task { await addBuild() } }
                         .storebenchWorking(blocker != nil && !preparing)
                         .help(blocker ?? "Prepare a review that adds build \(selected?.version ?? "") to \(versionName) at Apple")
                     StorebenchReadButton("Refresh Builds") { await load(fresh: true) }
@@ -86,13 +91,18 @@ struct ReleaseBuildStep: View {
                 try await session.releaseBuildPage(account: account, appId: appId, versionId: versionId, platform: platform, version: version, all: all, latest: latest)
             }
             reader = owner
+            let local = LocalEditorDraftEditor(scope: .init(accountId: account.id, appId: appId, editor: "release-build", resource: plan.token), session: session)
+            draft = local
+            if let saved = await local.load(initial: draftValue), let id = saved.text { selectedBuildId = id.isEmpty ? nil : id }
             await load()
             guard owner.active, !Task.isCancelled else { return }
             await followUploads()
         }
         .onDisappear { reader?.retire() }
         .onChange(of: matching.map(\.id)) { chooseDefault() }
+        .onChange(of: selectedBuildId) { if review?.state == "prepared" { review = nil } }
         .onChange(of: addRequests) { Task { await addBuild() } }
+        .trackUnsavedChanges(draft?.dirty(draftValue) == true, busy: preparing || publishing || draft?.busy == true, onSave: { await draft?.saveCurrent(value: { draftValue }) == true })
         // Export compliance comes right after choosing the build, before Add Build and its review.
         if let build = selected ?? focusedBuild {
             if build.usesNonExemptEncryption == nil {
@@ -107,7 +117,7 @@ struct ReleaseBuildStep: View {
         }
         ReviewPanel(account: account, app: app, session: session, review: $review, done: {
             if review?.state == "complete" { review = nil; Task { await load(fresh: true) }; done() }
-        }, busyChanged: { publishing = $0 }).id("release-build-review")
+        }, busyChanged: { publishing = $0 }, syncConfirmation: true).id("release-build-review")
     }
     /// What Apple has for the version's build, and the one next step.
     @ViewBuilder private var attachment: some View {
@@ -182,6 +192,7 @@ struct ReleaseBuildStep: View {
         guard let reader, reader.scope == readScope, reader.active, !Task.isCancelled,
               !preparing, !publishing, let versionId, let selectedBuildId, selectedBuildId != attachedId else { return }
         preparing = true; defer { preparing = false }
+        guard await draft?.save(draftValue) == true else { return }
         let prepared = await preparePublishReview(account, session, PublishRequest(accountId: account.id, appId: app.id, scope: .versionBuild, versionId: versionId, buildId: selectedBuildId))
         guard reader.active, self.reader === reader, self.selectedBuildId == selectedBuildId, !Task.isCancelled else { return }
         (review, status) = prepared

@@ -118,9 +118,9 @@ extension WorkspaceSession {
 
     func importRevision(account: Account, appId: String, revisionId: String, client: AppStoreConnectClient, now: () -> Date, check: @escaping () throws -> Void,
                         progress: (String, Int) throws -> Void) async throws -> ImportResult {
-        func list(_ path: String, type: String) async throws -> [AppStoreConnectClient.Resource] {
+        func list(_ path: String, type: String, parent: (String, String, String)) async throws -> [AppStoreConnectClient.Resource] {
             try check(); let values = try await client.list(path); try check()
-            guard values.allSatisfy({ $0.type == type && AnalyticsCatalog.id($0.id) }), Set(values.map(\.id)).count == values.count else { throw ImportFailure.download }
+            guard values.allSatisfy({ $0.type == type && AnalyticsCatalog.id($0.id) && Apple.within($0, parent.0, parent.1, parent.2) }), Set(values.map(\.id)).count == values.count else { throw ImportFailure.download }
             return values
         }
         try check(); try progress("Reading app information", 0)
@@ -135,9 +135,9 @@ extension WorkspaceSession {
         }
 
         var appInfos: [JSONText] = []
-        for info in try await list("/v1/apps/\(appId)/appInfos?include=app&limit=200", type: "appInfos") {
+        for info in try await list("/v1/apps/\(appId)/appInfos?include=app&limit=200", type: "appInfos", parent: ("app", "apps", appId)) {
             try check()
-            let localizations = try await list("/v1/appInfos/\(info.id)/appInfoLocalizations?limit=200", type: "appInfoLocalizations").map { locale in
+            let localizations = try await list("/v1/appInfos/\(info.id)/appInfoLocalizations?limit=200", type: "appInfoLocalizations", parent: ("appInfo", "appInfos", info.id)).map { locale in
                 JSONText.object([("id", .string(locale.id)), ("fields", Self.fields(locale, ["locale", "name", "subtitle", "privacyPolicyUrl", "privacyChoicesUrl", "privacyPolicyText"]))])
             }
             appInfos.append(.object([("id", .string(info.id)), ("fields", Self.fields(info, ["appStoreState", "state"])), ("localizations", .array(localizations))]))
@@ -155,11 +155,11 @@ extension WorkspaceSession {
             images = Dictionary(uniqueKeysWithValues: resources.map { ($0.id, $0) })
         } catch AppStoreConnectClient.Failure.status(let code) where [403, 404].contains(code) { images = nil }
         try check()
-        for version in try await list("/v1/apps/\(appId)/appStoreVersions?include=app&limit=200", type: "appStoreVersions") {
+        for version in try await list("/v1/apps/\(appId)/appStoreVersions?include=app&limit=200", type: "appStoreVersions", parent: ("app", "apps", appId)) {
             try check()
             var localizations: [JSONText] = []
             let platform = Self.value(version, "platform")
-            for locale in try await list("/v1/appStoreVersions/\(version.id)/appStoreVersionLocalizations?limit=200", type: "appStoreVersionLocalizations") {
+            for locale in try await list("/v1/appStoreVersions/\(version.id)/appStoreVersionLocalizations?limit=200", type: "appStoreVersionLocalizations", parent: ("appStoreVersion", "appStoreVersions", version.id)) {
                 var sets: [JSONText] = []
                 if let images {
                     let placements = try await reader.placements(target: .init(id: locale.id, name: "", platform: platform, state: "", surface: .versions)).filter { $0.type == ReleaseMedia.screenshot && $0.kind == .image }
@@ -181,9 +181,9 @@ extension WorkspaceSession {
                         sets.append(.object([("id", .string("\(locale.id)-\(group)")), ("displayType", .string(type)), ("placementGroup", .string(group)), ("screenshots", .array(screenshots))]))
                     }
                 }
-                for set in try await (sets.isEmpty ? list("/v1/appStoreVersionLocalizations/\(locale.id)/appScreenshotSets?limit=200", type: "appScreenshotSets") : []) {
+                for set in try await (sets.isEmpty ? list("/v1/appStoreVersionLocalizations/\(locale.id)/appScreenshotSets?limit=200", type: "appScreenshotSets", parent: ("appStoreVersionLocalization", "appStoreVersionLocalizations", locale.id)) : []) {
                     var screenshots: [JSONText] = []
-                    for shot in try await list("/v1/appScreenshotSets/\(set.id)/appScreenshots?limit=200", type: "appScreenshots") {
+                    for shot in try await list("/v1/appScreenshotSets/\(set.id)/appScreenshots?limit=200", type: "appScreenshots", parent: ("appScreenshotSet", "appScreenshotSets", set.id)) {
                         try check()
                         if screenshotCount == 0 { try progress("Downloading screenshots", 0) }
                         let entry = try await screenshot(shot, reusable: previousId == nil ? nil : reusable[shot.id], client: client, check: check)

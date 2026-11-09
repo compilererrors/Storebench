@@ -19,6 +19,29 @@ import UniformTypeIdentifiers
         while selected.validating { guard ContinuousClock.now < deadline else { throw SyntheticFailure.timeout }; try await Task.sleep(for: .milliseconds(10)) }
     }
 
+    @Test func localSavesKeepSyncHighlightedAndOnlyTheConfirmedSelectionClearsIt() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let model = try await editor(session)
+        model.removeAllScreenshots()
+        #expect(model.needsSync && model.dirty)
+        _ = await model.run()
+        #expect(model.needsSync && !model.dirty)
+        let signature = model.syncSignature
+        var request = PublishRequest(accountId: scope.accountId, appId: scope.appId, scope: .metadata, targetMode: "apple-version", revisionId: scope.revisionId, versionId: "version-1")
+        request.mediaStage = PublishRequest.screenshotsStage
+        let review = PublishReview(plan: PublishPlan(title: "Synthetic equality check", request: request, fingerprint: "synthetic-confirmed-selection", steps: [], notes: []), id: "synthetic-selection-review", now: Date())
+        _ = try await session.savePublishReview(review, expected: nil)
+        await model.acknowledgeSync(signature: signature, review: review)
+        #expect(!model.needsSync)
+        let reopened = try await editor(session)
+        #expect(!reopened.needsSync)
+        let layout = try #require(reopened.screenshots.first?.editor), first = try #require(layout.inputs.order.first)
+        #expect(layout.restoreScreenshot(first))
+        #expect(reopened.needsSync)
+        await reopened.acknowledgeSync(signature: signature, review: review)
+        #expect(reopened.needsSync)
+    }
+
     @Test func duplicateLoadsAndRetiredSelectionCannotAffectAnotherAppsSelection() async throws {
         var reads = 0
         var resume: CheckedContinuation<ScreenshotSelection, Never>?
@@ -157,7 +180,8 @@ import UniformTypeIdentifiers
         try syntheticPNG(width: 1290, height: 2796, seed: 7).write(to: opaque); try translucentPNG(width: 1290, height: 2796).write(to: translucent)
         let added = try #require(await model.addScreenshots([opaque, translucent]))
         #expect(!added.dirty && !added.busy && !model.dirty && model.workflow.ready && total() == before + 2)
-        #expect(model.status == "2 screenshots added and saved on this Mac. Transparency was replaced with white in 1 image, as Apple requires.")
+        #expect(model.status == "2 screenshots saved in this media draft. Transparency was replaced with white in 1 image, as Apple requires.")
+        #expect(model.needsSync)
         // A file that cannot be used stays in the section with its problem instead of being saved.
         let wrong = root.appendingPathComponent("synthetic-wrong-size.png"); try syntheticPNG(width: 20, height: 10).write(to: wrong)
         let rejected = try #require(await model.addScreenshots([wrong]))
@@ -175,6 +199,70 @@ import UniformTypeIdentifiers
         #expect(blocked.failure == .blocked && prepares == 0 && model.busy)
         model.fileDialogOpen = false; model.retire()
         let retired = await model.run(prepare: { prepares += 1 }); #expect(retired.failure == .cancelled && prepares == 0 && !model.active)
+    }
+
+    @Test func clearingAFullSetThenAddingTenFilesSavesRemovalsBeforeTheBatch() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        _ = try await session.addScreenshots(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId, localizationId: "version-locale-1", setId: "set-1",
+            files: (0..<9).map { ("synthetic-old-\($0).png", syntheticPNG(width: 1290, height: 2796, seed: UInt8($0))) })
+        _ = try await session.addScreenshots(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId, localizationId: "version-locale-1", setId: nil,
+            files: [("synthetic-old-tablet.png", syntheticPNG(width: 2048, height: 2732, seed: 11))])
+        let model = try await editor(session), layout = try #require(model.screenshots.first { $0.id == "set-1" }?.editor)
+        #expect(layout.included == 10)
+        let originalIds = layout.inputs.order
+        model.removeAllScreenshots()
+        #expect(layout.included == 0 && layout.dirty && model.screenshots.allSatisfy { $0.editor.included == 0 } && model.previews.allSatisfy { !$0.editor.dirty })
+        let urls = try (0..<10).map { index in
+            let url = root.appendingPathComponent("synthetic-replacement-\(index).png")
+            try syntheticPNG(width: 1290, height: 2796, seed: UInt8(index + 20)).write(to: url); return url
+        }
+        let added = try #require(await model.addScreenshots(urls, setId: "set-1", displayType: "APP_IPHONE_67"))
+        #expect(!added.dirty && !model.dirty && model.workflow.ready && !layout.needsComparison)
+        #expect(layout.included == 10 && layout.removedOrder == originalIds)
+        #expect(model.screenshots.first { $0.id == "set-1" }?.editor === layout)
+        model.retire()
+        let reopened = try await editor(session), saved = try #require(reopened.screenshots.first { $0.id == "set-1" }?.editor)
+        #expect(saved.included == 10 && saved.removedOrder == originalIds)
+        let source = try #require(try await session.revisions(accountId: scope.accountId, appId: scope.appId).first { $0.id == scope.revisionId })
+        #expect(source.versions.first?.localizations.first?.screenshotSets.first?.screenshots.map(\.id) == ["shot-1"])
+    }
+
+    @Test func anInvalidReplacementBatchKeepsUnsavedRemovalsAndTheSelectedFiles() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let model = try await editor(session), layout = try #require(model.screenshots.first { $0.id == "set-1" }?.editor)
+        model.removeAllScreenshots()
+        let url = root.appendingPathComponent("synthetic-invalid-replacement.png")
+        try syntheticPNG(width: 20, height: 10).write(to: url)
+        let pending = try #require(await model.addScreenshots([url]))
+        #expect(pending.dirty && pending.problem != nil && layout.dirty && layout.included == 0)
+        let saved = try await session.screenshotSet(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId, setId: "set-1")
+        #expect(saved.hidden.isEmpty && saved.items.count == 1)
+    }
+
+    @Test func aStaleRemovalPreventsAddingABatchAndKeepsItAvailable() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let model = try await editor(session), layout = try #require(model.screenshots.first { $0.id == "set-1" }?.editor)
+        model.removeAllScreenshots()
+        _ = try await session.addScreenshots(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId, localizationId: "version-locale-1", setId: "set-1",
+            files: [("synthetic-other-window.png", syntheticPNG(width: 1290, height: 2796, seed: 8))])
+        let url = root.appendingPathComponent("synthetic-conflicted-replacement.png")
+        try syntheticPNG(width: 1290, height: 2796, seed: 9).write(to: url)
+        let pending = try #require(await model.addScreenshots([url]))
+        #expect(pending.dirty && !pending.status.isEmpty && layout.dirty && layout.inputs.hidden == ["shot-1"])
+        let saved = try await session.screenshotSet(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId, setId: "set-1")
+        #expect(saved.items.count == 2 && saved.hidden.isEmpty)
+    }
+
+    @Test func libraryReplacementAlsoSavesRemovalsAndKeepsTheAppleAssetIdentity() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let model = try await editor(session), layout = try #require(model.screenshots.first { $0.id == "set-1" }?.editor)
+        model.removeAllScreenshots()
+        await model.addFromLibrary((0..<10).map { .init(name: "synthetic-library-\($0).png", data: syntheticPNG(width: 1290, height: 2796, seed: UInt8($0 + 30)), assetId: "synthetic-asset-\($0)") }, setId: "set-1")
+        #expect(layout.included == 10 && layout.removedOrder == ["shot-1"] && model.workflow.ready && !layout.needsComparison)
+        let draft = try await session.storeAccess { @Sendable store in
+            try store.document(namespace: "drafts", key: "synthetic-account:1000000001:00000000-0000-4000-8000-000000000002").map { try JSONText.parse($0.payload) }
+        }
+        #expect(Set(WorkspaceSession.uploads(draft).compactMap { $0.1["assetId"]?.text }) == Set((0..<10).map { "synthetic-asset-\($0)" }))
     }
 
     @Test func reopeningReadsNewSavedSizesEvenWhenTheParentRevisionSnapshotIsOlder() async throws {

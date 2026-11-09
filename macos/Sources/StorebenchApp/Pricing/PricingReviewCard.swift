@@ -7,7 +7,7 @@ import SwiftUI
 struct PricingReviewCard<Form: View>: View {
     let title, subtitle: String
     var help = ""
-    var command = "Save"
+    var command = "Sync to Apple"
     let account: Account, app: Account.App, session: WorkspaceSession?
     /// Why the review cannot be prepared now; nil when it can.
     let blocked: String?
@@ -16,6 +16,7 @@ struct PricingReviewCard<Form: View>: View {
     /// The review that follows once this one is sent, such as prices for products the first review created; nil when nothing follows.
     var followUp: (() async throws -> PublishRequest?)? = nil
     /// A second command before the main one that prepares its own review, such as Save beside Publish.
+    var reviewIdentity = ""
     var secondary: (title: String, request: () async throws -> PublishRequest)? = nil
     @ViewBuilder let form: () -> Form
     @State private var review: PublishReview?
@@ -49,8 +50,9 @@ struct PricingReviewCard<Form: View>: View {
                     StorebenchAttention { Text(problem).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }
                 }
             }
-            ReviewPanel(account: account, app: app, session: session, review: $review, done: { if review?.state == "complete" { Task { await finished() } } }, busyChanged: { publishing = $0 })
+            ReviewPanel(account: account, app: app, session: session, review: $review, done: { if review?.state == "complete" { Task { await finished() } } }, busyChanged: { publishing = $0 }, syncConfirmation: choice == "Sync to Apple")
         }
+        .onChange(of: reviewIdentity) { if review?.state == "prepared" { review = nil } }
     }
 
     /// After a sent review: refreshes the section, then prepares the review that follows, if any.

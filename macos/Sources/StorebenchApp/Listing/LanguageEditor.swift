@@ -10,6 +10,9 @@ struct LanguageEditor: View {
     var showUpload = true
     var contained = false
     var onSummary: ((String) -> Void)? = nil
+    var didSync: () -> Void = {}
+    @State private var inlineReview: PublishReview?
+    @State private var publishing = false
     @State private var latestReading = false
     @State private var model: LanguageDraftEditor?
     @State private var operation: Task<Void, Never>?
@@ -47,7 +50,7 @@ struct LanguageEditor: View {
     private var loadingDraft: Bool { (model == nil && !initializationFailed) || model?.loading == true }
     private var readingLatest: Bool { model?.readingLatest == true }
     private var failed: Bool { initializationFailed || model?.needsComparison == true || (model != nil && editor == nil && !loadingDraft) }
-    private var busy: Bool { model?.busy == true || model?.workflow.busy == true || loadingDraft || inheritedBusy }
+    private var busy: Bool { model?.busy == true || model?.workflow.busy == true || loadingDraft || inheritedBusy || publishing }
     private var editingBlocked: Bool { busy || failed }
     private var identity: String { "\(scope.accountId)/\(scope.appId)/\(scope.revisionId)/\(version.id)/\(locale)/\(targetMode)" }
     private var originalLabel: String { revision.isLocalDraft ? "starting draft" : "last Apple import" }
@@ -71,6 +74,9 @@ struct LanguageEditor: View {
             await load()
         }
         .onChange(of: summary, initial: true) { onSummary?(summary) }
+        .onChange(of: model?.workflow.lastResult) {
+            if inlineReview?.state == "prepared", model?.workflow.lastResult?.reviewReady != true { inlineReview = nil }
+        }
         .sheet(isPresented: Binding(get: { keywordField != nil }, set: { if !$0 { keywordField = nil; model?.dialogOpen = false } })) {
             if let field = keywordField, let appScope = try? RecoveryGuidance.Scope(accountId: scope.accountId, appId: scope.appId) {
                 KeywordPickerView(scope: appScope, locale: locale, current: editor?.value(field) ?? "", session: session) { value in change(field, value); keywordField = nil; model?.dialogOpen = false }
@@ -102,18 +108,17 @@ struct LanguageEditor: View {
     }
     private var draftContent: some View {
         VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
-            StorebenchCardSection(title: showUpload ? "Draft and upload" : "Draft") {
-                if showActions { StorebenchActionGroup { draftActions } }
-                statusTrack(status.isEmpty ? (changed ? "Unsaved language text. Save Draft keeps it on this Mac." : "Saved text and media are ready to review.") : status, height: 32, error: saveFailed && changed || failed)
-                // Only a view that offers Upload explains it; inside Release, Save to App Store Connect sends the text.
-                StorebenchAdaptiveText(text: showUpload ? "Save keeps this language on your Mac. Upload saves it first and prepares a review of the version’s saved text and media. Confirm in Publish to send the changes." : "Saved on this Mac. App Store Connect gets it when you save the version to App Store Connect.", maximumHeight: 52, color: StorebenchTheme.muted)
-                statusTrack(draftAutosaveStatus(preferences, controller: autosave), height: 20)
-            }
-            if let preparedReview, canOpenPrepared {
-                Button("Open Review") { openPrepared(preparedReview) }.help("Open Prepared Review").accessibilityLabel("Open Prepared Review")
-            }
             if failed { Text("The saved language text could not be confirmed. Read the latest save before continuing.").foregroundStyle(StorebenchTheme.muted) }
             StorebenchCardSection(title: "Language fields") { textFields }.storebenchLoading(loadingDraft ? "Reading saved language text…" : nil)
+            if showActions {
+                StorebenchEditorFooter(title: StoreLocales.name(locale) + " Text", detail: status.isEmpty ? summary : status,
+                                      hint: showUpload ? "Save Draft keeps this language on your Mac. Sync to Apple opens the review for this language's text." : "Save this language's text on your Mac to continue later.") {
+                    StorebenchActionGroup(alignment: .trailing) { draftActions }
+                }
+            }
+            if let app = account.apps.first(where: { $0.id == scope.appId }) {
+                ReviewPanel(account: account, app: app, session: session, review: $inlineReview, done: { if inlineReview?.state == "complete" { didSync() } }, busyChanged: { publishing = $0 }, actionsBusy: changed || failed || busy, syncConfirmation: true)
+            }
             StorebenchCardSection(title: "Saved baseline and reused text") {
             LatestSaveReview(busy: busy, reading: latestReading, hasEdits: changed || failed, available: model != nil, changes: differences, note: nil, onRead: { Task { await readLatest() } },
                              onKeep: model?.latest == nil ? nil : { acceptLatest(keepEdits: true) }, onUse: model?.latest == nil ? nil : { acceptLatest(keepEdits: false) })
@@ -168,12 +173,11 @@ struct LanguageEditor: View {
         })
     }
     @ViewBuilder private var draftActions: some View {
-        StorebenchBusyButton(title: "Save Draft", loadingTitle: "Saving…", busy: busy, variant: .primary) { operation = Task { _ = await save() } }
+        StorebenchBusyButton(title: "Save Draft", loadingTitle: "Saving…", busy: busy) { operation = Task { _ = await save() } }
                 .storebenchWorking(!(!failed && session != nil && (changed || saving)))
         if showUpload && !failed && editor != nil && session != nil {
-            StorebenchBusyButton(title: "Upload to App Store", loadingTitle: "Preparing…", busy: busy) { operation = Task { await prepare() } }
+            StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Preparing…", busy: busy, variant: changed || editor?.fields.contains(where: { editor?.differsFromImport($0) == true }) == true ? .primary : .secondary) { operation = Task { await prepare() } }
         }
-        Button("Revert Changes") { model?.revert(); preparedReview = nil; preparedResult = nil; status = "" }.storebenchWorking(!(!failed && changed && !busy))
     }
     private func statusTrack(_ text: String, height: CGFloat, error: Bool = false) -> some View {
         StorebenchTextSlot(text: text, height: height, font: .sbCallout, color: error ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted, live: true)
@@ -374,15 +378,16 @@ struct LanguageEditor: View {
         guard canOpenPrepared, let owner = model,
               review.matches(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId, versions: [version.id], targetMode: targetMode),
               (try? owner.publishingRequest(targetMode: targetMode)) != nil else { return }
-        if openReview(review) { preparedReview = nil; preparedResult = nil }
+        inlineReview = review.review
     }
     private func prepare() async {
         guard let owner = model, !busy, !failed, let session else { return }
-        autosave.cancelPending(); preparedReview = nil; preparedResult = nil
+        autosave.cancelPending(); preparedReview = nil; preparedResult = nil; inlineReview = nil
         var review: LanguageListingReview?, failureMessage: String?
         let result = await owner.workflow.run(prepare: {
             do {
-                let request = try owner.publishingRequest(targetMode: targetMode)
+                var request = try owner.publishingRequest(targetMode: targetMode)
+                request.mediaStage = PublishRequest.textStage
                 review = try await session.prepareLanguageListingReview(account: account, request: request, client: try await session.client(for: account))
             } catch {
                 failureMessage = (error as? PublishFailure)?.message
@@ -395,7 +400,7 @@ struct LanguageEditor: View {
             return
         }
         preparedReview = review; preparedResult = result
-        status = review.versionSetup ? "Review Apple version creation first. Saved language text and media require a separate approval afterward." : "Read the concrete review in Publish. Explicit approval is required before sending changes."
+        status = review.versionSetup ? "Review Apple version creation first. Saved language text and media require a separate approval afterward." : "Confirm the changes in Sync to Apple."
         openPrepared(review)
     }
 

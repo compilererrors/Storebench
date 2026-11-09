@@ -133,4 +133,76 @@ import Testing
         #expect(await departure.saveChanges(for: departure.begin()))
         #expect(departure.failure == nil)
     }
+
+    @Test @MainActor func closingACleanBusyViewLeavesItsOperationOwned() async {
+        let departure = EditorDeparture()
+        departure.policy.update(id: "synthetic-read", dirty: false, busy: true)
+        let snapshot = departure.beginClose()
+        #expect(!snapshot.hasEdits && !snapshot.canSave)
+        #expect(await departure.finishClose(snapshot, choice: .discard))
+        #expect(departure.policy.isBusy(id: "synthetic-read") && departure.closingPolicy.decision == .wait)
+    }
+
+    @Test @MainActor func closeSaveWaitsForTheExactBusyEditorAndSavesLocallyOnce() async throws {
+        let departure = EditorDeparture(); var saves = 0, finished = false
+        departure.policy.update(id: "synthetic-draft", dirty: true, busy: true)
+        departure.register(id: "synthetic-draft", generation: "synthetic-owner") { saves += 1; return true }
+        let snapshot = departure.beginClose()
+        #expect(snapshot.hasEdits && snapshot.canSave)
+        let task = Task { let result = await departure.finishClose(snapshot, choice: .save, wait: .seconds(60)); finished = true; return result }
+        try await Task.sleep(for: .milliseconds(40))
+        #expect(!finished && saves == 0)
+        departure.policy.update(id: "synthetic-draft", dirty: true, busy: false)
+        #expect(await task.value)
+        #expect(finished && saves == 1 && departure.policy.dirtyIds.isEmpty)
+    }
+
+    @Test @MainActor func discardClosesBusyEditsWithoutCancellingOrSavingTheirOwner() async {
+        let departure = EditorDeparture(); var saves = 0
+        departure.policy.update(id: "synthetic-draft", dirty: true, busy: true)
+        departure.register(id: "synthetic-draft") { saves += 1; return true }
+        #expect(await departure.finishClose(departure.beginClose(), choice: .discard))
+        #expect(saves == 0 && departure.policy.isBusy(id: "synthetic-draft") && departure.policy.dirtyIds == ["synthetic-draft"])
+        #expect(!(await departure.finishClose(departure.beginClose(), choice: .cancel)))
+        #expect(departure.policy.dirtyIds == ["synthetic-draft"])
+    }
+
+    @Test @MainActor func closeConfirmationCannotDiscardAReplacementOrANewDirtyOwner() async {
+        let departure = EditorDeparture()
+        departure.policy.update(id: "synthetic-draft", dirty: true, busy: false)
+        departure.register(id: "synthetic-draft", generation: "synthetic-old") { true }
+        let replaced = departure.beginClose()
+        departure.register(id: "synthetic-draft", generation: "synthetic-new") { true }
+        #expect(!(await departure.finishClose(replaced, choice: .discard)))
+        let added = departure.beginClose()
+        departure.policy.update(id: "synthetic-new-editor", dirty: true, busy: false)
+        #expect(!(await departure.finishClose(added, choice: .save)))
+        #expect(!(await departure.finishClose(added, choice: .discard)))
+    }
+
+    @Test @MainActor func failedOrCancelledCloseSaveRetainsTheDraftAndCanBeDiscardedExplicitly() async {
+        let departure = EditorDeparture()
+        departure.policy.update(id: "synthetic-draft", dirty: true, busy: false)
+        departure.register(id: "synthetic-draft") { false }
+        #expect(!(await departure.finishClose(departure.beginClose(), choice: .save)))
+        #expect(departure.policy.dirtyIds == ["synthetic-draft"])
+        #expect(await departure.finishClose(departure.beginClose(), choice: .discard))
+        departure.policy.update(id: "synthetic-draft", dirty: true, busy: true)
+        let snapshot = departure.beginClose()
+        let task = Task { await departure.finishClose(snapshot, choice: .save) }
+        task.cancel()
+        #expect(!(await task.value))
+        #expect(departure.policy.dirtyIds == ["synthetic-draft"])
+    }
+
+    @Test @MainActor func aBusySaveWaitCanEndWithoutExpiringTheOwnerAndDiscardStillWorks() async {
+        let departure = EditorDeparture()
+        departure.policy.update(id: "synthetic-busy-draft", dirty: true, busy: true)
+        departure.register(id: "synthetic-busy-draft") { true }
+        let snapshot = departure.beginClose()
+        #expect(!(await departure.finishClose(snapshot, choice: .save, wait: .milliseconds(1))))
+        #expect(departure.policy.isBusy(id: "synthetic-busy-draft") && departure.policy.dirtyIds == ["synthetic-busy-draft"])
+        #expect(await departure.finishClose(snapshot, choice: .discard))
+        #expect(departure.policy.isBusy(id: "synthetic-busy-draft"))
+    }
 }

@@ -68,6 +68,7 @@ struct VersionCard: View {
 struct ScreenshotThumbnail: View {
     let screenshot: ScreenshotSetDraft.Item, session: WorkspaceSession?
     var canvasHeight: CGFloat? = nil
+    var canvasColor = StorebenchTheme.color("color-surface-sunken")
     @Environment(\.collectionVisible) private var visible
     @State private var image: ScreenshotPreview?
     @State private var missing = false
@@ -79,8 +80,9 @@ struct ScreenshotThumbnail: View {
             return 1
         }()
         ZStack {
-            RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius).fill(StorebenchTheme.color("color-surface-sunken"))
-            if let image { Image(decorative: image.image, scale: 1).resizable().interpolation(.high).aspectRatio(contentMode: .fit) }
+            RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius).fill(canvasColor)
+            if let image { Image(decorative: image.image, scale: 1).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius)) }
             else if missing { Text("Not saved").font(.sbCaption).foregroundStyle(StorebenchTheme.muted) }
             else { ProgressView().controlSize(.small) }
         }

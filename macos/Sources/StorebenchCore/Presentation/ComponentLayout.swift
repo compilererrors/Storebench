@@ -16,13 +16,13 @@ public enum ComponentLayout {
     /// Title and metadata reserve their tracks and grow with long copy. A taller grid row keeps the divider and
     /// commands on the bottom edge shared by neighbouring cards, never between copy lines.
     public static func assetCard(width: Double, actionsHeight: Double, previewHeight: Double? = nil, titleHeight: Double = 0, metadataHeight: Double = 0,
-                                 minimumHeight: Double = 0, design: StorebenchDesign = .shared) -> AssetCard {
+                                 minimumHeight: Double = 0, compact: Bool = false, design: StorebenchDesign = .shared) -> AssetCard {
         let width = usableWidth(width), border = min(width / 2, design.dimension("assetBorder"))
         let padding = design.dimension("assetPadding"), inset = min(width / 2, border + padding)
-        let available = max(0, width - 2 * inset), gap = design.dimension("assetGap")
+        let available = max(0, width - 2 * inset), gap = compact ? design.number("space-1") : design.dimension("assetGap")
         let preview = CGRect(x: border, y: border, width: max(0, width - 2 * border), height: previewHeight ?? design.dimension("assetPreviewHeight"))
-        let identity = CGRect(x: inset, y: preview.maxY + padding, width: available, height: design.dimension("assetBadgeHeight"))
-        let title = CGRect(x: inset, y: identity.maxY + gap, width: available, height: max(design.dimension("assetTitleHeight"), titleHeight))
+        let identity = CGRect(x: inset, y: preview.maxY + padding, width: available, height: compact ? 0 : design.dimension("assetBadgeHeight"))
+        let title = CGRect(x: inset, y: compact ? identity.minY : identity.maxY + gap, width: available, height: max(design.dimension(compact ? "assetCompactTitleHeight" : "assetTitleHeight"), titleHeight))
         let metadata = CGRect(x: inset, y: title.maxY + gap, width: available, height: max(design.dimension("assetMetadataHeight"), metadataHeight))
         let actionsHeight = max(design.number("control-height"), actionsHeight)
         let height = max(metadata.maxY + gap + 1 + gap + actionsHeight + padding + border, minimumHeight)

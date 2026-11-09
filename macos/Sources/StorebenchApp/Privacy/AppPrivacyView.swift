@@ -11,6 +11,7 @@ struct AppPrivacyView: View {
     @Environment(LibraryModel.self) private var model
     @Environment(\.editorNavigation) private var navigation
     @State private var apple: AppleIDAccount?
+    @State private var draft: LocalEditorDraftEditor?
     @State private var state: AppPrivacyState?
     @State private var answers = AppPrivacyAnswers(collects: false)
     @State private var latest: PublishReview?
@@ -42,8 +43,11 @@ struct AppPrivacyView: View {
             }
             AppleIDSignInCard(account: account, session: session, apple: $apple, ended: ended, changed: { ended = nil; Task { await read() } })
             PricingReviewCard(title: "App Privacy", subtitle: "Answer the questions App Store Connect asks about the data this app collects. Save keeps the answers in App Store Connect; Publish also shows them on the App Store product page. Each opens a review to approve first.",
-                              command: "Publish", account: account, app: app, session: session, blocked: blocked, request: { try request(publish: true) }, done: { Task { await read() }; done() },
-                              secondary: ("Save", { try request(publish: false) })) {
+                              command: "Publish", account: account, app: app, session: session, blocked: blocked, request: { try await request(publish: true) }, done: { Task { await read() }; done() },
+                              reviewIdentity: answers.json.sha256, secondary: ("Sync to Apple", { try await request(publish: false) })) {
+                if let draft {
+                    LocalDraftActions(editor: draft, value: answers.json, restore: { if let saved = AppPrivacyAnswers($0) { answers = saved } }, blocked: reading)
+                }
                 StorebenchMetricGrid(maximumColumns: 3, minimumWidth: 230) {
                     Fact(title: "Saved at Apple", value: state.map { $0.answers?.summary ?? "Not answered" } ?? Self.lastRead(checks[.privacy]?.summary, checks[.privacy]), compact: true)
                     Fact(title: "Product Page", value: state?.published.map { $0 ? "Published" : "Not published" } ?? Self.lastRead(checks[.privacy]?.detail, checks[.privacy]), compact: true)
@@ -52,6 +56,7 @@ struct AppPrivacyView: View {
                 }
                 StorebenchTextSlot(text: reading ? "Reading App Privacy from App Store Connect…" : apple == nil ? "Sign in with an Apple ID above to read and answer App Privacy." : unsaved, height: 20, font: .sbCaption, color: StorebenchTheme.muted, live: true)
                 if !problem.isEmpty { StorebenchAttention { Text(problem).fixedSize(horizontal: false, vertical: true) } }
+                VStack(alignment: .leading, spacing: 16) {
                 StorebenchChoicePicker("Do you or your third-party partners collect data from this app?", selection: $answers.collects,
                                        options: [(false, "No, we do not collect data from this app"), (true, "Yes, we collect data from this app")], style: .radio)
                 if answers.collects {
@@ -62,13 +67,20 @@ struct AppPrivacyView: View {
                         }
                     }
                 }
+                }.storebenchWorking(reading || draft?.loaded != true)
             }
             TaxCategoryView(account: account, app: app, session: session, apple: apple, saved: checks[.tax], done: done, ended: { signedOut() }).id("tax-category")
         }
+        .trackUnsavedChanges(draft?.dirty(answers.json) == true, busy: reading || draft?.busy == true, onSave: { await draft?.saveCurrent(value: { answers.json }) == true })
         .task(id: account.id + "/" + app.id) {
             apple = try? await session?.appleIDAccount(accountId: account.id, writer: model.writer)
             async let policy: Void = readLinks()
             await read(); await policy
+            if let session {
+                let owner = LocalEditorDraftEditor(scope: .init(accountId: account.id, appId: app.id, editor: "app-privacy", resource: "answers"), session: session)
+                draft = owner
+                if let saved = await owner.load(initial: answers.json), let restored = AppPrivacyAnswers(saved) { answers = restored }
+            }
         }
     }
 
@@ -135,7 +147,8 @@ struct AppPrivacyView: View {
         }
     }
 
-    private func request(publish: Bool) throws -> PublishRequest {
+    private func request(publish: Bool) async throws -> PublishRequest {
+        guard await draft?.save(answers.json) == true, draft?.dirty(answers.json) == false else { throw DraftFailure.stale }
         var value = PublishRequest(accountId: account.id, appId: app.id, scope: .appPrivacy)
         value.appPrivacy = answers.collects ? answers : AppPrivacyAnswers(collects: false)
         if publish { value.appPrivacyPublish = true }
@@ -158,7 +171,7 @@ struct AppPrivacyView: View {
         do {
             let value = try await session.appPrivacyState(account: account, appId: app.id)
             state = value; problem = ""
-            if let current = value.answers { answers = current }
+            if draft?.dirty(answers.json) != true, let current = value.answers { answers = current }
         } catch AppleIDFailure.expired { signedOut() }
         catch let failure as AppleIDFailure { problem = failure.message }
         catch let failure as PublishFailure { problem = failure.message }

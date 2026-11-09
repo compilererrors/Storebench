@@ -96,11 +96,12 @@ private final class EncryptedUploadPump: @unchecked Sendable {
 private final class BuildStreamDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private let media: EncryptedMediaStore, mediaHash: String, range: Range<Int>
+    private let transferId: UUID?
     private var pump: EncryptedUploadPump?, initial = true
     private var continuation: CheckedContinuation<Void, Error>?
     private var responseSize = 0
-    init(media: EncryptedMediaStore, hash: String, range: Range<Int>) throws {
-        self.media = media; self.mediaHash = hash; self.range = range
+    init(media: EncryptedMediaStore, hash: String, range: Range<Int>, transferId: UUID?) throws {
+        self.media = media; self.mediaHash = hash; self.range = range; self.transferId = transferId
         pump = try EncryptedUploadPump(media: media, hash: hash, range: range)
     }
     var input: InputStream? { lock.withLock { pump?.input } }
@@ -116,7 +117,7 @@ private final class BuildStreamDelegate: NSObject, URLSessionDataDelegate, @unch
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) { completionHandler(nil) }
     func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
-        PublishTransfer.shared.sending(totalBytesSent)
+        if let transferId { PublishTransfer.shared.sending(totalBytesSent, id: transferId) }
     }
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         if lock.withLock({ responseSize += data.count; return responseSize > 1_000_000 }) { dataTask.cancel() }
@@ -135,9 +136,9 @@ private final class BuildStreamDelegate: NSObject, URLSessionDataDelegate, @unch
 }
 
 extension AppStoreConnectClient {
-    func uploadBuildPart(_ part: BuildUploadOperation, media: EncryptedMediaStore, hash: String) async throws {
+    func uploadBuildPart(_ part: BuildUploadOperation, media: EncryptedMediaStore, hash: String, transferId: UUID? = nil) async throws {
         try accessCheck()
-        let delegate = try BuildStreamDelegate(media: media, hash: hash, range: part.range)
+        let delegate = try BuildStreamDelegate(media: media, hash: hash, range: part.range, transferId: transferId)
         let configuration = session.configuration
         configuration.timeoutIntervalForRequest = 600; configuration.timeoutIntervalForResource = 600
         configuration.httpAdditionalHeaders = nil; configuration.httpCookieStorage = nil; configuration.urlCredentialStorage = nil
@@ -166,7 +167,7 @@ extension WorkspaceSession {
         let parts = try BuildUploadOperation.validate(operations, size: package.size), media = try packageMedia(package.id)
         let validation = Task.detached { try media.stream(package.sha256) { _ in } }
         try await withTaskCancellationHandler(operation: { try await validation.value }, onCancel: { validation.cancel() })
-        PublishTransfer.shared.begin(package.fileName, total: Int64(package.size)); defer { PublishTransfer.shared.end() }
-        for part in parts { try Task.checkCancellation(); try await client.uploadBuildPart(part, media: media, hash: package.sha256); PublishTransfer.shared.partFinished(Int64(part.range.count)) }
+        let transferId = PublishTransfer.shared.begin(package.fileName, total: Int64(package.size)); defer { PublishTransfer.shared.end(transferId) }
+        for part in parts { try Task.checkCancellation(); try await client.uploadBuildPart(part, media: media, hash: package.sha256, transferId: transferId); PublishTransfer.shared.partFinished(Int64(part.range.count), id: transferId) }
     }
 }

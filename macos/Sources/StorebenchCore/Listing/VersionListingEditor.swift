@@ -138,7 +138,7 @@ extension WorkspaceSession {
         let result = await workflow.run(prepare: prepare)
         guard active, workflow.owns(result) else { return result }
         switch result.failure {
-        case nil: status = prepare == nil ? "All listing changes saved on this Mac." : "Read the concrete review in Publish before approving any Apple changes."
+        case nil: status = prepare == nil ? "All listing changes saved on this Mac." : "Confirm the changes in Sync to Apple."
         case .blocked: status = "Confirm the version plan and finish reading or comparing every language and media editor before continuing."
         case .changed: status = "Earlier changes were saved. Newer inputs or changed editor owners still need attention."
         case .save: status = "Saving stopped. Confirmed saves remain; unsaved text, layouts and selected originals are kept for retry."

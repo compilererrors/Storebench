@@ -68,4 +68,14 @@ struct ReleaseMediaProgressTests {
         #expect(snapshot?.text == "07-pricing.png · 2 MB of 4 MB · 1 MB/s")
         transfer.end(); #expect(transfer.snapshot() == nil)
     }
+
+    @Test func concurrentTransfersKeepTheirOwnCountersAndCompletionCannotClearAnotherFile() {
+        let transfer = PublishTransfer(), first = transfer.begin("synthetic-first.png", total: 100), second = transfer.begin("synthetic-second.png", total: 200)
+        transfer.sending(40, id: first); transfer.sending(60, id: second)
+        #expect(transfer.snapshot()?.fileName == "2 files" && transfer.snapshot()?.sent == 100 && transfer.snapshot()?.total == 300)
+        transfer.partFinished(100, id: first); transfer.end(first)
+        transfer.sending(90, id: first)
+        #expect(transfer.snapshot()?.fileName == "synthetic-second.png" && transfer.snapshot()?.sent == 60 && transfer.snapshot()?.total == 200)
+        transfer.end(second); #expect(transfer.snapshot() == nil)
+    }
 }

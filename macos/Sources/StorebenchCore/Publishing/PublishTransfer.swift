@@ -1,6 +1,6 @@
 import Foundation
 
-/// The file an approved Save is uploading now, with its bytes sent and speed. It lives only in memory; after a restart
+/// The files approved Saves are uploading now, with their combined bytes sent and speed. It lives only in memory; after a restart
 /// the saved review shows each file's stage instead.
 public final class PublishTransfer: @unchecked Sendable {
     public static let shared = PublishTransfer()
@@ -17,43 +17,65 @@ public final class PublishTransfer: @unchecked Sendable {
             return parts.joined(separator: " · ")
         }
     }
+    private struct FileTransfer {
+        let fileName: String, total: Int64
+        var finished: Int64 = 0, current: Int64 = 0
+        var samples: [(time: TimeInterval, bytes: Int64)]
+        var sent: Int64 { min(total, finished + current) }
+    }
     private let lock = NSLock()
-    private var fileName: String?
-    private var total: Int64 = 0, finished: Int64 = 0, current: Int64 = 0
-    private var samples: [(time: TimeInterval, bytes: Int64)] = []
+    private var files: [UUID: FileTransfer] = [:]
+    private var legacy: UUID?
     private let clock: @Sendable () -> TimeInterval
 
     init(clock: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) { self.clock = clock }
 
-    func begin(_ fileName: String, total: Int64) {
-        lock.withLock { self.fileName = fileName; self.total = total; finished = 0; current = 0; samples = [(clock(), 0)] }
+    @discardableResult func begin(_ fileName: String, total: Int64) -> UUID {
+        lock.withLock {
+            let id = UUID(); files[id] = FileTransfer(fileName: fileName, total: total, samples: [(clock(), 0)])
+            legacy = id; return id
+        }
     }
-    /// Bytes of the part being sent now, as URLSession reports them.
-    func sending(_ bytes: Int64) { lock.withLock { current = bytes; record() } }
-    func partFinished(_ bytes: Int64) { lock.withLock { finished += bytes; current = 0; record() } }
-    func end() { lock.withLock { fileName = nil; samples = [] } }
+    /// Each upload owns its meter, so another file's progress or completion cannot overwrite it.
+    func sending(_ bytes: Int64, id: UUID? = nil) {
+        lock.withLock { guard let id = id ?? legacy, files[id] != nil else { return }; files[id]?.current = max(0, bytes); record(id) }
+    }
+    func partFinished(_ bytes: Int64, id: UUID? = nil) {
+        lock.withLock { guard let id = id ?? legacy, files[id] != nil else { return }; files[id]?.finished += max(0, bytes); files[id]?.current = 0; record(id) }
+    }
+    func end(_ id: UUID? = nil) {
+        lock.withLock { guard let id = id ?? legacy else { return }; files.removeValue(forKey: id); if legacy == id { legacy = nil } }
+    }
 
     public func snapshot() -> Snapshot? {
         lock.withLock {
-            guard let fileName else { return nil }
-            let sent = min(total, finished + current)
-            var speed: Double?
-            if let first = samples.first, let last = samples.last, last.time - first.time >= 0.5 { speed = Double(last.bytes - first.bytes) / (last.time - first.time) }
-            return Snapshot(fileName: fileName, sent: sent, total: total, bytesPerSecond: speed)
+            guard !files.isEmpty else { return nil }
+            var speed = 0.0, measured = false
+            for file in files.values {
+                if let first = file.samples.first, let last = file.samples.last, last.time - first.time >= 0.5 {
+                    speed += max(0, Double(last.bytes - first.bytes) / (last.time - first.time)); measured = true
+                }
+            }
+            let name = files.count == 1 ? files.values.first!.fileName : "\(files.count) files"
+            return Snapshot(fileName: name, sent: files.values.reduce(0) { $0 + $1.sent }, total: files.values.reduce(0) { $0 + $1.total }, bytesPerSecond: measured ? speed : nil)
         }
     }
-    /// Keeps about five seconds of samples, so the speed follows the current connection.
-    private func record() {
-        let now = clock()
-        samples.append((now, finished + current))
-        while samples.count > 2, now - samples[1].time > 5 { samples.removeFirst() }
+    /// Keeps about five seconds of samples for each file.
+    private func record(_ id: UUID) {
+        guard var file = files[id] else { return }
+        let now = clock(); file.samples.append((now, file.sent))
+        while file.samples.count > 2, now - file.samples[1].time > 5 { file.samples.removeFirst() }
+        files[id] = file
     }
 }
 
 /// Reports an upload part's progress and, like the API client, never follows a redirect.
 final class TransferMeter: NSObject, URLSessionTaskDelegate, Sendable {
     let transfer: PublishTransfer
-    init(_ transfer: PublishTransfer) { self.transfer = transfer }
+    let transferId: UUID?
+    init(_ transfer: PublishTransfer, id: UUID? = nil) { self.transfer = transfer; transferId = id }
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest) async -> URLRequest? { nil }
-    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) { transfer.sending(totalBytesSent) }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        if let transferId { transfer.sending(totalBytesSent, id: transferId) }
+    }
 }

@@ -7,6 +7,7 @@ struct ReleaseTextView: View {
     var readiness: (() -> Bool)? = nil
     var onBusy: (Bool) -> Void = { _ in }
     var onSaved: (ReleaseTextSaveReceipt) -> Void = { _ in }
+    var sync: (() -> Void)? = nil
     @State private var latestReading = false
     @Environment(\.editorNavigation) private var navigation
     @State private var rows: [ReleaseText.Row] = []
@@ -95,18 +96,21 @@ struct ReleaseTextView: View {
                         StorebenchDivider()
                     }
                 }
-                StorebenchSetupStep(number: 3, title: "Copy or edit, then save", detail: targets.isEmpty ? "Select at least one destination language in step 2." : "Copy the source text into the selected languages, or edit them above. Save Changes keeps them on this Mac.") {
+                StorebenchSetupStep(number: 3, title: "Copy or edit, then save", detail: targets.isEmpty ? "Select at least one destination language in step 2." : "Copy the source text into the selected languages, or edit them above. Save Draft keeps them on this Mac.") {
                     Toggle("Replace filled fields when copying", isOn: $replace).storebenchWorking(working)
                     StorebenchTextSlot(text: exceeded ? "Shorten the text that is over Apple's limit, then save." : "", height: 20, font: .sbCallout, color: StorebenchTheme.color("color-danger"), live: true)
                     if !targets.isEmpty || dirty {
                         StorebenchActionGroup {
                             if !targets.isEmpty { Button("Copy Saved Source") { copySource() }.storebenchWorking(working) }
-                            StorebenchBusyButton(title: "Save Changes", loadingTitle: "Saving…", busy: working, variant: .primary) { operation = Task { _ = await save() } }.help("Save Release Text on This Mac").accessibilityLabel("Save Release Text on This Mac").storebenchWorking(!(dirty || working))
+                            StorebenchBusyButton(title: "Save Draft", loadingTitle: "Saving…", busy: working, variant: .primary) { operation = Task { _ = await save() } }.help("Save Release Text on This Mac").accessibilityLabel("Save Release Text on This Mac").storebenchWorking(!(dirty || working))
+                            if let sync {
+                                StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Saving…", busy: working) { operation = Task { let saved = dirty ? await save() : true; if saved { sync() } } }
+                            }
                         }
                     }
                 }
                 }
-                StorebenchTextSlot(text: status.isEmpty ? (dirty ? "Unsaved release text. Save Changes keeps it on this Mac." : "Release text is saved on this Mac. Nothing is sent to Apple until you upload and approve it.") : status,
+                StorebenchTextSlot(text: status.isEmpty ? (dirty ? "Unsaved release text. Save Draft keeps it on this Mac." : "Release text is saved on this Mac. Nothing is sent to Apple until you upload and approve it.") : status,
                                    height: 44, font: .sbCallout, color: problem ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted, live: true)
                 LatestSaveReview(busy: working, reading: latestReading, hasEdits: dirty || failed, changes: differences, note: canKeepLatest || latest == nil ? nil : "A language containing edits is unavailable or has changed identity. Copy the wording before choosing the latest save.",
                                  onRead: { Task { await readLatest() } }, onKeep: canKeepLatest ? { acceptLatest(keep: true) } : nil,

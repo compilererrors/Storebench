@@ -9,6 +9,7 @@ struct TestFlightGroupsView: View {
     /// A group to open once the groups are read, such as the one a guide step is about.
     var initialGroupId: String? = nil
     @Environment(\.editorProtection) private var protection
+    @State private var draft: LocalEditorDraftEditor?
     @State private var working = false
     @State private var preparing = false
     @State private var publishing = false
@@ -49,6 +50,16 @@ struct TestFlightGroupsView: View {
     private var edited: [Data] { [newName, rename, email, limit, buildChoice, testerChoice].map { Data($0.utf8) } }
     private var dirty: Bool { !newName.isEmpty || newInternal != (internalOnly ?? true) || !email.isEmpty || !rename.utf8.elementsEqual(nameBaseline.utf8) || !limit.utf8.elementsEqual(limitBaseline.utf8) || !buildChoice.isEmpty || !testerChoice.isEmpty }
 
+    private var draftValue: JSONText { .object([("selected", .string(selected ?? "")), ("name", .string(newName)), ("internal", .bool(newInternal)), ("rename", .string(rename)), ("email", .string(email)), ("limit", .string(limit)), ("build", .string(buildChoice)), ("tester", .string(testerChoice))]) }
+    private func restoreDraft(_ value: JSONText) {
+        selected = value["selected"]?.text.flatMap { $0.isEmpty ? nil : $0 }
+        let group = groups.first { $0.id == selected }
+        nameBaseline = group?.name ?? ""; limitBaseline = group?.publicLinkLimit.map(String.init) ?? ""
+        newName = value["name"]?.text ?? ""; newInternal = value["internal"] == .bool(true)
+        rename = value["rename"]?.text ?? nameBaseline; email = value["email"]?.text ?? ""; limit = value["limit"]?.text ?? limitBaseline
+        buildChoice = value["build"]?.text ?? ""; testerChoice = value["tester"]?.text ?? ""; review = nil
+        if selected != nil { Task { await loadMembers() } }
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Card(title: title, subtitle: subtitle, help: "testflight") {
@@ -62,17 +73,17 @@ struct TestFlightGroupsView: View {
                     StorebenchTextField("Group name", text: $newName)
                     if internalOnly == nil { StorebenchChoicePicker("Type", selection: $newInternal, options: [(true, "Internal Testing"), (false, "External Testing")]) }
                 }
+                .storebenchWorking(draft?.loaded != true)
                 StorebenchFeedback(text: status, height: 40)
-                if !newName.trimmingCharacters(in: .whitespaces).isEmpty {
-                    StorebenchFormFooter {
-                        Button("Create Group") { Task { await prepare { $0.testflightAction = "create-group"; $0.groupName = newName; $0.internalGroup = newInternal } } }
-                            .buttonStyle(StorebenchButtonStyle(.primary))
-                    }
+                if let draft {
+                    LocalDraftActions(editor: draft, value: draftValue, restore: restoreDraft, blocked: busy, sync: {
+                        await prepare { $0.testflightAction = "create-group"; $0.groupName = newName; $0.internalGroup = newInternal }
+                    }, syncBlocked: newName.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
             .storebenchWorking(busy)
-            ReviewPanel(account: account, app: app, session: session, review: $review, done: { Task { await didPublish() } }, busyChanged: { publishing = $0 }).storebenchWorking(working || preparing)
-            if let selected, let group = groups.first(where: { $0.id == selected }) { groupCard(group).storebenchWorking(busy) }
+            ReviewPanel(account: account, app: app, session: session, review: $review, done: { Task { await didPublish() } }, busyChanged: { publishing = $0 }, syncConfirmation: true).storebenchWorking(working || preparing)
+            if let selected, let group = groups.first(where: { $0.id == selected }) { groupCard(group).storebenchWorking(busy || draft?.loaded != true) }
         }
         .task {
             await ScreenReads.reading(fresh: false) {
@@ -84,9 +95,13 @@ struct TestFlightGroupsView: View {
                 if case .some(let id) = restoring { restoring = nil; if let id, let group = groups.first(where: { $0.id == id }) { await select(group) } }
                 else if selected == nil, let id = initialGroupId, let group = groups.first(where: { $0.id == id }) { await select(group) }
             }
+            guard let session else { return }
+            let owner = LocalEditorDraftEditor(scope: .init(accountId: account.id, appId: app.id, editor: "testflight-groups", resource: internalOnly.map(String.init) ?? "all"), session: session)
+            draft = owner
+            if let saved = await owner.load(initial: draftValue) { restoreDraft(saved) }
         }
         .historyValue("testflight-groups", Binding(get: { restoring ?? selected }, set: { restoring = .some($0) }))
-        .trackUnsavedChanges(dirty, busy: busy)
+        .trackUnsavedChanges(draft?.dirty(draftValue) == true, busy: busy || draft?.busy == true, onSave: { await draft?.saveCurrent(value: { draftValue }) == true })
         .onChange(of: edited) { if !busy, review?.state == "prepared" { review = nil } }
         .onChange(of: newInternal) { if !busy, review?.state == "prepared" { review = nil } }
     }
@@ -101,11 +116,12 @@ struct TestFlightGroupsView: View {
 
     private func groupCard(_ group: TestFlightGroup) -> some View {
         Card(title: group.name, subtitle: "Group settings, build access and testers. Every change is prepared as a review first.") {
+            if let draft { LocalDraftActions(editor: draft, value: draftValue, restore: restoreDraft, blocked: busy) }
             Text("Settings").font(.sbHeadline)
             StorebenchInputActions {
                 StorebenchTextField("Group name", text: $rename)
             } actions: {
-                if !rename.trimmingCharacters(in: .whitespaces).isEmpty && rename != group.name { Button("Rename") { Task { await prepare { $0.testflightAction = "rename-group"; $0.groupId = group.id; $0.groupName = rename } } }.fixedSize() }
+                if !rename.trimmingCharacters(in: .whitespaces).isEmpty && rename != group.name { Button("Sync Name") { Task { await prepare { $0.testflightAction = "rename-group"; $0.groupId = group.id; $0.groupName = rename } } }.fixedSize() }
             }
             HStack(spacing: 12) {
                 Text("Tester feedback: \(group.feedbackEnabled == true ? "On" : group.feedbackEnabled == false ? "Off" : "Unknown")")
@@ -120,7 +136,7 @@ struct TestFlightGroupsView: View {
                 StorebenchInputActions {
                     StorebenchTextField("Tester limit", text: $limit, hint: "Leave empty for no limit.", placeholder: "No limit")
                 } actions: {
-                    if (limit.isEmpty || Int(limit) != nil) && limit != limitBaseline { Button("Set Tester Limit") { Task { await setting(group, "public-link-limit", .number(Double(Int(limit) ?? 0))) } }.fixedSize() }
+                    if (limit.isEmpty || Int(limit) != nil) && limit != limitBaseline { Button("Sync Tester Limit") { Task { await setting(group, "public-link-limit", .number(Double(Int(limit) ?? 0))) } }.fixedSize() }
                 }
             }
             StorebenchDivider()
@@ -137,7 +153,7 @@ struct TestFlightGroupsView: View {
                 StorebenchInputActions {
                     StorebenchPicker("Add build", selection: $buildChoice) { SelectionOption("Choose a build", value: ""); selectionOptions(builds.filter { $0.processed && $0.betaReviewState != "REJECTED" && $0.externalState != "BETA_REJECTED" && (group.internalGroup == true ? ["INTERNAL_ONLY", "APP_STORE_ELIGIBLE"].contains($0.audience) : group.internalGroup == false && $0.audience == "APP_STORE_ELIGIBLE") && !members.builds.contains($0.id) }) { SelectionOption($0.title, value: $0.id) } }
                 } actions: {
-                    if !buildChoice.isEmpty { Button("Add Build") { Task { await prepare(buildId: buildChoice) { $0.testflightAction = "add-build"; $0.groupId = group.id } } }.fixedSize() }
+                    if !buildChoice.isEmpty { Button("Sync Build") { Task { await prepare(buildId: buildChoice) { $0.testflightAction = "add-build"; $0.groupId = group.id } } }.fixedSize() }
                 }
                 StorebenchDivider()
                 Text("Testers").font(.sbHeadline)
@@ -149,14 +165,14 @@ struct TestFlightGroupsView: View {
                 StorebenchInputActions {
                     StorebenchTextField("Tester email", text: $email, placeholder: "tester@example.com")
                 } actions: {
-                    if email.contains("@") { Button("Add Tester") { Task { await prepare { $0.testflightAction = "invite-tester"; $0.groupId = group.id; $0.testerEmail = email.trimmingCharacters(in: .whitespaces) } } }.fixedSize() }
+                    if email.contains("@") { Button("Sync Invitation") { Task { await prepare { $0.testflightAction = "invite-tester"; $0.groupId = group.id; $0.testerEmail = email.trimmingCharacters(in: .whitespaces) } } }.fixedSize() }
                 }
                 let others = testers.filter { tester in !members.testers.contains { $0.id == tester.id } }
                 if !others.isEmpty {
                     StorebenchInputActions {
                         StorebenchPicker("Existing tester", selection: $testerChoice) { SelectionOption("Choose a tester", value: ""); selectionOptions(others) { SelectionOption($0.email, value: $0.id) } }
                     } actions: {
-                        if !testerChoice.isEmpty { Button("Add to Group") { Task { await prepare { $0.testflightAction = "add-tester"; $0.groupId = group.id; $0.testerId = testerChoice } } }.fixedSize() }
+                        if !testerChoice.isEmpty { Button("Sync Tester") { Task { await prepare { $0.testflightAction = "add-tester"; $0.groupId = group.id; $0.testerId = testerChoice } } }.fixedSize() }
                     }
                 }
             } else if memberState == "failed" {
@@ -209,6 +225,7 @@ struct TestFlightGroupsView: View {
     private func prepare(buildId: String? = nil, _ configure: (inout PublishRequest) -> Void) async {
         guard !busy else { return }
         preparing = true; defer { preparing = false }
+        guard await draft?.save(draftValue) == true, draft?.dirty(draftValue) == false else { return }
         (review, status) = await prepareTestFlight(account, app, session, buildId: buildId, configure)
     }
 

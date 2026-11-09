@@ -35,16 +35,21 @@ struct StorebenchSetupOption<Content: View>: View {
     var recommended = false
     @ViewBuilder let content: () -> Content
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        StorebenchHeader(stackAt: 480, actionTopInset: 12) { heading } actions: { actions }
+            .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var heading: some View {
+        VStack(alignment: .leading, spacing: 6) {
             StorebenchFlow(spacing: 8) {
-                Text(title).font(.system(size: 15).bold()).frame(height: 22)
-                if recommended { Text("RECOMMENDED").font(.sbCaption.bold()).tracking(0.44).foregroundStyle(StorebenchTheme.color("color-accent-muted")).frame(height: 22) }
+                Text(title).font(.sbHeadline).fixedSize(horizontal: false, vertical: true)
+                if recommended { Text("Recommended").font(.sbCaption).foregroundStyle(StorebenchTheme.muted) }
             }
-            StorebenchTextSlot(text: description, height: 72, font: .sbCallout, color: StorebenchTheme.color("color-text-secondary"))
-            Spacer(minLength: 8)
-            VStack(alignment: .leading, spacing: 12) { content() }.environment(\.fieldHintHeight, 0)
-        }.padding(20).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(StorebenchTheme.color(recommended ? "color-surface-accent" : "color-surface"), in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(StorebenchTheme.color(recommended ? "color-border-accent" : "color-border-control"), lineWidth: 1.5))
+            StorebenchTextSlot(text: description, height: 96, font: .sbCallout, color: StorebenchTheme.muted)
+        }
+    }
+
+    private var actions: some View {
+        VStack(alignment: .leading, spacing: 12) { content() }.environment(\.fieldHintHeight, 0)
     }
 }

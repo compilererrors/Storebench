@@ -12,6 +12,7 @@ struct TaxCategoryView: View {
     /// Apple ended the Apple ID session.
     var ended: () -> Void = {}
     @Environment(LibraryModel.self) private var model
+    @State private var draft: LocalEditorDraftEditor?
     @State private var state: AppTaxCategoryState?
     @State private var top = ""
     @State private var sub = ""
@@ -25,7 +26,8 @@ struct TaxCategoryView: View {
 
     var body: some View {
         PricingReviewCard(title: "Tax Category", subtitle: "The tax category App Store Connect uses for the app. Apple applies App Store software until you choose another. Save opens a review to approve first.",
-                          command: "Save", account: account, app: app, session: session, blocked: blocked, request: request, done: { Task { await read() }; done() }) {
+                          command: "Sync to Apple", account: account, app: app, session: session, blocked: blocked, request: request, done: { Task { await read() }; done() }, reviewIdentity: draftValue.sha256) {
+            if let draft { LocalDraftActions(editor: draft, value: draftValue, restore: restoreDraft, blocked: reading) }
             StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 230) {
                 Fact(title: "Saved at Apple", value: state?.label ?? AppPrivacyView.lastRead(saved?.detail, saved), compact: true)
                 Fact(title: "Conditions", value: state?.conditionsLabel ?? AppPrivacyView.lastRead(saved?.summary, saved), compact: true)
@@ -42,6 +44,7 @@ struct TaxCategoryView: View {
                     selectionOptions(subcategories) { SelectionOption($0.name, value: $0.id) }
                 }.disabled(subcategories.isEmpty)
             }
+            .storebenchWorking(reading || draft?.loaded != true)
             StorebenchCardSection(title: "Conditions") {
                 if allowed.isEmpty {
                     Text("No conditions apply to this category.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
@@ -54,11 +57,24 @@ struct TaxCategoryView: View {
                         Text(catalog?.conditionNames[id] ?? id).font(.sbCallout).fixedSize(horizontal: false, vertical: true)
                     }
                 }
+            }.storebenchWorking(reading || draft?.loaded != true)
+        }
+        .trackUnsavedChanges(draft?.dirty(draftValue) == true, busy: reading || draft?.busy == true, onSave: { await draft?.saveCurrent(value: { draftValue }) == true })
+        .task(id: "\(account.id)/\(app.id)/\(apple?.signedInAt ?? "")") {
+            await read()
+            if draft == nil, let session {
+                let owner = LocalEditorDraftEditor(scope: .init(accountId: account.id, appId: app.id, editor: "tax-category", resource: "selection"), session: session)
+                draft = owner
+                if let saved = await owner.load(initial: draftValue) { restoreDraft(saved) }
             }
         }
-        .task(id: "\(account.id)/\(app.id)/\(apple?.signedInAt ?? "")") { await read() }
     }
 
+    private var draftValue: JSONText { .object([("category", .string(top)), ("subcategory", .string(sub)), ("conditions", .array(conditions.sorted().map(JSONText.string)))]) }
+    private func restoreDraft(_ value: JSONText) {
+        top = value["category"]?.text ?? ""; sub = value["subcategory"]?.text ?? ""
+        if case .array(let values)? = value["conditions"] { conditions = values.compactMap(\.text) }
+    }
     private var allowed: [String] { chosen.isEmpty ? [] : catalog?.conditions(for: chosen) ?? [] }
 
     /// Whether the choice is what App Store Connect has now, counting Apple's default category as saved, as App Store Connect does.
@@ -83,7 +99,8 @@ struct TaxCategoryView: View {
         return nil
     }
 
-    private func request() throws -> PublishRequest {
+    private func request() async throws -> PublishRequest {
+        guard await draft?.save(draftValue) == true, draft?.dirty(draftValue) == false else { throw DraftFailure.stale }
         var value = PublishRequest(accountId: account.id, appId: app.id, scope: .taxCategory)
         value.taxCategory = TaxCategoryChoice(category: chosen, conditions: allowed.filter(conditions.contains))
         return value
@@ -96,8 +113,10 @@ struct TaxCategoryView: View {
             let value = try await session.taxCategoryState(account: account, appId: app.id, writer: model.writer)
             state = value; problem = ""
             let current = value.category ?? value.catalog.categories.first { $0.name == value.catalog.defaultName }?.id ?? ""
+            if draft?.dirty(draftValue) != true {
             if let parent = value.catalog.parent(of: current) { top = parent.id; sub = current } else { top = current; sub = "" }
             conditions = value.conditions
+            }
         } catch AppleIDFailure.expired { state = nil; problem = ""; ended() }
         catch let failure as AppleIDFailure { problem = failure.message }
         catch let failure as PublishFailure { problem = failure.message }

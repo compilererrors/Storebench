@@ -54,6 +54,57 @@ import Testing
         await controller.signOut()
     }
 
+    @Test func quittingDrainsTheOwnedTransferBeforeDroppingTheSession() async throws {
+        let (controller, _, _, root) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        await controller.start(); await controller.setUp(password: nil)
+        let session = try #require(controller.session), lifetime = await session.lifetime
+        let lease = try lifetime.admit(.transfer)
+        let closing = Task { await controller.prepareToTerminate() }
+        try await wait { lifetime.status == .closing }
+        #expect(controller.isTerminating && controller.state == .closing && controller.session === session && lifetime.activeCount == 1)
+        await #expect(throws: SessionFailure.closed) { try await session.setDisplayCurrency("EUR") }
+        lease.finish(); await closing.value
+        #expect(controller.session == nil && controller.state == .closing && lifetime.status == .closed)
+    }
+
+    @Test func quittingDuringSignOutJoinsTheExistingDrain() async throws {
+        let (controller, _, _, root) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        await controller.start(); await controller.setUp(password: nil)
+        let session = try #require(controller.session), lifetime = await session.lifetime
+        let lease = try lifetime.admit(.transfer)
+        let signOut = Task { await controller.signOut() }
+        try await wait { lifetime.status == .closing }
+        let quit = Task { await controller.prepareToTerminate() }
+        #expect(controller.session === session)
+        lease.finish(); await signOut.value; await quit.value
+        #expect(controller.session == nil && controller.state == .closing && lifetime.status == .closed)
+    }
+
+    @Test func quittingSampleDataDoesNotReopenAnotherWorkspace() async throws {
+        let (controller, workspace, _, root) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        await controller.start(); await controller.openSampleData()
+        #expect(controller.showingSampleData)
+        let session = try #require(controller.session), lifetime = await session.lifetime
+        await controller.prepareToTerminate()
+        #expect(!controller.showingSampleData && controller.session == nil && controller.state == .closing)
+        #expect(lifetime.status == .closed)
+        #expect(!FileManager.default.fileExists(atPath: EncryptedDocumentStore.databaseURL(root: workspace.root).path))
+    }
+
+    @Test func quittingWhileSampleDataSignsOutPreventsItsAutomaticReopen() async throws {
+        let (controller, workspace, _, root) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
+        await controller.start(); await controller.openSampleData()
+        let session = try #require(controller.session), lifetime = await session.lifetime
+        let lease = try lifetime.admit(.transfer)
+        let closingSample = Task { await controller.signOut() }
+        try await wait { lifetime.status == .closing }
+        let quitting = Task { await controller.prepareToTerminate() }
+        try await wait { controller.isTerminating }
+        lease.finish(); await closingSample.value; await quitting.value
+        #expect(controller.session == nil && controller.state == .closing && !controller.showingSampleData)
+        #expect(!FileManager.default.fileExists(atPath: EncryptedDocumentStore.databaseURL(root: workspace.root).path))
+    }
+
     @Test func aRefreshCompletingAfterSignOutCannotRestoreTheOldAccountState() async throws {
         let (controller, _, _, root) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
         await controller.start(); await controller.setUp(password: nil)

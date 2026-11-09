@@ -684,6 +684,101 @@ extension WorkspaceSession {
         #expect(apple.lock.withLock { apple.placements.contains { (($0["relationships"] as? [String: Any])?["image"] as? [String: Any]).flatMap { $0["data"] as? [String: Any] }?["id"] as? String == "image-web" } })
     }
 
+    @Test @MainActor func removingEveryScreenshotPreparesOnlyVersionRemovalAndKeepsTheLibraryOriginal() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let account = try #require(try await session.accounts().first), apple = SyntheticApple(), host = "clear-media.appstoreconnect.test"
+        let revisionId = "00000000-0000-4000-8000-000000000002"
+        StubProtocol.handle(host) { apple.handle($0) }
+        let revision = try #require(try await session.revisions(accountId: account.id, appId: "1000000001").first { $0.id == revisionId })
+        let localization = try #require(revision.versions.first?.localizations.first { $0.id == "version-locale-1" })
+        let model = MediaListingEditor(scope: .init(accountId: account.id, appId: "1000000001", revisionId: revisionId), localization: localization, platform: "IOS", session: session)
+        await model.load(); model.removeAllScreenshots()
+        #expect((await model.run()).complete)
+        let client = try client(account, host: host)
+        let request = PublishRequest(accountId: account.id, appId: "1000000001", scope: .metadata, revisionId: revisionId, versionId: "version-1")
+        let review = try await session.preparePublishing(account: account, request: request, client: client)
+        #expect(apple.writes.isEmpty)
+        #expect(review.steps.filter { $0.method == "DELETE" }.map { $0.path.first?.text } == ["appAssetLibraryPlacements"])
+        #expect(!review.steps.contains { $0.kind == .upload || $0.label.hasPrefix("Add screenshot") })
+        let result = try await session.approvePublishing(account: account, appId: "1000000001", id: review.id, fingerprint: review.fingerprint, client: client)
+        #expect(result.state == "complete")
+        #expect(apple.lock.withLock { apple.placements.isEmpty && apple.libraryImages.map { $0["id"] as? String } == ["image-1"] })
+        await #expect(throws: PublishFailure.self) {
+            try await session.approvePublishing(account: account, appId: "1000000001", id: review.id, fingerprint: review.fingerprint, client: client)
+        }
+    }
+
+    @Test func mediaBatchesKeepReservationsDeletesAndFinalOrderAcrossLostPlacementAnswers() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let account = try #require(try await session.accounts().first), apple = SyntheticApple(), host = "batch-media.appstoreconnect.test"
+        let app = "1000000001", revision = "00000000-0000-4000-8000-000000000002"
+        apple.lock.withLock {
+            let original = apple.placements[0]
+            for index in 1..<5 { var extra = original; extra["id"] = "synthetic-old-placement-\(index)"; apple.placements.append(extra) }
+            apple.readsOmitUploadOperations = true; apple.losePlacementAnswers = 1
+        }
+        StubProtocol.handle(host) { apple.handle($0) }
+        final class Uploads: @unchecked Sendable { let lock = NSLock(); var data: [Data] = [] }
+        let uploads = Uploads()
+        StubProtocol.handle("synthetic.blobstore.apple.com") { request in
+            #expect(request.httpMethod == "PUT" && request.value(forHTTPHeaderField: "Authorization") == nil)
+            let data = StubProtocol.body(request); uploads.lock.withLock { uploads.data.append(data) }; return (200, [:], Data())
+        }
+        let files = (0..<5).map { ("synthetic-batch-\($0).png", syntheticPNG(width: 1290, height: 2796, seed: UInt8($0 + 70))) }
+        _ = try await session.addScreenshots(accountId: account.id, appId: app, revisionId: revision, localizationId: "version-locale-1", setId: "set-1", files: files)
+        let layout = try await session.screenshotSet(accountId: account.id, appId: app, revisionId: revision, setId: "set-1")
+        _ = try await session.saveScreenshotLayout(accountId: account.id, appId: app, revisionId: revision, setId: "set-1", order: layout.items.map(\.id), hidden: ["shot-1"], expected: layout.signature)
+        let client = try client(account, host: host), request = PublishRequest(accountId: account.id, appId: app, scope: .metadata, revisionId: revision, versionId: "version-1")
+        let prepared = try await session.preparePublishing(account: account, request: request, client: client)
+        #expect(apple.writes.isEmpty)
+        let result = try await session.approvePublishing(account: account, appId: app, id: prepared.id, fingerprint: prepared.fingerprint, client: client)
+        #expect(result.state == "complete", "\(result.error ?? "")")
+        let writes = apple.lock.withLock { apple.writes }
+        let firstCommit = try #require(writes.firstIndex { $0.0 == "PATCH" && $0.1.hasPrefix("/v1/appAssetLibraryImages/") })
+        #expect(writes[..<firstCommit].filter { $0.0 == "POST" && $0.1 == "/v1/appAssetLibraryImages" }.count == WorkspaceSession.sendTogetherLimit)
+        let lastRemoval = try #require(writes.lastIndex { $0.0 == "DELETE" && $0.1.hasPrefix("/v1/appAssetLibraryPlacements/") })
+        let firstPlacement = try #require(writes.firstIndex { $0.0 == "POST" && $0.1 == "/v1/appAssetLibraryPlacements" })
+        #expect(lastRemoval < firstPlacement && writes.filter { $0.0 == "POST" && $0.1 == "/v1/appAssetLibraryPlacements" }.count == 5)
+        #expect(writes.last?.1 == "/v1/appAssetLibraryPlacementOrderingRequests")
+        let names = apple.lock.withLock {
+            apple.placements.map { placement in
+                let asset = (((placement["relationships"] as? [String: Any])?["image"] as? [String: Any])?["data"] as? [String: Any])?["id"] as? String
+                return (apple.libraryImages.first { $0["id"] as? String == asset }?["attributes"] as? [String: Any])?["fileName"] as? String
+            }
+        }
+        #expect(names == files.map { Optional($0.0) })
+        #expect(uploads.lock.withLock { Set(uploads.data) } == Set(files.map(\.1)))
+        #expect(result.steps.allSatisfy { $0.state == "done" && ($0.guardValue?["kind"]?.text != "release-media-reserve" || $0.resultId != nil) })
+        #expect(apple.lock.withLock { apple.libraryImages.contains { $0["id"] as? String == "image-1" } })
+    }
+
+    @Test func aFailedMediaWaveKeepsSuccessfulReservationsAndStartsNoDependentUploads() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let account = try #require(try await session.accounts().first), apple = SyntheticApple(), host = "batch-media-failure.appstoreconnect.test"
+        let app = "1000000001", revision = "00000000-0000-4000-8000-000000000002"
+        StubProtocol.handle(host) { request in
+            if request.httpMethod == "POST" && request.url?.path == "/v1/appAssetLibraryImages" {
+                let data = StubProtocol.body(request)
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let item = json["data"] as? [String: Any],
+                   (item["attributes"] as? [String: Any])?["fileName"] as? String == "synthetic-fail-0.png" { return (403, [:], Data()) }
+                var copy = request; copy.httpBodyStream = nil; copy.httpBody = data; return apple.handle(copy)
+            }
+            return apple.handle(request)
+        }
+        let files = (0..<6).map { ("synthetic-fail-\($0).png", syntheticPNG(width: 1290, height: 2796, seed: UInt8($0 + 80))) }
+        _ = try await session.addScreenshots(accountId: account.id, appId: app, revisionId: revision, localizationId: "version-locale-1", setId: "set-1", files: files)
+        let layout = try await session.screenshotSet(accountId: account.id, appId: app, revisionId: revision, setId: "set-1")
+        _ = try await session.saveScreenshotLayout(accountId: account.id, appId: app, revisionId: revision, setId: "set-1", order: layout.items.map(\.id), hidden: ["shot-1"], expected: layout.signature)
+        let client = try client(account, host: host), request = PublishRequest(accountId: account.id, appId: app, scope: .metadata, revisionId: revision, versionId: "version-1")
+        let prepared = try await session.preparePublishing(account: account, request: request, client: client)
+        let failed = try await session.approvePublishing(account: account, appId: app, id: prepared.id, fingerprint: prepared.fingerprint, client: client)
+        #expect(failed.state == "failed" && !failed.steps.contains { $0.state == "running" })
+        #expect(failed.steps.filter { $0.guardValue?["kind"]?.text == "release-media-reserve" && $0.state == "done" }.count == 3)
+        #expect(failed.steps.filter { $0.kind == .upload }.allSatisfy { $0.state == "pending" })
+        #expect(apple.lock.withLock { apple.writes.allSatisfy { $0.0 == "POST" && $0.1 == "/v1/appAssetLibraryImages" } })
+        await #expect(throws: PublishFailure.used) { try await session.approvePublishing(account: account, appId: app, id: failed.id, fingerprint: failed.fingerprint, client: client) }
+    }
+
     @Test func textAndScreenshotsArePublishedAsReviewedAndChangesConflict() async throws {
         let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
         let account = try #require(try await session.accounts().first), apple = SyntheticApple(), host = "material.appstoreconnect.test", revision = "00000000-0000-4000-8000-000000000002"

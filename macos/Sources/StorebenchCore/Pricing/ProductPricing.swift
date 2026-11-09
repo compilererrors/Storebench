@@ -143,7 +143,7 @@ struct AppleReads: Sendable {
 public enum ProductPricing {
     public enum Phase: String, Sendable { case current, future, past, preserved, unknown }
 
-    static func opaque(_ value: String) -> Bool { value.range(of: "^[A-Za-z0-9_-]{1,512}$", options: .regularExpression) != nil }
+    static func opaque(_ value: String) -> Bool { value.range(of: #"\A[A-Za-z0-9_-]{1,512}\z"#, options: .regularExpression) != nil }
     static func territory(_ value: String) -> Bool { value.range(of: "^[A-Z]{3}$", options: .regularExpression) != nil }
     static func calendarDate(_ value: String) -> Bool {
         guard value.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil, let date = ReportTables.dayFormat.date(from: value) else { return false }

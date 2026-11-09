@@ -45,8 +45,9 @@ extension WorkspaceSession {
         return current
     }
     static func appSelection(_ apps: [AppStoreConnectClient.Resource]) throws -> (ids: [String], names: [String: String]) {
+        guard apps.allSatisfy({ $0.type == "apps" }) else { throw AccountFailure.invalid }
         var ids: [String] = [], names: [String: String] = [:]
-        for app in apps where app.type == "apps" {
+        for app in apps {
             guard app.id.range(of: #"^[0-9]+$"#, options: .regularExpression) != nil else { throw AccountFailure.invalid }
             if !ids.contains(app.id) { ids.append(app.id) }
             if let name = app.attributes?["name"]?.string {

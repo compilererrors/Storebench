@@ -37,7 +37,7 @@ struct PreviewsEditor: View {
                 PendingPreviewRow(selected: selected, busy: workflowBusy || model.workflow.busy)
             }
             StorebenchCollection(items: shown, title: { PreviewSpecs.name($0.type) }, subtitle: { PreviewSpecs.dimensions($0.type) },
-                                 empty: "No app previews yet. Choose Add Preview to add a video.") { entry in PreviewSetEditor(scope: scope, localizationId: model.localizationId, entry: entry, workflow: model.workflow, session: session) }
+                                 empty: "No app previews yet. Choose Add Preview to add a video.") { entry in PreviewSetEditor(scope: scope, localizationId: model.localizationId, entry: entry, model: model, workflow: model.workflow, session: session) }
         }.padding(16).background(StorebenchTheme.color("color-surface-subtle"), in: RoundedRectangle(cornerRadius: StorebenchTheme.radius))
             .overlay(RoundedRectangle(cornerRadius: StorebenchTheme.radius).strokeBorder(StorebenchTheme.border))
             .accessibilityElement(children: .contain).storebenchWorking(workflowBusy || model.busy)
@@ -45,7 +45,7 @@ struct PreviewsEditor: View {
 }
 
 struct PreviewSetEditor: View {
-    let scope: Editing, localizationId: String, entry: MediaListingEditor.PreviewLayout, workflow: ListingSaveWorkflow, session: WorkspaceSession?
+    let scope: Editing, localizationId: String, entry: MediaListingEditor.PreviewLayout, model: MediaListingEditor, workflow: ListingSaveWorkflow, session: WorkspaceSession?
     @Environment(\.editingPreferences) private var preferences
     @Environment(\.draftWorkflowBusy) private var workflowBusy
     @State private var reorder = MaterialReorder()
@@ -64,13 +64,10 @@ struct PreviewSetEditor: View {
                 if !scope.local {
                     StorebenchActionGroup(alignment: .trailing) {
                         if editor.dirty && !editor.saving { Button("Revert") { editor.revert() } }
-                        if (editor.dirty || editor.saving) && !editor.state.blocked {
-                            StorebenchBusyButton(title: "Save Layout", loadingTitle: "Saving…", busy: editor.saving || reorder.active, variant: .primary) { Task { if !workflow.busy { _ = await editor.save() } } }
-                        }
                     }
                 }
             }
-            StorebenchTextSlot(text: editor.dirty ? "Unsaved layout · Save Layout keeps order and poster frames locally. Upload opens a review." : "Saved layout · Drag a video by its name or handle to change its position. Playback and poster controls remain available.", height: 40, font: .sbCaption, color: editor.dirty ? StorebenchTheme.color("color-accent-muted") : StorebenchTheme.muted, live: true)
+            StorebenchTextSlot(text: editor.dirty ? "Unsaved preview changes · Save Draft keeps them on this Mac. Sync to Apple opens a review." : "Saved layout · Drag a video by its name or handle to change its position. Playback and poster controls remain available.", height: 40, font: .sbCaption, color: editor.dirty ? StorebenchTheme.color("color-accent-muted") : StorebenchTheme.muted, live: true)
             StorebenchMetricGrid(maximumColumns: 3, minimumWidth: 360, spacing: StorebenchTheme.measure("assetGridGap")) {
                 ForEach(Array(inputs.order.enumerated()), id: \.element) { index, id in
                     if let item = draft?.items.first(where: { $0.id == id }) {
@@ -104,8 +101,6 @@ struct PreviewSetEditor: View {
             }
             .materialDropArea(order: inputs.order, context: editor.reorderContext, enabled: canReorder, session: reorder, apply: changeOrder)
             StorebenchReorderFeedback(session: reorder)
-            StorebenchFeedback(text: editor.status, height: 40)
-            Text(draftAutosaveStatus(preferences, controller: editor.autosave)).font(.sbCaption).foregroundStyle(StorebenchTheme.muted).frame(maxWidth: .infinity, minHeight: 28, alignment: .topLeading)
             if !scope.local { MediaLayoutReview(editor: editor, workflow: workflow) }
         }
         .padding(16).background(StorebenchTheme.color("color-surface-subtle"), in: RoundedRectangle(cornerRadius: StorebenchTheme.radius))

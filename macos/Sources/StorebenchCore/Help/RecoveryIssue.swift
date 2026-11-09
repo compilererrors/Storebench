@@ -17,8 +17,10 @@ public enum RecoveryIssue {
         if let code = apple(error) { return code }
         if cancelled(error) { return nil }
         switch error {
+        case ReporterClient.Failure.invalidToken: return nil
         case ReporterSetupFailure.changed: return "SB-REPORTER-CHANGED"
-        case ReporterSetupFailure.keychain, ReporterClient.Failure.expiredToken: return "SB-REPORTER-KEYCHAIN"
+        case ReporterSetupFailure.keychain: return "SB-REPORTER-KEYCHAIN"
+        case ReporterClient.Failure.expiredToken: return "SB-REPORTER-SETUP"
         case ReporterSetupFailure.storage: return "SB-REPORTER-CONNECTION"
         case ReporterSetupFailure.busy, is FileMutex.Failure: return "SB-REPORTER-BUSY"
         default: return "SB-REPORTER-SETUP"

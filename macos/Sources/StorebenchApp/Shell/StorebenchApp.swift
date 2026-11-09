@@ -19,7 +19,10 @@ struct StorebenchApp: App {
                     .modifier(StorebenchAppearance())
                     .modifier(StorebenchViewport())
                     .frame(minWidth: 760, minHeight: 520)
-                    .task { model.cachePolicy = CachePolicy.stored(in: .standard); await model.start() }
+                    .task {
+                        applicationDelegate.prepareToTerminate = { await model.prepareToTerminate() }
+                        model.cachePolicy = CachePolicy.stored(in: .standard); await model.start()
+                    }
             }
             .defaultSize(width: 1280, height: 840)
             Settings { SettingsView(model: model, recovery: recovery).environment(\.shortcutSettings, shortcuts).environment(\.confirmDestructive, DestructiveConfirm(model: model)).modifier(StorebenchAppearance()).modifier(StorebenchViewport()).frame(width: StorebenchTheme.settingsWindow.width, height: StorebenchTheme.settingsWindow.height) }
@@ -33,9 +36,8 @@ struct StorebenchApp: App {
             }
             CommandGroup(after: .appSettings) {
                 Button("Sign Out") {
-                    guard EditorWindows.allowLeaving() else { return }
-                    Task { await model.signOut() }
-                }.disabled(model.session == nil || model.lockMode != .password)
+                    Task { if await EditorWindows.requestClosing(reason: .signOut) { await model.signOut() } }
+                }.disabled(model.session == nil || model.lockMode != .password || model.isTerminating)
             }
         }
     }

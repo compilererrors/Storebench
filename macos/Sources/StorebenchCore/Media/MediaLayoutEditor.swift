@@ -78,13 +78,33 @@ public struct MediaAdditionReceipt: Sendable {
     public var busy: Bool { loading || saving || readingLatest }
     public var dirty: Bool { draft.map { inputs != $0.inputs } ?? false }
     public var included: Int { inputs.order.filter { !inputs.hidden.contains($0) }.count }
+    public var includedOrder: [String] { inputs.order.filter { !inputs.hidden.contains($0) } }
+    public var removedOrder: [String] { inputs.order.filter(inputs.hidden.contains) }
+    public var canEditScreenshots: Bool { active && !busy && !needsComparison && draft.map { if case .screenshots = $0 { true } else { false } } == true }
+    /// Removal edits the version's selection; saved originals and imported history stay available.
+    @discardableResult public func removeScreenshot(_ id: String) -> Bool {
+        guard canEditScreenshots, inputs.order.contains(id) else { return false }
+        inputs.hidden.insert(id); status = "Screenshot removed from this version locally. Save Draft to keep the change on this Mac."
+        return true
+    }
+    @discardableResult public func removeAllScreenshots() -> Bool {
+        guard canEditScreenshots else { return false }
+        inputs.hidden = Set(inputs.order); status = "All screenshots removed from this display size locally. Save Draft to keep the change on this Mac."
+        return true
+    }
+    @discardableResult public func restoreScreenshot(_ id: String) -> Bool {
+        guard canEditScreenshots, inputs.order.contains(id), inputs.hidden.contains(id) else { return false }
+        guard included < ScreenshotSpecs.maximum else { status = "Remove a screenshot before restoring another. Up to 10 fit in each display size."; return false }
+        inputs.hidden.remove(id); status = "Screenshot restored locally. Save Draft to keep the change on this Mac."
+        return true
+    }
     public var problem: String? { draft?.problem(inputs) }
     public var state: ListingSaveWorkflow.State { .init(dirty: dirty, blocked: !active || busy || draft == nil || needsComparison || problem != nil, signature: inputs.signature) }
     public var reorderContext: String { identity + ":" + (draft?.signature ?? "") }
     @discardableResult public func reorder(_ order: [String], expected: [String], context: String) -> Bool {
         guard !state.blocked, reorderContext == context, inputs.order == expected, order.count == expected.count, Set(order) == Set(expected), Set(order).count == order.count else { return false }
         guard order != expected else { return true }
-        inputs.order = order; status = "Order changed locally. Save Layout keeps it on this Mac; Upload opens a review before anything is sent to Apple."
+        inputs.order = order; status = "Order changed locally. Save Draft keeps it on this Mac; Sync to Apple opens a review before anything is sent to Apple."
         return true
     }
 
@@ -148,7 +168,7 @@ public struct MediaAdditionReceipt: Sendable {
         guard active, !busy, let latest else { return }
         let next = keepEdits && draft != nil ? inputs.keepingEdits(on: latest.inputs) : latest.inputs
         draft = latest; inputs = next; self.latest = nil; needsComparison = false; autosave.pause()
-        status = keepEdits ? "Latest layout compared. Choose Save Layout to keep your edits; autosave is paused." : "Latest layout loaded. Nothing was saved by the comparison."
+        status = keepEdits ? "Latest layout compared. Choose Save Draft to keep your edits; autosave is paused." : "Latest layout loaded. Nothing was saved by the comparison."
     }
     /// Only this workflow's confirmed addition may advance a clean matching baseline.
     @discardableResult public func reconcile(_ change: MediaCatalogChange, scope: MediaDraftScope) -> Bool {

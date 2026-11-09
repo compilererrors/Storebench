@@ -259,6 +259,21 @@ import Testing
         #expect(ComponentLayout.textTrackFrame(minimumHeight: 200, contentHeight: 20, maximumHeight: 160) == 200)
     }
 
+    @Test func compactAssetCardsKeepLongNamesAndEqualRowActionsWithoutTheStatusTrack() {
+        for width in [0.0, 180, 260, 360, 720] {
+            let compact = ComponentLayout.assetCard(width: width, actionsHeight: 32, compact: true)
+            let long = ComponentLayout.assetCard(width: width, actionsHeight: 32, titleHeight: 96, metadataHeight: 48, compact: true)
+            let neighbour = ComponentLayout.assetCard(width: width, actionsHeight: 32, minimumHeight: long.height, compact: true)
+            #expect(compact.identity.height == 0 && compact.title.minY == compact.identity.minY)
+            #expect(compact.height < ComponentLayout.assetCard(width: width, actionsHeight: 32).height)
+            #expect(long.metadata.minY >= long.title.maxY && long.divider.minY > long.metadata.maxY)
+            #expect(neighbour.actions == long.actions && neighbour.divider == long.divider)
+            for frame in [long.preview, long.title, long.metadata, long.divider, long.actions] {
+                #expect(frame.minX >= 0 && frame.maxX <= width && frame.minY >= 0 && frame.maxY <= long.height)
+            }
+        }
+    }
+
     @Test func assetCardsGrowWithLongNamesWithoutMovingNeighbourDividersOrCommands() {
         let ordinary = ComponentLayout.assetCard(width: 320, actionsHeight: 42)
         let long = ComponentLayout.assetCard(width: 320, actionsHeight: 42, titleHeight: 80, metadataHeight: 34)

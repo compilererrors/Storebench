@@ -21,6 +21,37 @@ import Testing
         }
     }
 
+    @Test func localDraftRestoresPartialInputsBeforeOrAfterAppleReads() throws {
+        let fixture = try fixture(), baseline = try state(fixture)
+        var edited = AppInformationEditor(); edited.receive(baseline); edited.receiveAgeAnswers([:]); edited.receiveDeclarations([])
+        edited.chooseRights("USES_THIRD_PARTY_CONTENT")
+        edited.chooseCategory("primaryCategory", "PRODUCTIVITY")
+        edited.chooseAge(AgeRating.frequency[0].0, .string(AgeRating.frequencyValues[0]))
+        let feature = try #require(AccessibilityDeclarations.applicable("MAC").first)
+        edited.chooseAccessibility("MAC", feature.key, true)
+        let saved = edited.localDraft
+        var early = AppInformationEditor(); early.restoreLocalDraft(saved)
+        early.receive(baseline); early.receiveAgeAnswers([:]); early.receiveDeclarations([])
+        #expect(early.localDraft == saved && early.dirty)
+        var late = AppInformationEditor(); late.receive(baseline); late.receiveAgeAnswers([:]); late.receiveDeclarations([])
+        late.restoreLocalDraft(saved)
+        #expect(late.localDraft == saved && late.dirty)
+        #expect(late.ageChanges == edited.ageChanges && late.answers(for: "MAC")[feature.key] == true)
+    }
+
+    @Test func clearedAccessibilityAnswersStayClearedWhenDraftReopens() throws {
+        let feature = try #require(AccessibilityDeclarations.applicable("MAC").first)
+        let declarations = [AccessibilityDeclarationView(id: "synthetic-declaration", family: "MAC", state: "DRAFT", answers: [feature.key: true])]
+        var edited = AppInformationEditor(); edited.receiveDeclarations(declarations)
+        edited.chooseAccessibility("MAC", feature.key, nil)
+        #expect(edited.answers(for: "MAC").isEmpty)
+        let saved = edited.localDraft
+        var early = AppInformationEditor(); early.restoreLocalDraft(saved); early.receiveDeclarations(declarations)
+        #expect(early.answers(for: "MAC").isEmpty && early.dirty)
+        var late = AppInformationEditor(); late.receiveDeclarations(declarations); late.restoreLocalDraft(saved)
+        #expect(late.answers(for: "MAC").isEmpty && late.dirty)
+    }
+
     @Test func categoryChangesAndPlatformChoicesMatchPrimaryEditor() throws {
         let fixture = try fixture(), baseline = try state(fixture)
         for row in try rows(fixture["information"]) {

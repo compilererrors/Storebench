@@ -30,6 +30,9 @@ struct ReviewPanel: View {
     var approveRequests = 0
     /// Whether a newly prepared review scrolls to its Send to Apple; a review a page prepared by itself on opening stays where it is.
     var reveals = true
+    /// Editors use one sync command followed by this concrete approval sheet.
+    var syncConfirmation = false
+    @State private var syncPresented = false
     @Environment(\.pageScroll) private var pageScroll
     @Environment(\.pageReveal) private var pageReveal
     @Environment(\.readyReviews) private var readyReviews
@@ -63,14 +66,53 @@ struct ReviewPanel: View {
         ["prepared": "Ready for approval", "running": "Publishing", "complete": "Published", "failed": "Stopped", "conflict": "Changed since review"][state] ?? state
     }
 
-    var body: some View { panel }
+    var body: some View {
+        ZStack {
+            Color.clear.frame(height: 0).accessibilityHidden(true)
+            if !syncConfirmation || review?.state != "prepared" { panel }
+        }
+        .onChange(of: review?.id, initial: true) {
+            if syncConfirmation, let review, review.state == "prepared" {
+                if review.steps.isEmpty { done() } else { syncPresented = true }
+            }
+        }
+        .sheet(isPresented: Binding(get: { syncPresented && review?.state == "prepared" }, set: { syncPresented = $0 })) {
+            if let review {
+                StorebenchDialog(title: "Sync to Apple", wide: true, height: 720, subtitle: review.title, busy: working) {
+                    Text("Review the changes below, then confirm the sync.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
+                    let removals = PublishingReviewPresentation.removals(review)
+                    if !removals.isEmpty {
+                        StorebenchAttention(title: "Remove \(removals.count) Items") {
+                            DisclosureGroup("Items to Remove") {
+                                ForEach(removals, id: \.key) { step in
+                                    StorebenchFact(label: step.before ?? step.label, value: step.after ?? step.detail)
+                                }
+                            }
+                        }
+                    }
+                    content(review)
+                } actions: {
+                    StorebenchActionGroup(alignment: .trailing) {
+                        Button("Cancel", role: .cancel) { syncPresented = false; self.review = nil }
+                        StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Syncing…", busy: working,
+                            variant: PublishingReviewPresentation.hasDestructiveChanges(review) ? .danger : .primary) {
+                            syncPresented = false
+                            Task { await approve(review) }
+                        }.storebenchWorking(actionsBusy || !PublishingReviewPresentation.canApprove(review, now: now))
+                    }.storebenchWorking(working)
+                }
+                .interactiveDismissDisabled(working)
+                .task { await StorebenchPolling.repeating(every: .seconds(1), while: { true }) { now = Date() } }
+            }
+        }
+    }
 
     /// Reviews already brought into view, so a page opened again keeps its own scroll position.
     @MainActor private static var revealed: Set<String> = []
     /// A newly prepared review brings its send command into view and focus, so the next click after Save is Send to Apple.
     /// It runs on the panel itself: modifiers on an empty view never see the review arrive.
     private func reveal(_ id: String) {
-        guard reveals, review?.state == "prepared", Self.revealed.insert(id).inserted else { return }
+        guard !syncConfirmation, reveals, review?.state == "prepared", Self.revealed.insert(id).inserted else { return }
         if Self.revealed.count > 256 { Self.revealed = [id] }
         Task { @MainActor in
             guard review?.id == id else { return }
@@ -93,8 +135,8 @@ struct ReviewPanel: View {
                 }
             }.id("publish-review").trackUnsavedChanges(false, busy: working || review.state == "running")
                 .onChange(of: review.id) { old, id in opened = []; readyReviews?.remove(old); reveal(id) }
-                .onAppear { reveal(review.id); readyReviews?.update(review) }
-                .onChange(of: "\(review.id):\(review.state):\(review.title)") { readyReviews?.update(review) }
+                .onAppear { reveal(review.id); if !syncConfirmation { readyReviews?.update(review) } }
+                .onChange(of: "\(review.id):\(review.state):\(review.title)") { if !syncConfirmation { readyReviews?.update(review) } }
                 .onDisappear { readyReviews?.remove(review.id) }
                 .onChange(of: readyReviews?.shown?.request) {
                     guard let shown = readyReviews?.shown, shown.id == review.id else { return }
@@ -127,7 +169,7 @@ struct ReviewPanel: View {
                 } else {
                     ProgressView(value: Double(completed), total: Double(max(1, total))) {
                         // The file being uploaded now, with its speed, so a long upload visibly moves.
-                        Text(review.state == "running" ? "Sending \(min(completed + 1, total)) of \(total)…" + (PublishTransfer.shared.snapshot().map { " · Uploading " + $0.text } ?? "")
+                        Text(review.state == "running" ? PublishingReviewPresentation.activity(review) + (PublishTransfer.shared.snapshot().map { " · " + $0.text } ?? "")
                              : review.state == "complete" ? "All \(total) sent" : stopped ? "Stopped after \(completed) of \(total)" : "Nothing sent yet")
                     }.accessibilityLabel("Publishing and media upload progress")
                 }
@@ -152,7 +194,7 @@ struct ReviewPanel: View {
                 }
             }
         }
-        if let media = ReleaseMediaProgress(review) { ReleaseMediaFiles(progress: media) }
+        if let media = ReleaseMediaProgress(review), !media.files.isEmpty { ReleaseMediaFiles(progress: media) }
         ForEach(shown(review), id: \.key) { step in change(step, open: review.steps.count == 1 || opened.contains(step.key)) }
         DisclosureGroup {
             ForEach(review.notes, id: \.self) { Text($0).fixedSize(horizontal: false, vertical: true) }
@@ -160,7 +202,7 @@ struct ReviewPanel: View {
             ForEach(review.steps, id: \.key) { step in StorebenchFact(label: Self.stepState(step), value: step.label, problem: step.state == "failed") }
         } label: { Text("Details · \(review.steps.count) steps") }
         StorebenchFeedback(text: statusText, height: 34)
-        footer(review, stopped: stopped)
+        if !syncConfirmation { footer(review, stopped: stopped) }
     }
 
     /// One command row in every state: its buttons change name or dim, never appear or disappear.
@@ -248,6 +290,10 @@ struct ReviewPanel: View {
         for (area, check) in latest where areas.contains(area) && !unread.contains(area) { fixed[area] = AppleProblemsView.Now(check) }
     }
     private func currentStep(_ review: PublishReview, current: PublishStep?) -> String {
+        let active = review.steps.filter { $0.state == "running" }
+        if active.count > 1 {
+            return active.allSatisfy { $0.kind == .verify } ? "Checking \(active.count) files with Apple" : "\(active.count) jobs running in parallel"
+        }
         if let current { return current.state == "failed" ? "Stopped at " + current.label : current.label }
         return review.state == "complete" ? "All steps done" : "Not started"
     }
@@ -284,7 +330,7 @@ struct ReviewPanel: View {
     private func status(_ review: PublishReview) -> String {
         guard review.state == "prepared" else { return PublishingReviewPresentation.label(review, now: now) }
         let changes = review.steps.count == 1 ? "1 change" : "\(review.steps.count) changes"
-        return PublishingReviewPresentation.canApprove(review, now: now) ? "Ready · \(changes) to send when you choose \(Self.sendTitle)" : "Expired"
+        return PublishingReviewPresentation.canApprove(review, now: now) ? "Ready · \(changes) to sync" : "Expired"
     }
 
     /// Files show under their own line, so only the other changes are listed; a long sent review lists its current step.

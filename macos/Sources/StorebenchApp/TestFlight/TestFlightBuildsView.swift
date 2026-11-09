@@ -22,6 +22,8 @@ struct TestFlightBuildsView: View {
     @State private var encryptionBusy = false
     @State private var answering: TestFlightBuild?
     @State private var selected: TestFlightBuild?
+    @State private var draft: LocalEditorDraftEditor?
+    @State private var draftNotes: [String: String] = [:]
     @State private var notes: [String: String] = [:]
     @State private var locale = "en-US"
     @State private var whatToTest = ""
@@ -38,6 +40,14 @@ struct TestFlightBuildsView: View {
     private var busy: Bool { loading || selecting || preparing || publishing }
     private var notesChanged: Bool { !whatToTest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && whatToTest != notes[locale] }
 
+    private var draftValue: JSONText {
+        var values = notes.merging(draftNotes) { _, changed in changed }; values[locale] = whatToTest
+        return .object([("locale", .string(locale)), ("notes", .object(values.sorted { $0.key < $1.key }.map { ($0.key, .string($0.value)) }))])
+    }
+    private func restoreDraft(_ value: JSONText) {
+        if case .object(let values)? = value["notes"] { draftNotes = Dictionary(uniqueKeysWithValues: values.compactMap { key, value in value.text.map { (key, $0) } }) }
+        locale = value["locale"]?.text ?? locale; whatToTest = draftNotes[locale] ?? notes[locale] ?? ""; review = nil
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             StorebenchMetricGrid(maximumColumns: 3) {
@@ -56,7 +66,7 @@ struct TestFlightBuildsView: View {
                 TestFlightEncryptionView(account: account, app: app, build: selected, session: session, busyChanged: { encryptionBusy = $0 }, didPublish: { Task { await load() } }).id(selected.id).storebenchWorking(!confirmed || loading)
                 TestFlightMetricsView(account: account, app: app, build: selected, session: session).id(selected.id)
             }
-            ReviewPanel(account: account, app: app, session: session, review: $review, done: { Task { await load() } }, busyChanged: { publishing = $0 }).storebenchWorking(!confirmed || loading)
+            ReviewPanel(account: account, app: app, session: session, review: $review, done: { Task { await load() } }, busyChanged: { publishing = $0 }, syncConfirmation: true).storebenchWorking(!confirmed || loading)
             // The builds you test come first; uploading a new package and Apple's delivery records follow.
             Card(title: "Uploaded builds", subtitle: "Processed builds delivered through Storebench, Xcode or Transporter. Apple controls beta review and approval.", help: "testflight", actions: AnyView(
                 Button(loading ? "Reading Builds…" : "Refresh Builds") { if !busy, !accessBusy, !encryptionBusy { Task { await load(fresh: true) } } }.storebenchWorking(busy || accessBusy || encryptionBusy)
@@ -90,7 +100,7 @@ struct TestFlightBuildsView: View {
             guard !Task.isCancelled else { return }; didSelectInitial()
         }
         .historyValue("testflight-builds", choiceValue)
-        .trackUnsavedChanges(!whatToTest.utf8.elementsEqual((notes[locale] ?? "").utf8), busy: busy)
+        .trackUnsavedChanges(draft?.dirty(draftValue) == true, busy: busy || draft?.busy == true, onSave: { await draft?.saveCurrent(value: { draftValue }) == true })
         .onChange(of: Data(whatToTest.utf8)) { if !busy, review?.state == "prepared" { review = nil } }
     }
 
@@ -118,13 +128,17 @@ struct TestFlightBuildsView: View {
             Text("What to Test").font(.sbHeadline)
             StorebenchPicker("Language", selection: Binding(get: { locale }, set: { next in
                 guard !busy, next != locale, protection?.allowLeaving() != false else { return }
-                locale = next; whatToTest = notes[locale] ?? ""; review = nil
+                draftNotes[locale] = whatToTest; locale = next; whatToTest = draftNotes[locale] ?? notes[locale] ?? ""; review = nil
             })) { selectionOptions(TestFlightActions.buildLocales) { SelectionOption(StoreLocales.name($0), value: $0) } }.storebenchFormColumn()
             if build.canManage {
                 StorebenchTextArea(text: $whatToTest, height: StorebenchTheme.textarea(rows: 2)).accessibilityLabel("What to Test")
                 VStack(alignment: .leading, spacing: 8) {
                     Text("\(whatToTest.utf16.count) of 4,000 characters").font(.sbCaption).foregroundStyle(whatToTest.utf16.count > 4000 ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted)
-                    Button("Prepare Review") { if notesChanged { Task { await prepare(build) { $0.testflightAction = "save-build-notes"; $0.locale = locale; $0.whatsNew = whatToTest } } } }.fixedSize().storebenchWorking(!(notesChanged))
+                    if let draft {
+                        LocalDraftActions(editor: draft, value: draftValue, restore: restoreDraft, blocked: busy || accessBusy || encryptionBusy, sync: {
+                            await prepare(build) { $0.testflightAction = "save-build-notes"; $0.locale = locale; $0.whatsNew = whatToTest }
+                        }, syncBlocked: !notesChanged)
+                    }
                 }
             } else {
                 Text(whatToTest.isEmpty ? "No What to Test text for this language." : whatToTest).font(.sbCallout).fixedSize(horizontal: false, vertical: true)
@@ -149,15 +163,19 @@ struct TestFlightBuildsView: View {
     private func prepare(_ build: TestFlightBuild, _ configure: (inout PublishRequest) -> Void) async {
         guard confirmed, !busy, !accessBusy, !encryptionBusy else { return }
         preparing = true; defer { preparing = false }
+        if let draft { guard await draft.save(draftValue), !draft.dirty(draftValue) else { return } }
         (review, status) = await prepareTestFlight(account, app, session, buildId: build.id, configure)
     }
 
     private func select(_ build: TestFlightBuild) async {
         guard !accessBusy, !encryptionBusy, !busy, let session, protection?.allowLeaving() != false else { return }
         selecting = true; defer { selecting = false }
-        selected = build; answering = nil; review = nil; status = ""; notes = [:]; whatToTest = ""
+        selected = build; answering = nil; review = nil; status = ""; notes = [:]; whatToTest = ""; draftNotes = [:]; draft = nil
         do { notes = try await session.whatToTest(appId: app.id, buildId: build.id, client: try await session.readClient(for: account)); whatToTest = notes[locale] ?? "" }
         catch { status = "What to Test could not be loaded for this build." }
+        let owner = LocalEditorDraftEditor(scope: .init(accountId: account.id, appId: app.id, editor: "testflight-build-notes", resource: build.id), session: session)
+        draft = owner
+        if let saved = await owner.load(initial: draftValue) { restoreDraft(saved) }
     }
 
     private func showRemembered() async {

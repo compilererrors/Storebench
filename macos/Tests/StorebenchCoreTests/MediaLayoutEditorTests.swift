@@ -68,6 +68,46 @@ import Testing
         #expect(model.dirty && model.inputs.hidden.count == 2 && model.draft?.inputs.hidden == ["synthetic-first"] && store.saves == 1)
     }
 
+    @Test func removalsKeepOriginalsAndCanBeRestoredWithoutWritingUntilSave() async {
+        let store = Catalog(catalog()), model = editor(store)
+        await model.load()
+        #expect(!model.removeScreenshot("synthetic-missing"))
+        #expect(model.removeScreenshot("synthetic-first"))
+        #expect(model.includedOrder == ["synthetic-second"] && model.removedOrder == ["synthetic-first"])
+        #expect(model.dirty && store.saves == 0 && model.draft?.inputs.order.count == 2)
+        #expect(model.removeAllScreenshots())
+        #expect(model.includedOrder.isEmpty && model.removedOrder.count == 2 && model.problem == nil)
+        #expect(await model.save())
+        #expect(store.saves == 1 && !model.dirty && model.draft?.inputs.order.count == 2)
+        #expect(model.restoreScreenshot("synthetic-first"))
+        #expect(model.includedOrder == ["synthetic-first"] && model.dirty)
+        model.revert(); #expect(model.includedOrder.isEmpty && !model.dirty)
+        model.retire()
+        #expect(!model.removeAllScreenshots() && !model.restoreScreenshot("synthetic-first"))
+    }
+
+    @Test func restoringCannotExceedTheLimitAndRemovalCanRepairAnOverfullLayout() async {
+        let ids = (0...10).map { "synthetic-\($0)" }
+        let store = Catalog(catalog(ids, hidden: [ids[0]])), model = editor(store)
+        await model.load()
+        #expect(!model.restoreScreenshot(ids[0]) && model.included == 10 && !model.dirty)
+        #expect(model.removeScreenshot(ids[1]) && model.restoreScreenshot(ids[0]))
+        #expect(model.included == 10 && model.removedOrder == [ids[1]])
+        let overfull = editor(Catalog(catalog(ids))); await overfull.load()
+        #expect(overfull.problem != nil && overfull.removeAllScreenshots())
+        #expect(overfull.problem == nil && overfull.included == 0)
+        #expect(await overfull.save())
+    }
+
+    @Test func aCatalogConflictBlocksRemovalAndRestorationUntilCompared() async {
+        let original = catalog(), model = editor(Catalog(original)); await model.load()
+        model.removeScreenshot("synthetic-first")
+        #expect(!model.reconcile(.init(before: original, after: catalog(["synthetic-first", "synthetic-second", "synthetic-added"])), scope: scope))
+        let before = model.inputs
+        #expect(!model.removeScreenshot("synthetic-second") && !model.removeAllScreenshots() && !model.restoreScreenshot("synthetic-first"))
+        #expect(model.inputs == before && model.needsComparison)
+    }
+
     @Test func retiringAnOwnerAcknowledgesItsWriteWithoutChangingItsEditor() async throws {
         let store = Catalog(catalog()), gate = Gate()
         let model = MediaLayoutEditor(scope: scope, key: store.value.key, read: { store.read() }, save: { inputs, expected in await gate.hold(); return try store.save(inputs, expected: expected) })

@@ -32,7 +32,7 @@ struct ReviewInformationView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Card(title: "App Review Information", subtitle: "Contact details, sign-in information and notes for App Review. Save lists the changes for App Store Connect; nothing is sent until you approve them.", help: "review-information") {
+            Card(title: "App Review Information", subtitle: "Contact details, sign-in information and notes for App Review. Sync to Apple lists the changes for App Store Connect; nothing is sent until you approve them.", help: "review-information") {
                 if fixedVersionId == nil {
                     StorebenchPicker("Version", selection: Binding(get: { editor.snapshot?.versionId ?? "" }, set: { value in
                         if !busy, value != editor.snapshot?.versionId, protection?.allowLeaving() != false { Task { await load(value) } }
@@ -131,16 +131,16 @@ struct ReviewInformationView: View {
                 if editor.loaded && (editable || editor.dirty) {
                     StorebenchFormFooter {
                         // Save keeps the details on this Mac and lists what App Store Connect would get; Save Draft only keeps them here.
-                        StorebenchBusyButton(title: "Save", loadingTitle: "Saving…", busy: saving, variant: .primary) { Task { await save(prepare: true) } }
+                        StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Preparing…", busy: saving, variant: .primary) { Task { await save(prepare: true) } }
                             .help("Save on this Mac and list the changes for App Store Connect").storebenchWorking(!(editable))
                         Button("Save Draft") { Task { await save(prepare: false) } }.help("Save on this Mac only").storebenchWorking(!(editor.dirty))
                     }.storebenchWorking(busy)
                 }
             }
             if review != nil && editor.dirty && review?.request.reviewAttachmentId == nil {
-                Text("You changed the details after preparing this review. Choose Save again to list the current details.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
+                Text("You changed the details after preparing this review. Choose Sync to Apple again to list the current details.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
             } else {
-                ReviewPanel(account: account, app: app, session: session, review: $review, done: { if review?.state == "complete" { Task { await refreshApple() } } }, busyChanged: { publishing = $0 })
+                ReviewPanel(account: account, app: app, session: session, review: $review, done: { if review?.state == "complete" { Task { await refreshApple() } } }, busyChanged: { publishing = $0 }, syncConfirmation: true)
                     .storebenchWorking(working || fileSelection.pending)
             }
         }

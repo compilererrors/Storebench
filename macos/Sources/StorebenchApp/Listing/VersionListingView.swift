@@ -1,13 +1,12 @@
 import StorebenchCore
 import SwiftUI
 
-/// A single listing save includes every language's text, layouts and pending files. The guide's next step sends them to Apple.
+/// Local drafts and guarded Apple reviews are available beside every language's material.
 struct VersionListingView: View {
     let account: Account, planEditor: ReleasePlanEditor, session: WorkspaceSession?
     var focusedLocale: Binding<String?>? = nil
     var providedModel: VersionListingEditor? = nil
-    /// After Save stored every language, such as Release continuing to the step that sends the text.
-    var saved: (() -> Void)? = nil
+    var didSync: () -> Void = {}
     @State private var model: VersionListingEditor?
     @State private var operation: Task<Void, Never>?
     @State private var protectionId = UUID().uuidString
@@ -17,6 +16,8 @@ struct VersionListingView: View {
     @State private var translation: ListingTranslationRequest?
     @State private var status = ""
     @State private var loadAttempt = 0
+    @State private var review: PublishReview?
+    @State private var publishing = false
     @Environment(\.editorProtection) private var protection
     @Environment(\.releaseFieldFocus) private var fieldFocus
     @Environment(\.releaseChecklistReturn) private var backToChecklist
@@ -28,13 +29,10 @@ struct VersionListingView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             if let model {
-                Card(title: "Languages", subtitle: "Edit each language below. Next saves everything on this Mac; nothing is sent to Apple in this step.", help: "release-material") {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 12) { actions(model) }
-                        VStack(alignment: .leading, spacing: 12) { actions(model) }
-                    }
+                Card(title: "Languages", subtitle: "Edit each language’s text, previews and screenshots below. Drafts stay on this Mac until you sync.", help: "release-material") {
                     let feedback = reloading(model) ? Self.readingLanguages : status.isEmpty ? model.status : status
                     if !feedback.isEmpty { StorebenchTextSlot(text: feedback, height: 40, font: .sbCallout, color: StorebenchTheme.muted, live: true) }
+                    if model.catalogFailed { StorebenchReadButton("Read Saved Listing") { await model.load() } }
                     addLanguage(model)
                 }
                 if model.loading && !reloading(model) {
@@ -48,7 +46,7 @@ struct VersionListingView: View {
                             let scope = Editing(accountId: model.scope.accountId, appId: model.scope.appId, revisionId: model.scope.revisionId, local: false)
                             VStack(alignment: .leading, spacing: 16) {
                                 LanguageEditor(account: account, revision: revision, version: version, scope: scope, locale: language.locale, targetMode: "release-plan", session: session,
-                                    openReview: { _ in false }, providedModel: language.text, showUpload: false, contained: true)
+                                    openReview: { review = $0.review; return true }, providedModel: language.text, contained: true, didSync: didSync)
                                 let mediaAnchor = ReleaseReadiness.fieldAnchor(language.locale, "screenshots"), mediaFocused = fieldFocus?.anchor == mediaAnchor
                                 VStack(alignment: .leading, spacing: 12) {
                                     if mediaFocused {
@@ -61,7 +59,7 @@ struct VersionListingView: View {
                                     ForEach(language.media, id: \.localizationId) { media in
                                         if let localization = version.localizations.first(where: { $0.id == media.localizationId }) {
                                             MediaListingView(account: account, version: version, scope: scope, localization: localization, others: version.localizations.filter { $0.id != localization.id },
-                                                targetMode: "release-plan", session: session, openReview: { _ in false }, providedModel: media, showActions: false)
+                                                targetMode: "release-plan", session: session, openReview: { review = $0.review; return true }, providedModel: media, didSync: didSync)
                                         }
                                     }
                                 }
@@ -74,9 +72,12 @@ struct VersionListingView: View {
                     if let plan = planEditor.plan {
                         ReleaseTextView(plan: plan, session: session, readiness: { [weak model] in
                             model.map { $0.active && !$0.busy && $0.workflow.ready && $0.matchesPlan } ?? false
-                        }, onBusy: { [weak model] in model?.auxiliaryBusy = $0 }, onSaved: { [weak model] in model?.reconcile($0) })
+                        }, onBusy: { [weak model] in model?.auxiliaryBusy = $0 }, onSaved: { [weak model] in model?.reconcile($0) }, sync: { run(model, sync: true) })
                             .id("bulk-release-fields-\(model.scope.revisionId)/\(model.versionId)")
                     }
+                }
+                if let app = account.apps.first(where: { $0.id == model.scope.appId }) {
+                    ReviewPanel(account: account, app: app, session: session, review: $review, done: { if review?.state == "complete" { didSync() } }, busyChanged: { publishing = $0 }, actionsBusy: model.busy || model.dirty || model.workflow.blocked, syncConfirmation: true)
                 }
             } else if status.isEmpty {
                 StorebenchLoadState(state: .loading("Reading planned listing…")) { EmptyView() } placeholder: {
@@ -89,7 +90,10 @@ struct VersionListingView: View {
                 Button("Read Planned Listing") { status = ""; loadAttempt += 1 }
             }
         }
-        .environment(\.draftWorkflowBusy, model?.busy == true)
+        .environment(\.draftWorkflowBusy, model?.loading == true || model?.adding == true || model?.auxiliaryBusy == true || model?.workflow.busy == true || planEditor.busy || publishing)
+        .onChange(of: model?.workflow.lastResult) {
+            if review?.state == "prepared", model?.workflow.lastResult?.reviewReady != true { review = nil }
+        }
         .listingTranslation(translation) { request, translate in
             guard let model else { return }
             await add(model, request.target, copyFrom: request.source, translate: translate)
@@ -128,13 +132,6 @@ struct VersionListingView: View {
         }
     }
     @Environment(\.languageLayout) private var languageLayout
-    @ViewBuilder private func actions(_ model: VersionListingEditor) -> some View {
-        if model.catalogFailed || model.revision == nil {
-            StorebenchBusyButton(title: "Read Saved Listing", loadingTitle: "Reading…", busy: model.busy) { operation = Task { await model.load() } }
-        }
-        StorebenchBusyButton(title: "Save", loadingTitle: "Saving…", busy: model.workflow.phase == .saving) { run(model) }.help("Save all languages on this Mac")
-                .storebenchWorking(!(!model.workflow.blocked && (model.dirty || model.workflow.phase == .saving)))
-    }
     @ViewBuilder private func addLanguage(_ model: VersionListingEditor) -> some View {
         if !model.availableLocales.isEmpty {
             ViewThatFits(in: .horizontal) {
@@ -171,13 +168,34 @@ struct VersionListingView: View {
         guard model.active, !Task.isCancelled else { return }
         if added { newLocale = model.availableLocales.first ?? ""; copyFrom = "" }; status = model.status
     }
-    private func run(_ model: VersionListingEditor) {
-        guard model.active, !model.busy, !model.workflow.blocked else { return }
-        status = ""
+    private func run(_ model: VersionListingEditor, sync: Bool = false) {
+        guard model.active, !model.busy, !model.workflow.blocked, !publishing else { return }
+        status = ""; review = nil
         operation = Task {
             guard model.active, !Task.isCancelled else { return }
-            let result = await model.run()
-            if result.complete, result.savedAny, !Task.isCancelled { saved?() }
+            if let protection, !(await protection.saveAllDrafts()) {
+                status = "Some changes could not be saved. Your edits are kept; check the form marked in red before syncing."
+                return
+            }
+            var prepared: LanguageListingReview?, failure: String?
+            let prepare: (@MainActor () async throws -> Void)?
+            if sync {
+                prepare = {
+                    guard let session else { throw PublishFailure.conflict }
+                    do {
+                        let request = try model.publishingRequest()
+                        let client = try await session.client(for: account)
+                        prepared = try await session.prepareLanguageListingReview(account: account, request: request, client: client)
+                    } catch { failure = (error as? PublishFailure)?.message; throw error }
+                }
+            } else { prepare = nil }
+            let result = await model.run(prepare: prepare)
+            guard model.active, !Task.isCancelled, model.workflow.owns(result) else { return }
+            status = failure ?? model.status
+            if result.reviewReady, model.workflow.ready,
+               let prepared, prepared.matches(accountId: model.scope.accountId, appId: model.scope.appId, revisionId: model.scope.revisionId, versions: [model.versionId], targetMode: "release-plan") {
+                review = prepared.review
+            }
         }
     }
 }

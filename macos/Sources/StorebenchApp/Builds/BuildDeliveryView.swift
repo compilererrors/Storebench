@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 struct BuildDeliveryView: View {
     let account: Account, app: Account.App, session: WorkspaceSession?
+    @State private var draft: LocalEditorDraftEditor?
     @State private var package: StagedBuildPackage?
     @State private var deliveries: [BuildDelivery] = []
     @State private var version = ""
@@ -21,6 +22,10 @@ struct BuildDeliveryView: View {
     @Environment(\.confirmDestructive) private var confirm
     private var readKey: String { "build-deliveries/\(account.id)/\(app.id)" }
 
+    private var draftValue: JSONText { .object([("version", .string(version)), ("number", .string(number)), ("platform", .string(platform))]) }
+    private func restoreDraft(_ value: JSONText) {
+        version = value["version"]?.text ?? ""; number = value["number"]?.text ?? ""; platform = value["platform"]?.text ?? "IOS"; review = nil
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Card(title: "Build delivery", subtitle: "Stage a signed IPA or PKG locally, then review its exact destination before approving the upload. Apple processes delivered builds asynchronously.") {
@@ -29,7 +34,7 @@ struct BuildDeliveryView: View {
                     Text("\(ByteCountFormatter.string(fromByteCount: Int64(package.size), countStyle: .binary)) · \(package.uti)").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
                     ScrollView(.horizontal) { Text("SHA-256: \(package.sha256)").font(.sbCaption.monospaced()).textSelection(.enabled).fixedSize() }.frame(height: 28)
                     ViewThatFits {
-                        HStack(alignment: .top, spacing: 12) { inputs }
+                        HStack(alignment: .top, spacing: 12) { inputs }.storebenchWorking(draft?.loaded != true)
                         VStack(alignment: .leading, spacing: 12) { inputs }
                     }
                     ViewThatFits {
@@ -40,13 +45,14 @@ struct BuildDeliveryView: View {
                     Text("One package per app, up to 16 GiB. The staged copy is encrypted and included in your local backups.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
                     if loaded { Button("Choose IPA or PKG") { if !working { choosingFile = true } }.storebenchWorking(working) }
                 }
+                if let draft { LocalDraftActions(editor: draft, value: draftValue, restore: restoreDraft, blocked: working || publishing) }
                 Text(status.isEmpty ? "Confirm that the version, build number and platform match the signed package." : status)
                     .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).frame(maxWidth: .infinity, minHeight: 40, alignment: .topLeading)
             }
             ReviewPanel(account: account, app: app, session: session, review: $review, done: {
                 if review?.state == "complete" { version = ""; number = "" }
                 Task { await refresh() }
-            }, busyChanged: { publishing = $0 })
+            }, busyChanged: { publishing = $0 }, syncConfirmation: true)
             Card(title: "Apple delivery status", subtitle: "Pending and failed delivery records can be removed through a separate publishing review. A processing or linked build cannot be removed here.", actions: AnyView(
                 Button(readingDeliveries ? "Reading…" : "Refresh Status") { Task { await refresh() } }.help(readingDeliveries ? "Reading…" : "Refresh Delivery Status").accessibilityLabel(readingDeliveries ? "Reading…" : "Refresh Delivery Status").storebenchWorking(working)
             )) {
@@ -76,11 +82,16 @@ struct BuildDeliveryView: View {
             }
         }
         .storebenchWorking(working || publishing)
-        .trackUnsavedChanges(!version.isEmpty || !number.isEmpty, busy: working || publishing)
+        .trackUnsavedChanges(draft?.dirty(draftValue) == true, busy: working || publishing || draft?.busy == true, onSave: { await draft?.saveCurrent(value: { draftValue }) == true })
         .task {
             // Apple's delivery records read on an earlier visit show at once; the read that follows replaces them.
             if deliveries.isEmpty, let remembered = history?.rememberedRead(readKey, as: [BuildDelivery].self) { deliveries = remembered }
             await refresh()
+            if let session {
+                let owner = LocalEditorDraftEditor(scope: .init(accountId: account.id, appId: app.id, editor: "build-delivery", resource: "upload-metadata"), session: session)
+                draft = owner
+                if let saved = await owner.load(initial: draftValue) { restoreDraft(saved) }
+            }
         }
         .onChange(of: version) { if review?.state == "prepared" { review = nil } }
         .onChange(of: number) { if review?.state == "prepared" { review = nil } }
@@ -144,6 +155,7 @@ struct BuildDeliveryView: View {
     private func prepareUpload(_ saved: StagedBuildPackage) async {
         guard !working else { return }
         working = true; defer { working = false }
+        guard await draft?.save(draftValue) == true, draft?.dirty(draftValue) == false else { return }
         (review, status) = await prepareTestFlight(account, app, session) {
             $0.testflightAction = "upload-build"; $0.packageId = saved.id; $0.buildVersion = version; $0.buildNumber = number; $0.buildPlatform = platform
         }

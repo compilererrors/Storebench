@@ -22,8 +22,10 @@ extension AppStoreConnectClient {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body?.data
-        let (data, response) = try await session.data(for: request, delegate: self)
-        guard let http = response as? HTTPURLResponse else { throw Failure.unreadableResponse }
+        let result: BoundedResponse.Result
+        do { result = try await pool.read(request, maximumBytes: 4_000_000) }
+        catch is BoundedResponse.Failure { throw Failure.unreadableResponse }
+        let data = result.data, http = result.response
         AppleRequestBudget.record(http, keyId: token.account.keyId)
         if [409, 422].contains(http.statusCode) {
             // Apple names what is wrong; keep its codes so a stopped Save says what to fix instead of only "refused".
@@ -31,18 +33,27 @@ extension AppStoreConnectClient {
             if !problems.isEmpty { throw PublishFailure.refused(AppleProblem.summary(problems, status: http.statusCode), problems: problems) }
         }
         guard (200..<300).contains(http.statusCode) else { throw Self.failure(status: http.statusCode, data: data, contentType: http.value(forHTTPHeaderField: "Content-Type")) }
-        if http.statusCode == 204 || data.isEmpty { return nil }
-        return (try? JSONDecoder().decode(Page.self, from: data))?.data.resources.first
+        return try Self.writtenResource(data, status: http.statusCode, body: body)
+    }
+
+    /// A successful status alone cannot confirm a returned resource. Both Apple connections use this check.
+    static func writtenResource(_ data: Data, status: Int, body: JSONText?) throws -> Resource? {
+        if status == 204 { return nil }
+        guard let page = try? JSONDecoder().decode(Page.self, from: data), case .one(let resource) = page.data,
+              ProductPricing.opaque(resource.id), !resource.type.isEmpty,
+              body?["data"]?["type"]?.text.map({ $0 == resource.type }) ?? true,
+              body?["data"]?["id"]?.text.map({ $0 == resource.id }) ?? true else { throw Failure.unreadableResponse }
+        return resource
     }
 
     /// One reserved upload part, sent to Apple's asset storage without the API token.
-    func uploadPart(_ url: URL, headers: [(String, String)], body: Data) async throws {
+    func uploadPart(_ url: URL, headers: [(String, String)], body: Data, transferId: UUID? = nil) async throws {
         try accessCheck()
         var request = URLRequest(url: url, timeoutInterval: 120)
         request.httpMethod = "PUT"
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         request.httpShouldHandleCookies = false
-        let (_, response) = try await session.upload(for: request, from: body, delegate: TransferMeter(.shared))
+        let (_, response) = try await session.upload(for: request, from: body, delegate: TransferMeter(.shared, id: transferId))
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw PublishFailure.write("Asset upload returned an error. Prepare a new review.") }
     }
 }
@@ -225,7 +236,7 @@ extension WorkspaceSession {
     }
 
     /// Approves a prepared review once: it must match the approved fingerprint, still be fresh and still match Apple and the drafts.
-    /// The writes then run in order under the publishing lock.
+    /// Dependent steps run in order under the publishing lock; independent work shares bounded waves.
     public func approvePublishing(account: Account, appId: String, id: String, fingerprint: String, client: AppStoreConnectClient, now: @Sendable () -> Date = Date.init) async throws -> PublishReview {
         try requireSessionAccess()
         let lease = try lifetime.admit(.publishing); defer { lease.finish() }
@@ -268,107 +279,57 @@ extension WorkspaceSession {
         var operations: [String: JSONValue] = [:]
         func persist() throws { review.updatedAt = CustomerReview.isoString(now()); revision = try savePublishReview(review, expected: revision) }
         do {
-            var sentTogether = 0
             for index in review.steps.indices {
-                if index < sentTogether { continue }
-                let together = Self.stepsSentTogether(review.steps, from: index)
+                if review.steps[index].state == "done" { continue }
+                let together = Self.stepsReadyTogether(review.steps, from: index, ids: ids)
                 if together.count > 1 {
-                    // Independent single-country writes go several at a time; each is still checked against Apple just before it is sent.
+                    // Only independent, ready steps share a wave; each keeps the serial executor's checks.
                     try requirePublishingAccount(account, appId: appId, client: client)
-                    let queued = try together.map { ($0, review.steps[$0], try Self.apiPath(review.steps[$0].path, ids: ids)) }
+                    let queued = together.map { ($0, review.steps[$0]) }
+                    let resolvedIds = ids, reservedOperations = operations
                     var failure: Error?
-                    for wave in stride(from: 0, to: queued.count, by: Self.sendTogetherLimit) where failure == nil {
-                        let sending = Array(queued[wave..<min(wave + Self.sendTogetherLimit, queued.count)])
+                    let limit = Self.publishingBatchLimit(review.steps[index])
+                    for wave in stride(from: 0, to: queued.count, by: limit) where failure == nil {
+                        let sending = Array(queued[wave..<min(wave + limit, queued.count)])
                         try requirePublishingAccount(account, appId: appId, client: client)
-                        for (item, _, _) in sending { review.steps[item].state = "running" }
+                        for (item, _) in sending { review.steps[item].state = "running" }
                         try persist()
-                        let results = await withTaskGroup(of: SentTogether.self, returning: [SentTogether].self) { group in
+                        var persistenceFailure: Error?
+                        await withTaskGroup(of: SentTogether.self) { group in
                             for entry in sending {
-                                let item = entry.0, step = entry.1, path = entry.2
+                                let item = entry.0, step = entry.1
                                 group.addTask { [self] in
                                     do {
-                                        try await verifyWrite(method: step.method ?? "", path: path, body: step.body, guardValue: step.guardValue, appId: appId, client: client)
-                                        try await requirePublishingAccount(account, appId: appId, client: client)
-                                        let id = try await client.write(step.method ?? "", path, body: step.body, grant: grant)?.id
-                                        return SentTogether(item: item, id: id, error: nil)
-                                    } catch { return SentTogether(item: item, id: nil, error: error) }
+                                        let output = try await performPublishingStep(step, ids: resolvedIds, operations: reservedOperations, account: account, appId: appId, client: client, grant: grant)
+                                        return SentTogether(item: item, output: output, error: nil)
+                                    } catch { return SentTogether(item: item, output: nil, error: error) }
                                 }
                             }
-                            var finished: [SentTogether] = []
-                            for await result in group { finished.append(result) }
-                            return finished
+                            for await result in group {
+                                if let error = result.error { review.steps[result.item].state = "failed"; failure = failure ?? error }
+                                else {
+                                    if let id = result.output?.id { ids[review.steps[result.item].key] = id; review.steps[result.item].resultId = id }
+                                    if let reserved = result.output?.operations { operations[review.steps[result.item].key] = reserved }
+                                    if review.steps[result.item].kind != .verify && review.sentAt == nil { review.sentAt = CustomerReview.isoString(now()) }
+                                    review.steps[result.item].state = "done"
+                                }
+                                // Keep each completed result visible while slower siblings still wait on Apple.
+                                // If storage fails, still collect every already admitted write before stopping.
+                                if persistenceFailure == nil { do { try persist() } catch { persistenceFailure = error } }
+                            }
                         }
-                        for result in results {
-                            if let error = result.error { review.steps[result.item].state = "failed"; failure = failure ?? error; continue }
-                            if let id = result.id { ids[review.steps[result.item].key] = id; review.steps[result.item].resultId = id }
-                            if review.sentAt == nil { review.sentAt = CustomerReview.isoString(now()) }
-                            review.steps[result.item].state = "done"
-                        }
+                        if let persistenceFailure { throw persistenceFailure }
                         try persist()
                     }
                     if let failure { throw failure }
-                    sentTogether = together.upperBound; continue
+                    continue
                 }
                 try requirePublishingAccount(account, appId: appId, client: client)
                 review.steps[index].state = "running"; try persist()
                 let step = review.steps[index]
-                let path = try Self.apiPath(step.path, ids: ids)
-                switch step.kind {
-                case .api:
-                    let body = try step.body.map { try Self.resolve($0, ids: ids) }
-                    try await verifyWrite(method: step.method ?? "", path: path, body: body, guardValue: step.guardValue, appId: appId, client: client)
-                    try requirePublishingAccount(account, appId: appId, client: client)
-                    var result: AppStoreConnectClient.Resource?, placed: String?
-                    for attempt in 1...3 {
-                        do {
-                            // App Privacy and Tax Category have no API key endpoint; their reviewed writes use the signed-in Apple ID.
-                            if ["app-privacy", "tax-category"].contains(step.guardValue?["kind"]?.text) { result = try await appleWebClient(account: account, appId: appId).write(step.method ?? "", path, body: body, grant: grant) }
-                            else { result = try await client.write(step.method ?? "", path, body: body, grant: grant) }
-                            break
-                        }
-                        catch where attempt < 3 && step.guardValue?["kind"]?.text == "release-media-placement" && Self.transient(error) {
-                            // Apple may have added the file before its answer was lost: look for it first, so it is never added twice.
-                            try await Task.sleep(for: .seconds(3))
-                            if let id = try await placedReleaseMedia(body: body, guardValue: step.guardValue, appId: appId, client: client) { placed = id; break }
-                            try await verifyWrite(method: step.method ?? "", path: path, body: body, guardValue: step.guardValue, appId: appId, client: client)
-                            try requirePublishingAccount(account, appId: appId, client: client)
-                        }
-                    }
-                    if let id = result?.id ?? placed { ids[step.key] = id; review.steps[index].resultId = id }
-                    if let reserved = result?.attributes?["uploadOperations"], case .array = reserved { operations[step.key] = reserved }
-                case .upload:
-                    if step.guardValue?["kind"]?.text == "release-media-upload" {
-                        try await uploadReleaseMedia(path: path, step: step, reserved: Self.reservation(step.path).flatMap { operations[$0] }, accountId: account.id, appId: appId, client: client, grant: grant)
-                        break
-                    }
-                    if step.asset?["storage"]?.text == "asset-library" {
-                        let parts = path.split(separator: "/").map(String.init)
-                        guard parts.count == 3, let asset = step.asset else { throw PublishFailure.conflict }
-                        let reserved = try await libraryReader(appId: appId, client: client).asset(parts[2], kind: parts[1] == AssetLibrary.Kind.image.resource ? .image : .video)
-                        try verifyLibraryUpload(reserved, guardValue: step.guardValue, accountId: account.id, appId: appId)
-                        let resources = try await client.get(path)
-                        guard let resource = resources.first, resource.id == reserved.id else { throw PublishFailure.conflict }
-                        try await uploadLibraryFile(asset, operations: Self.reservation(step.path).flatMap { operations[$0] } ?? resource.attributes?["uploadOperations"], accountId: account.id, appId: appId, client: client)
-                        break
-                    }
-                    guard let asset = step.asset, let resource = try await ownedMedia(path: path, appId: appId, client: client) else { throw PublishFailure.write("Apple upload reservation is missing.") }
-                    if asset["storage"]?.text == "build-package" { try await verifyBuildPackageUpload(asset, file: resource, appId: appId, client: client) }
-                    try await uploadAsset(asset, operations: resource.attributes?["uploadOperations"], accountId: account.id, appId: appId, client: client, grant: grant)
-                case .verify:
-                    if step.guardValue?["kind"]?.text == "asset-library-processed" {
-                        try await verifyLibraryProcessing(path: path, guardValue: step.guardValue!, appId: appId, client: client)
-                        break
-                    }
-                    var complete = false
-                    let deadline = Date().addingTimeInterval(5 * 60)
-                    while Date() < deadline {
-                        let state = try await ownedMedia(path: path, appId: appId, client: client).map(Apple.delivery) ?? "FAILED"
-                        if state == "COMPLETE" { complete = true; break }
-                        if state == "FAILED" { throw PublishFailure.write("Apple could not process this media file. Prepare a new review.") }
-                        try await Task.sleep(nanoseconds: 2_000_000_000)
-                    }
-                    guard complete else { throw PublishFailure.write("Apple is still processing this media file. Prepare a new review; do not upload a duplicate.") }
-                }
+                let output = try await performPublishingStep(step, ids: ids, operations: operations, account: account, appId: appId, client: client, grant: grant)
+                if let id = output.id { ids[step.key] = id; review.steps[index].resultId = id }
+                if let reserved = output.operations { operations[step.key] = reserved }
                 if step.kind != .verify && review.sentAt == nil { review.sentAt = CustomerReview.isoString(now()) }
                 review.steps[index].state = "done"; try persist()
             }
@@ -401,8 +362,8 @@ extension WorkspaceSession {
         }
     }
     /// One write sent together with others, and how it ended.
-    struct SentTogether: Sendable { let item: Int; let id: String?; let error: Error? }
-    /// How many such writes go at once; well within Apple's hourly request limit.
+    struct SentTogether: Sendable { let item: Int; let output: PublishStepOutput?; let error: Error? }
+    /// Bounds simultaneous operations. Apple's request quota still applies to every individual request.
     static let sendTogetherLimit = 4
     /// The run of steps from `start` that may be sent together because none uses another's result: single-country price and offer writes,
     /// across subscriptions, and text updates to existing languages, each addressed by its own Apple ID.
@@ -800,10 +761,10 @@ extension WorkspaceSession {
         guard checked["size"] == .number(declared), checked["checksum"]?.text == checksum else { throw PublishFailure.write("The reviewed asset changed.") }
         guard declared.isFinite, declared >= 1, declared <= Double(StagedBuildPackage.maximumBytes), declared.rounded() == declared else { throw PublishFailure.write("Invalid publishing asset size.") }
         let parts = try BuildUploadOperation.validate(operations, size: Int(declared))
-        PublishTransfer.shared.begin(fileName, total: Int64(declared)); defer { PublishTransfer.shared.end() }
+        let transferId = PublishTransfer.shared.begin(fileName, total: Int64(declared)); defer { PublishTransfer.shared.end(transferId) }
         for part in parts {
-            try await client.uploadPart(part.url, headers: part.headers, body: try media.read(hash, range: part.range))
-            PublishTransfer.shared.partFinished(Int64(part.range.count))
+            try await client.uploadPart(part.url, headers: part.headers, body: try media.read(hash, range: part.range), transferId: transferId)
+            PublishTransfer.shared.partFinished(Int64(part.range.count), id: transferId)
         }
     }
 

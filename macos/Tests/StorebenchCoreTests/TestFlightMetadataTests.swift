@@ -33,18 +33,19 @@ final class SyntheticBetaMetadata: @unchecked Sendable {
             if method != "GET" {
                 let body = try! JSONSerialization.jsonObject(with: apple.body(request)) as! [String: Any], item = body["data"] as! [String: Any], attributes = item["attributes"] as! [String: Any]
                 let type = item["type"] as! String
+                var reply = item
                 guard ["betaAppLocalizations", "betaBuildLocalizations", "betaLicenseAgreements"].contains(type) else { return (400, [:], Data()) }
                 if type == "betaLicenseAgreements", method == "PATCH", path == "/v1/betaLicenseAgreements/license-1" { apple.license = attributes["agreementText"] as! String }
                 else {
                     var values = type == "betaAppLocalizations" ? appItems : notesItems
                     if method == "POST", path == "/v1/\(type)" {
-                        var created = item; created["id"] = "synthetic-created-\(values.count)"; values.append(created)
+                        var created = item; created["id"] = "synthetic-created-\(values.count)"; values.append(created); reply = created
                     } else if method == "PATCH", let id = item["id"] as? String, path == "/v1/\(type)/\(id)", let index = values.firstIndex(where: { $0["id"] as? String == id }) {
                         var current = values[index]["attributes"] as! [String: Any]; for (key, value) in attributes { current[key] = value }; values[index]["attributes"] = current
                     } else { return (400, [:], Data()) }
                     if type == "betaAppLocalizations" { appItems = values } else { notesItems = values }
                 }
-                writes.append((method, path, body)); return apple.page(item)
+                writes.append((method, path, body)); return apple.page(reply)
             }
             if path.hasPrefix("/v1/betaAppLocalizations/"), path.hasSuffix("/relationships/app") {
                 return apple.page(relationshipOwner == "missing" ? NSNull() : ["type": "apps", "id": relationshipOwner == "owned" ? "1000000001" : "1000000002"])

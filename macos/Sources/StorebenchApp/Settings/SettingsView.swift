@@ -16,13 +16,14 @@ struct SettingsView: View {
         let shortcutPane = tab
         return settingsContent.scrollContentBackground(.hidden)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .storebenchWorking(model.isTerminating)
         .environment(\.settingsPresentation, true)
         .id(model.session.map(ObjectIdentifier.init))
         .trackUnsavedChanges(false, busy: model.state == .closing)
         .frame(width: StorebenchTheme.settingsWindow.width, height: StorebenchTheme.settingsWindow.height).background(StorebenchTheme.page)
         .trackUnsavedChanges(false, busy: shortcutActions.hasPendingActions, id: "keyboard-actions")
         .shortcutNavigation([.nextSection, .previousSection, .help], identity: shortcutPane) { command in
-            guard tab == shortcutPane else { return }
+            guard !model.isTerminating, tab == shortcutPane else { return }
             let current = SettingsNavigation.Pane.restored(shortcutPane)
             let next = command == .help ? SettingsNavigation.Pane.help : KeyboardNavigation.adjacent(SettingsNavigation.Pane.allCases, current: current, direction: command == .nextSection ? 1 : -1)
             if let next, next.rawValue != tab { protection.requestLeaving { tab = next.rawValue } }
@@ -31,6 +32,7 @@ struct SettingsView: View {
         .environment(\.shortcutActions, shortcutActions)
         .focusedSceneValue(\.shortcutActions, shortcutActions).focusedSceneValue(\.shortcutProtection, protection)
         .background(StorebenchSettingsToolbar(selected: SettingsNavigation.Pane.restored(tab)) { pane in
+            guard !model.isTerminating else { return }
             if pane.rawValue != tab { protection.requestLeaving { tab = pane.rawValue } }
         }.frame(width: 0, height: 0))
         .environment(\.recoveryNavigation, RecoveryNavigation(scope: nil, navigate: recover))
@@ -60,8 +62,7 @@ struct SettingsView: View {
         case .accounts, .storage, .help: _ = recovery.open(action)
         case .developerAccount: openURL(URL(string: "https://developer.apple.com/account/")!)
         case .unlock:
-            guard EditorWindows.allowLeaving() else { return }
-            Task { await model.signOut() }
+            Task { if await EditorWindows.requestClosing(reason: .signOut) { await model.signOut() } }
         default: break
         }
     }

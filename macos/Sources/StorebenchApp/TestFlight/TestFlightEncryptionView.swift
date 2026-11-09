@@ -17,10 +17,15 @@ struct TestFlightEncryptionView: View {
     @State private var publishing = false
     @State private var status = ""
     @State private var review: PublishReview?
+    @State private var draft: LocalEditorDraftEditor?
     @Environment(\.navigationPresentation) private var history
     private var readKey: String { "build-compliance/\(account.id)/\(app.id)/\(build.id)" }
     private var busy: Bool { working || publishing }
-    private var answered: Bool { encryption.started || (!declarationId.isEmpty && declarationId != compliance?.currentId) }
+    private var draftValue: JSONText { .object([("questions", encryption.json), ("declaration", .string(declarationId)), ("creating", .bool(creating))]) }
+    private func restoreDraft(_ value: JSONText) {
+        encryption = EncryptionQuestionnaire(json: value["questions"] ?? .null)
+        declarationId = value["declaration"]?.text ?? ""; creating = value["creating"] == .bool(true); review = nil
+    }
     private var appInformation: URL { URL(string: "https://appstoreconnect.apple.com/apps/\(app.id)/distribution/info")! }
 
     var body: some View {
@@ -32,12 +37,13 @@ struct TestFlightEncryptionView: View {
                 } else {
                     StorebenchLoadState(state: compliance != nil ? .ready : failure.isEmpty ? .loading("Reading Apple's declarations…") : .failed(failure, retry: { await load(fresh: true) })) {
                         StorebenchReadAge(readAt: readAt, reading: working)
-                        if let compliance { content(compliance) }
+                        if let compliance { content(compliance).storebenchWorking(draft?.loaded != true) }
                     } placeholder: {
                         Text("Current declaration: placeholder").font(.sbCallout)
                         StorebenchPicker("Approved declaration", selection: .constant("")) { SelectionOption("Choose a declaration", value: "") }.storebenchFormColumn()
                     }
                     StorebenchFeedback(text: status, height: 40, error: !status.isEmpty)
+                    if let draft { LocalDraftActions(editor: draft, value: draftValue, restore: restoreDraft, blocked: busy) }
                     StorebenchActionGroup(alignment: .leading) {
                         if compliance != nil { StorebenchBusyButton(title: "Refresh Declarations", loadingTitle: "Reading…", busy: working) { Task { await load(fresh: true) } } }
                         StorebenchActionLink("Open in Browser", destination: appInformation, help: "Open App Information in App Store Connect, where App Encryption Documentation lists this app's declarations")
@@ -48,12 +54,20 @@ struct TestFlightEncryptionView: View {
                 // Apple may ask for documents before it approves a declaration; they are uploaded here through their own review.
                 ExportComplianceCard(account: account, app: app, session: session, prepare: { request in await prepare(request) }, changed: { review = nil }, offersNewDeclaration: false)
             }
-            ReviewPanel(account: account, app: app, session: session, review: $review, done: { if review?.state == "complete" { reset(); didPublish() }; Task { await load(fresh: true) } }, busyChanged: { publishing = $0 })
+            ReviewPanel(account: account, app: app, session: session, review: $review, done: { if review?.state == "complete" { reset(); didPublish() }; Task { await load(fresh: true) } }, busyChanged: { publishing = $0 }, syncConfirmation: true)
         }
-        .task(id: build.id) { await load() }
+        .task(id: build.id) {
+            await load()
+            if let session {
+                let owner = LocalEditorDraftEditor(scope: .init(accountId: account.id, appId: app.id, editor: "build-declaration", resource: build.id), session: session)
+                draft = owner
+                if let saved = await owner.load(initial: draftValue) { restoreDraft(saved) }
+            }
+        }
         .onChange(of: busy) { busyChanged(busy) }
         .onDisappear { busyChanged(false) }
-        .trackUnsavedChanges(answered, busy: busy)
+        .onChange(of: draftValue) { if review?.state == "prepared" { review = nil } }
+        .trackUnsavedChanges(draft?.dirty(draftValue) == true, busy: busy || draft?.busy == true, onSave: { await draft?.saveCurrent(value: { draftValue }) == true })
     }
 
     @ViewBuilder private func content(_ compliance: BuildExportCompliance) -> some View {
@@ -72,7 +86,7 @@ struct TestFlightEncryptionView: View {
             }.storebenchFormColumn().onChange(of: declarationId) { if !declarationId.isEmpty { creating = false } }
             if !creating {
                 StorebenchActionGroup(alignment: .leading) {
-                    StorebenchBusyButton(title: "Prepare Review", loadingTitle: "Preparing…", busy: working, variant: .primary) { Task { await assign() } }
+                    StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Preparing…", busy: working) { Task { await assign() } }
                         .help(declarationId.isEmpty ? "Choose an approved declaration first" : "Prepare a review that attaches this declaration to the build")
                         .storebenchWorking(declarationId.isEmpty)
                     Button("New Declaration") { declarationId = ""; creating = true }.help("None of these describes this build? Answer App Store Connect's questions instead.")
@@ -95,7 +109,7 @@ struct TestFlightEncryptionView: View {
         }
         Text(encryption.nextStep).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).frame(minHeight: 40, alignment: .topLeading).fixedSize(horizontal: false, vertical: true)
         StorebenchActionGroup(alignment: .leading) {
-            StorebenchBusyButton(title: "Save", loadingTitle: "Preparing…", busy: working, variant: .primary) { Task { await answer() } }
+            StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Preparing…", busy: working) { Task { await answer() } }
                     .help(encryption.missing ?? "Shows exactly what is sent; Send to Apple in the review below sends it to App Store Connect")
                 .storebenchWorking(!(encryption.missing == nil))
             if compliance?.next == .choose { Button("Cancel") { reset() } }
@@ -128,11 +142,13 @@ struct TestFlightEncryptionView: View {
     private func assign() async {
         guard !busy, compliance != nil else { return }
         working = true; defer { working = false }
+        guard await draft?.save(draftValue) == true, draft?.dirty(draftValue) == false else { return }
         (review, status) = await prepareTestFlight(account, app, session, buildId: build.id) { $0.testflightAction = "assign-encryption-declaration"; $0.declarationId = declarationId }
     }
     private func answer() async {
         guard !busy, let needed = encryption.needsDeclaration else { return }
         working = true; defer { working = false }
+        guard await draft?.save(draftValue) == true, draft?.dirty(draftValue) == false else { return }
         if !needed {
             (review, status) = await prepareTestFlight(account, app, session, buildId: build.id) { $0.testflightAction = "set-encryption-use"; $0.usesNonExemptEncryption = false }
         } else {

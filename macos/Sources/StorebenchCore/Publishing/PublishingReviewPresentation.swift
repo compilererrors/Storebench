@@ -2,6 +2,20 @@ import Foundation
 
 /// Time and page policy for saved reviews; it never consumes an approval.
 public enum PublishingReviewPresentation {
+    public static func removals(_ review: PublishReview) -> [PublishStep] {
+        review.steps.filter { $0.kind == .api && $0.method == "DELETE" }
+    }
+    public static func activity(_ review: PublishReview) -> String {
+        let running = review.steps.filter { $0.state == "running" }
+        let complete = review.steps.filter { $0.state == "done" }.count
+        let summary = "\(complete) of \(review.steps.count) steps complete"
+        guard !running.isEmpty else { return summary }
+        if running.allSatisfy({ $0.kind == .verify }) {
+            return "Waiting for Apple · \(running.count) file\(running.count == 1 ? "" : "s") processing · " + summary
+        }
+        let action = running.allSatisfy { $0.kind == .upload } ? "Uploading" : "Syncing"
+        return action + " · \(running.count) job\(running.count == 1 ? "" : "s")" + (running.count > 1 ? " in parallel" : "") + " · " + summary
+    }
     public static func hasDestructiveChanges(_ review: PublishReview) -> Bool {
         review.steps.contains { step in
             step.kind == .api && (step.method == "DELETE" ||

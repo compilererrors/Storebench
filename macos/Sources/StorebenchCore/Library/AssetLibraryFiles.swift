@@ -193,10 +193,10 @@ extension WorkspaceSession {
         guard let id = asset["fileId"]?.text, try describeLibraryFile(accountId: accountId, appId: appId, id: id) == asset else { throw AssetLibrary.failure("The reviewed local asset changed.") }
         let file = try libraryFile(accountId: accountId, appId: appId, id: id)
         let parts = try BuildUploadOperation.validate(operations, size: file.size)
-        PublishTransfer.shared.begin(file.fileName, total: Int64(file.size)); defer { PublishTransfer.shared.end() }
+        let transferId = PublishTransfer.shared.begin(file.fileName, total: Int64(file.size)); defer { PublishTransfer.shared.end(transferId) }
         for operation in parts {
-            try await client.uploadBuildPart(operation, media: media, hash: file.hash)
-            PublishTransfer.shared.partFinished(Int64(operation.range.count))
+            try await client.uploadBuildPart(operation, media: media, hash: file.hash, transferId: transferId)
+            PublishTransfer.shared.partFinished(Int64(operation.range.count), id: transferId)
         }
     }
 }

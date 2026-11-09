@@ -123,6 +123,15 @@ import Testing
         capture("empty collection", StorebenchCollection(items: [Item](), title: { "Item \($0.id)" }, maximumColumns: 4, empty: "No synthetic items yet. Add one to see it here.") { _ in EmptyView() }, empty: true)
         capture("collection", StorebenchCollection(items: (0..<9).map(Item.init), title: { "Item \($0.id)" }, maximumColumns: 4, minimumWidth: 120, empty: "No synthetic items yet.") { Text("Item \($0.id)") })
         capture("asset card", StorebenchAssetCard(title: "Synthetic", metadata: "1290 × 2796", status: "Ready") { Color.gray } actions: { EmptyView() })
+        capture("compact screenshot card", StorebenchAssetCard(title: "Synthetic screenshot with a long filename that needs several lines.png", metadata: "2880 × 1800 px · On This Mac", status: "", position: 10, compact: true) {
+            Color.gray.aspectRatio(1.6, contentMode: .fit)
+        } actions: {
+            HStack {
+                Button {} label: { StorebenchIcon(name: "up", size: 16) }.buttonStyle(StorebenchButtonStyle(.quiet, size: .icon))
+                Spacer(minLength: 0)
+                Button {} label: { StorebenchIcon(name: "close", size: 16) }.buttonStyle(StorebenchButtonStyle(.danger, size: .icon))
+            }
+        })
     }
 
     @Test func recoveryStepsForEveryReportingCode() {

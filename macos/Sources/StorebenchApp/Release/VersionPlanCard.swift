@@ -9,6 +9,7 @@ struct VersionPlanCard: View {
     let didSave: (_ creating: Bool) async -> Void
     /// Quick Release keeps the version's starting point and a valid release option as they are, and only names them.
     var quick = false
+    var sync: (() -> Void)? = nil
     private enum Start: String, CaseIterable { case reuse = "Continue a version", copy = "Copy an earlier version", empty = "Start empty" }
     private typealias Base = ReleaseSetup.Candidate
     @State private var latestReading = false
@@ -39,9 +40,16 @@ struct VersionPlanCard: View {
             }
             if model.loaded && !model.needsComparison {
                 StorebenchFormFooter {
-                    if model.plan == nil || model.dirty || model.busy {
-                        StorebenchBusyButton(title: model.plan == nil ? "Create" : "Save", loadingTitle: "Saving…", busy: model.busy, variant: .primary) { run(model, removing: false) }
+                    StorebenchBusyButton(title: "Save Draft", loadingTitle: "Saving…", busy: model.busy, variant: .primary) { run(model, removing: false) }
                             .help(model.plan == nil ? "Create the new version on this Mac and continue" : "Save the version on this Mac")
+                            .storebenchWorking(model.plan != nil && !model.dirty)
+                    if let sync {
+                        StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Saving…", busy: model.busy) {
+                            operation = Task {
+                                guard await model.save(), model.active, !model.dirty, !Task.isCancelled else { return }
+                                await didSave(false); sync()
+                            }
+                        }
                     }
                     if model.dirty && !model.busy && model.plan != nil { Button("Revert") { model.revert() }.help("Revert to the saved version") }
                     if model.plan != nil && !model.busy { Button("Remove", role: .destructive) {

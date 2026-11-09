@@ -116,7 +116,7 @@ public struct SalesDownloadJob: Identifiable, Equatable, Sendable, PersistentRep
         case ReporterClient.Failure.access: "SB-REPORT-ACCESS"
         case ReporterClient.Failure.wrongAccount: "SB-REPORTER-CHANGED"
         case ReporterClient.Failure.unsupported: "SB-REPORTER-RESPONSE"
-        case ReporterClient.Failure.invalidToken: "SB-REPORTER-KEYCHAIN"
+        case ReporterClient.Failure.invalidToken: "SB-REPORTER-SETUP"
         case ReporterClient.Failure.size: "SB-REPORT-SIZE"
         case let failure as ReportJobFailure: failure.code
         case is JobLock.Failure, is FileMutex.Failure: "SB-REPORT-LOCK"
@@ -125,7 +125,7 @@ public struct SalesDownloadJob: Identifiable, Equatable, Sendable, PersistentRep
         case AppStoreConnectClient.Failure.status(403), SalesFileFailure.scope: "SB-REPORT-ACCESS"
         case ReviewsFailure.noKey, is CredentialAccessFailure: "SB-APPLE-KEYCHAIN"
         case AccountFailure.stale, AccountFailure.notFound: "SB-REPORT-ACCESS"
-        case ReporterClient.Failure.expiredToken: "SB-REPORTER-KEYCHAIN"
+        case ReporterClient.Failure.expiredToken: "SB-REPORTER-SETUP"
         case let failure as SalesFailure:
             switch failure {
             case .conflict: "SB-REPORT-OVERLAP"; case .period: "SB-REPORT-PERIOD"; case .size: "SB-REPORT-SIZE"; case .unavailable: "SB-REPORT-UNAVAILABLE";

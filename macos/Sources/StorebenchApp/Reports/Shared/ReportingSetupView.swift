@@ -42,8 +42,8 @@ struct ReportingSetupView: View {
     private var connected: ReportingConnection.Reporter? { replacing ? nil : baseline?.connection?.reporter }
     var body: some View {
         Card(title: "Reporting connection", subtitle: connected != nil || (source == .api && !savedVendor.isEmpty)
-             ? "Sales, Finance and Analytics downloads use this connection."
-             : "Sales, Finance and Analytics downloads need reporting access. Connect once; Storebench keeps the connection in your encrypted credential storage.",
+             ? "Sales and Finance downloads use this connection."
+             : "Connect to download Sales and Finance reports.",
              help: "reporter", actions: connectionMenu) {
             if account.keyType == "team" {
                 StorebenchChoicePicker("Report source", selection: $source, options: [(ReportingSource.reporter, "Apple Reporter"), (.api, "App Store Connect API · team key")])
@@ -121,7 +121,7 @@ struct ReportingSetupView: View {
         StorebenchSetupStep(number: 3, title: "Paste the token and connect", detail: "Storebench checks reporting access before it saves the token. If Apple returns several accounts or vendors, choose the one that owns this app.") {
             StorebenchSecureField(replacing ? "New Reporter token" : "Reporter token", text: $token).labelsHidden()
                 .accessibilityLabel("Reporter access token").focused($focused, equals: .token).storebenchFormColumn()
-                .onChange(of: token) { clearChoices(); if token.utf16.count > 200 { token = String(token.prefix(200)) } }
+                .onChange(of: token) { clearChoices() }
                 .storebenchWorking(disabled || working)
         }
         if !accounts.isEmpty {
@@ -221,7 +221,7 @@ func reportingSetupMessage(_ error: Error) -> String {
         switch failure {
         case .expiredToken:
             return "Apple did not accept this Reporter token. In App Store Connect, click Trends at the top, then Sales and Trends Reports in the left sidebar. Click the question mark (?) beside About Reports, choose Generate Reporter Token and paste the new token." + reply
-        case .invalidToken: return ReporterSetupFailure.invalid.message
+        case .invalidToken: return "Paste only the Reporter access token from App Store Connect, without spaces or line breaks."
         case .access:
             return "Apple did not give this token access to Sales and Trends reports. The Apple Account that created it needs the Account Holder, Admin, Finance or Sales role, or Access to Reports. Check it under Users and Access → People in App Store Connect." + reply
         case .wrongAccount:

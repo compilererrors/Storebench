@@ -40,7 +40,8 @@ final class AppleWebClient: @unchecked Sendable {
             let (_, switched) = try await send("POST", "/olympus/v1/session", body: .object([("provider", .object([("providerId", Double(candidate.id).map { .number($0) } ?? .string(candidate.id))]))]))
             guard (200..<300).contains(switched) else { continue }
             let (data, status) = try await send("GET", "/iris/v1/apps/\(appId)")
-            if status == 200, let page = try? JSONDecoder().decode(AppStoreConnectClient.Page.self, from: data), page.data.resources.first?.id == appId { team = candidate.id; return }
+            if status == 200, let page = try? JSONDecoder().decode(AppStoreConnectClient.Page.self, from: data),
+               case .one(let app) = page.data, app.type == "apps", app.id == appId { team = candidate.id; return }
         }
         throw AppleIDFailure.noTeam
     }
@@ -68,6 +69,6 @@ final class AppleWebClient: @unchecked Sendable {
             if !problems.isEmpty { throw PublishFailure.refused(AppleProblem.summary(problems, status: status), problems: problems) }
         }
         guard (200..<300).contains(status) else { throw AppStoreConnectClient.Failure.status(status) }
-        return data.isEmpty ? nil : (try? JSONDecoder().decode(AppStoreConnectClient.Page.self, from: data))?.data.resources.first
+        return try AppStoreConnectClient.writtenResource(data, status: status, body: body)
     }
 }

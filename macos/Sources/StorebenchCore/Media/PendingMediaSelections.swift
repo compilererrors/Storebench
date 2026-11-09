@@ -104,7 +104,7 @@ import Observation
             guard owns(ticket) else { return true }
             // Clearing acknowledges this exact selection, rather than any replacement input.
             if selection?.revision == snapshot.revision { selection = ScreenshotSelection(items: []); validatedRevision = selection?.revision; problem = nil }
-            status = (receipt.count == 1 ? "1 screenshot" : "\(receipt.count) screenshots") + " added and saved on this Mac."
+            status = (receipt.count == 1 ? "1 screenshot" : "\(receipt.count) screenshots") + " saved in this media draft."
                 + (flattened == 0 ? "" : " Transparency was replaced with white in \(flattened == 1 ? "1 image" : "\(flattened) images"), as Apple requires.")
             flattened = 0; return true
         } catch {

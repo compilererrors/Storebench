@@ -4,6 +4,18 @@ import Foundation
 import Testing
 @testable import StorebenchApp
 
+@MainActor @Suite struct ReportingSetupMessageTests {
+    init() throws { _ = try TestIsolation.require() }
+    @Test func aLocalTokenEntryProblemDoesNotAskForAccountOrKeychainRecovery() {
+        let message = reportingSetupMessage(ReporterClient.Failure.invalidToken).lowercased()
+        #expect(message.contains("reporter access token"))
+        #expect(!message.contains("vendor") && !message.contains("reporting account") && !message.contains("keychain"))
+        #expect(RecoveryIssue.reporter(ReporterClient.Failure.invalidToken) == nil)
+        #expect(reportingSetupMessage(ReporterClient.Failure.expiredToken).contains("Apple did not accept"))
+        #expect(RecoveryIssue.reporter(ReporterClient.Failure.expiredToken) == "SB-REPORTER-SETUP")
+    }
+}
+
 @MainActor @Suite struct ExplicitRefreshTests {
     init() throws { _ = try TestIsolation.require() }
     private actor Source {

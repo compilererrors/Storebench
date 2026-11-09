@@ -5,6 +5,7 @@ struct TestFlightBuildAccessView: View {
     let account: Account, app: Account.App, build: TestFlightBuild, session: WorkspaceSession?
     var busyChanged: (Bool) -> Void = { _ in }
     var didPublish: () -> Void = {}
+    @State private var draft: LocalEditorDraftEditor?
     @State private var assigned: [TestFlightTester] = []
     @State private var testers: [TestFlightTester] = []
     @State private var testerId = ""
@@ -25,6 +26,10 @@ struct TestFlightBuildAccessView: View {
     private var busy: Bool { reading || publishing || !preparing.isEmpty }
     private var baseline: String { build.autoNotifyEnabled.map { $0 ? "on" : "off" } ?? "" }
 
+    private var draftValue: JSONText { .object([("tester", .string(testerId)), ("email", .string(email)), ("notification", .string(automatic))]) }
+    private func restoreDraft(_ value: JSONText) {
+        testerId = value["tester"]?.text ?? ""; email = value["email"]?.text ?? ""; automatic = value["notification"]?.text ?? baseline; review = nil
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Card(title: "Individual testers · \(build.title)", subtitle: "Direct access to this build. Apple controls invitation delivery and eligibility.") {
@@ -46,8 +51,8 @@ struct TestFlightBuildAccessView: View {
                     StorebenchPicker("Existing app tester", selection: $testerId) {
                         SelectionOption("Choose a tester", value: "")
                         selectionOptions(testers.filter { candidate in !assigned.contains { $0.id == candidate.id } }) { SelectionOption($0.email, value: $0.id) }
-                    }.storebenchFormColumn()
-                    if build.audience == "APP_STORE_ELIGIBLE" { StorebenchTextField("Tester email", text: $email).storebenchFormColumn() }
+                    }.storebenchFormColumn().storebenchWorking(draft?.loaded != true)
+                    if build.audience == "APP_STORE_ELIGIBLE" { StorebenchTextField("Tester email", text: $email).storebenchFormColumn().storebenchWorking(draft?.loaded != true) }
                     else { Text("Invitations by email need a build that Apple lists as eligible for the App Store.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
                 } else if loaded {
                     Text("Apple must finish processing this build before you can give testers access.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
@@ -57,16 +62,17 @@ struct TestFlightBuildAccessView: View {
                     Button { Task { await load(fresh: true) } } label: { StorebenchBusyLabel("Refresh Access", loading: "Reading…", busy: reading) }.help("Refresh Individual Access")
                     if loaded && !testerId.isEmpty && build.processed {
                         Button { Task { await prepare("assign") { $0.testflightAction = "assign-individual-tester"; $0.testerId = testerId } } } label: {
-                            StorebenchBusyLabel("Review Assignment", loading: "Preparing…", busy: preparing == "assign")
+                            StorebenchBusyLabel("Sync Assignment", loading: "Preparing…", busy: preparing == "assign")
                         }.help("Prepare a review that gives this tester access to \(build.title)")
                     }
                     if loaded && !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && build.processed && build.audience == "APP_STORE_ELIGIBLE" {
                         Button { Task { await prepare("invite") { $0.testflightAction = "invite-individual-tester"; $0.testerEmail = email } } } label: {
-                            StorebenchBusyLabel("Review Invitation", loading: "Preparing…", busy: preparing == "invite")
+                            StorebenchBusyLabel("Sync Invitation", loading: "Preparing…", busy: preparing == "invite")
                         }.help("Prepare a review that invites this email to \(build.title)")
                     }
                 }.storebenchWorking(busy)
                 StorebenchFeedback(text: status, height: 40)
+                if let draft { LocalDraftActions(editor: draft, value: draftValue, restore: restoreDraft, blocked: busy) }
             }.storebenchWorking(publishing)
             Card(title: "Automatic tester notification", subtitle: "Choose whether Apple should notify assigned testers when this build is approved for external testing.") {
                 Text("Current setting: \(baseline.isEmpty ? "Unknown" : baseline == "on" ? "On" : "Off")").font(.sbHeadline)
@@ -75,23 +81,24 @@ struct TestFlightBuildAccessView: View {
                         SelectionOption("Choose On or Off", value: "")
                         SelectionOption("On", value: "on")
                         SelectionOption("Off", value: "off")
-                    }.storebenchFormColumn()
+                    }.storebenchFormColumn().storebenchWorking(draft?.loaded != true)
                 }
                 Text(build.canSetAutomaticNotification ? "Available before beta approval. This setting does not itself start testing." : "Apple must confirm a processed, unexpired build awaiting external beta submission or review, and its current On or Off setting.")
                     .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).frame(maxWidth: .infinity, minHeight: 40, alignment: .topLeading)
                 if build.canSetAutomaticNotification && !automatic.isEmpty && automatic != baseline {
                     StorebenchFormFooter {
                         Button { Task { await prepare("notify") { $0.testflightAction = "set-auto-notify"; $0.autoNotifyEnabled = automatic == "on" } } } label: {
-                            StorebenchBusyLabel("Review Notification", loading: "Preparing…", busy: preparing == "notify")
+                            StorebenchBusyLabel("Sync to Apple", loading: "Preparing…", busy: preparing == "notify")
                         }.help("Review Notification Change")
                     }
                 }
                 StorebenchFeedback(text: notificationStatus, height: 40)
+                if let draft { LocalDraftActions(editor: draft, value: draftValue, restore: restoreDraft, blocked: busy) }
             }.storebenchWorking(busy)
             ReviewPanel(account: account, app: app, session: session, review: $review, done: {
                 if review?.state == "complete" { email = ""; testerId = ""; automatic = ""; didPublish() }
                 Task { await load() }
-            }, busyChanged: { publishing = $0 })
+            }, busyChanged: { publishing = $0 }, syncConfirmation: true)
         }
         .task(id: build.id) {
             automatic = baseline
@@ -99,11 +106,17 @@ struct TestFlightBuildAccessView: View {
             if !loaded, let read = await history?.rememberedDecodedRead(readKey, as: Read.self), !Task.isCancelled, !loaded { assigned = read.assigned; testers = read.testers; loaded = true; readAt = history?.rememberedReadAt(readKey) }
             guard !Task.isCancelled else { return }
             await load()
+            if let session {
+                let owner = LocalEditorDraftEditor(scope: .init(accountId: account.id, appId: app.id, editor: "testflight-build-access", resource: build.id), session: session)
+                draft = owner
+                if let saved = await owner.load(initial: draftValue) { restoreDraft(saved) }
+            }
         }
         .onChange(of: busy) { busyChanged(busy) }
         .onChange(of: baseline) { previous, current in if automatic.isEmpty || automatic == previous { automatic = current } }
         .onDisappear { busyChanged(false) }
-        .trackUnsavedChanges(!email.isEmpty || (!automatic.isEmpty && automatic != baseline), busy: busy)
+        .onChange(of: draftValue) { if review?.state == "prepared" { review = nil } }
+        .trackUnsavedChanges(draft?.dirty(draftValue) == true, busy: busy || draft?.busy == true, onSave: { await draft?.saveCurrent(value: { draftValue }) == true })
     }
     private func load(fresh: Bool = false) async {
         await ScreenReads.reading(fresh: fresh) {
@@ -125,6 +138,7 @@ struct TestFlightBuildAccessView: View {
         guard !busy else { return }
         preparing = action; defer { preparing = "" }
         status = ""; notificationStatus = ""
+        guard await draft?.save(draftValue) == true, draft?.dirty(draftValue) == false else { return }
         let (prepared, problem) = await prepareTestFlight(account, app, session, buildId: build.id, configure)
         review = prepared
         if action == "notify" { notificationStatus = problem } else { status = problem }

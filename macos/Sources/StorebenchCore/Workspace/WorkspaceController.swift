@@ -7,6 +7,7 @@ import Security
     public enum State: Equatable { case loading, chooseStorage, migrateStorage, notSetUp, locked, unlocking, closing, unlocked([Account]), failed(String) }
     public private(set) var session: WorkspaceSession?
     public private(set) var state: State = .loading
+    public private(set) var isTerminating = false
     public private(set) var editingPreferences: EditingPreferences?
     public private(set) var lockMode: Workspace.Lock?
     public var lastError = ""
@@ -31,7 +32,15 @@ import Security
     /// The wait after unlocking before recently planned releases are read in the background; nil turns the warm-up off.
     private let releaseWarmDelay: Duration?
     @ObservationIgnored private var releaseWarmTask: Task<Void, Never>?
-    private var transitioning = false
+    private var transitioning = false {
+        didSet {
+            if !transitioning {
+                let waiting = transitionWaiters; transitionWaiters = []
+                waiting.forEach { $0.resume() }
+            }
+        }
+    }
+    @ObservationIgnored private var transitionWaiters: [CheckedContinuation<Void, Never>] = []
     @ObservationIgnored private var backupTask: Task<Void, Never>?
     @ObservationIgnored private var availabilityTask: Task<Void, Never>?
     @ObservationIgnored private var memoryPressure: DispatchSourceMemoryPressure?
@@ -51,7 +60,7 @@ import Security
     deinit { backupTask?.cancel(); availabilityTask?.cancel(); releaseWarmTask?.cancel(); appRefresh?.task.cancel(); memoryPressure?.cancel() }
 
     public func start() async {
-        guard !transitioning, session == nil else { return }
+        guard !isTerminating, !transitioning, session == nil else { return }
         guard state == .loading else { return }
         transitioning = true; defer { transitioning = false }
         state = .loading
@@ -287,6 +296,22 @@ import Security
         do { try await current.signOut() }
         catch { lastError = Self.message(for: error) }
         drop(current); lockMode = try? workspaceLock(); state = .locked
+    }
+
+    /// Quit stops background readers and waits for admitted writes before AppKit terminates the process.
+    /// Closing sample data here must not reopen the user's other workspace.
+    public func prepareToTerminate() async {
+        isTerminating = true
+        while transitioning {
+            await withCheckedContinuation { transitionWaiters.append($0) }
+        }
+        transitioning = true; defer { transitioning = false }
+        state = .closing
+        backupTask?.cancel(); availabilityTask?.cancel(); releaseWarmTask?.cancel(); appRefresh?.task.cancel()
+        if let current = session {
+            do { try await current.signOut() } catch { lastError = Self.message(for: error) }
+            if let opened = sampleWorkspace { dropSample(opened) } else { drop(current) }
+        }
     }
 
     public func restore(backup: URL, password: String) async {

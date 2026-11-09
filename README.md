@@ -1,6 +1,6 @@
 # Storebench
 
-![Storebench with a saved ASO timeline and listing changes overlaid on reports](docs/images/storebench.png)
+![Storebench with a saved ASO timeline and listing changes overlaid on reports](docs/images/aso-progress.png)
 
 Storebench is a native Mac app for developers managing several apps in App Store Connect. Set country prices from one guide price, keep the listings and reports you import, and see how your numbers changed around each listing update. Prepare releases, manage TestFlight and make screenshot cards in the same encrypted local workspace.
 
@@ -45,13 +45,17 @@ Use **Release** for a new app, a new platform or a release that needs the full s
 
 App information, age rating, availability, accessibility and other required declarations are surfaced before submission. Available actions depend on your account and Apple's current state; App Privacy and Tax Category use a separate Apple ID sign-in. Each change at Apple still has its own review and approval.
 
+Use **Save Draft** to keep your work on this Mac and continue in another view. Release settings, listing text, screenshot removals and order, build choices, compliance answers and editable TestFlight forms keep local drafts. Incomplete answers can be saved locally. **Sync to Apple** saves the current draft automatically and opens a confirmation showing the exact changes. Confirm with **Sync to Apple** to send them; a separate local save is optional. Conflicting local saves require comparison before another save.
+
+Closing a window, quitting or signing out offers **Save**, **Discard** and **Cancel** when there are unsaved changes. Save keeps drafts on this Mac. Background reads do not block a clean window from closing. Quitting stops background readers and waits for already admitted writes to finish safely; it never publishes a draft as part of closing.
+
 For an existing app's next version, **Quick Release** keeps the essentials together: choose the version, create it in App Store Connect, update the text, select the build and its export compliance answer, then Add for Review. It uses the same version plan and drafts as Release. If Apple needs something outside those steps, continue in the full guide without starting over.
 
 [See Release and Quick Release](#release-and-quick-release).
 
 ## Prepare screenshots without moving between tools
 
-Add screenshots from files or Asset Library in **Release → Text and Screenshots**. Check the language and display size, drag screenshots into the order you want, and save the layout. Upload prepares a review of what will change at Apple.
+Add several screenshots at once from files or Asset Library in **Release → Text and Screenshots**. Remove individual screenshots, clear a display size or all screenshots in a language, and restore removed images without losing their originals. When adding replacement files, Storebench saves the screenshot layout locally first to free the selected slots. Check the language and display size, drag screenshots into the order you want, and choose **Save Draft**. **Sync to Apple** prepares a review of what will change at Apple. After approval, independent uploads, removals and additions run in bounded parallel groups. Up to ten media processing checks wait on Apple together, and progress updates as each job finishes. Each file's steps stay in order, each display group's removals finish before its additions, and its final order is sent together in one request.
 
 Use **Create Media** to turn your app screenshots into App Store cards with titles, text, backgrounds and reusable styles. Choose the Mac's system fonts, any installed font or a font file of your own, and edit the settings beside a preview that stays in view. A finished card set can be translated into another language on the Mac with Apple's translation, keeping the same look and screenshots. Save the finished PNGs to **Asset Library**, choose them for a release, and arrange them with your other screenshots. Asset Library keeps encrypted local originals and their history so you can reuse earlier material.
 
@@ -178,56 +182,40 @@ Storebench is source-available. Personal and other non-commercial use is free. B
 
 ## Screenshots
 
-These images use the app's own components and synthetic reports for the fictional app Driftwood Journal. The changes and numbers are examples.
-
 ### Pricing models
 
-One guide price, several country-pricing models, and a saved recipe you can reuse.
-
-![Country pricing compared across currency conversion, purchasing power, the Big Mac Index and a custom recipe](docs/images/pricing.png)
+![Country-pricing editor with a guide price, selected pricing method and rounded country prices](docs/images/pricing.png)
 
 ### ASO history
 
-Saved listing changes overlaid on impressions, product page views and downloads, colored by what changed, with your own notes and a before/after comparison.
+![ASO timeline with indexed report measures, listing-change markers and a chart note](docs/images/aso-progress.png)
 
-![ASO timeline with listing-change markers colored by field, a note of your own, overlaid measures and reported values before and after an update](docs/images/aso-progress.png)
+![Report comparisons before and after each saved listing change](docs/images/storebench.png)
 
 ### Release and Quick Release
 
-The full release guide brings setup and missing requirements into one flow. Quick Release keeps the five essential steps for an existing app's next version.
+![The Release guide showing the saved version, starting material and numbered release steps](docs/images/release-guide.png)
 
-![Full release guide with app information and compliance requirements before App Review](docs/images/release-guide.png)
-
-![Quick Release showing version, creation, text, build and Add for Review](docs/images/quick-release.png)
+![The Quick Release page with numbered steps for a saved version](docs/images/quick-release.png)
 
 ### TestFlight builds and groups
 
-See build status, tester groups and export compliance while preparing beta testing.
-
-![TestFlight builds with tester groups and export compliance status](docs/images/testflight.png)
+![TestFlight builds with processing and export compliance status](docs/images/testflight.png)
 
 ### Screenshots and card creation
 
-Choose images, arrange their order, and create your own cards before preparing an upload.
+![Screenshots grouped by display size, with ordering and inclusion controls](docs/images/screenshots.png)
 
-![Screenshots arranged by language and display size, with ordering and upload controls](docs/images/screenshots.png)
-
-![Create Media with an App Store card preview, editable title and local Asset Library save](docs/images/create-media.png)
+![Create Media with an App Store card preview and layout settings](docs/images/create-media.png)
 
 ### Asset Library
 
-Keep originals and earlier screenshot versions available for the next release.
-
-![Encrypted local screenshot originals and saved versions in Asset Library](docs/images/asset-library.png)
+![Screenshot originals in Asset Library](docs/images/asset-library.png)
 
 ### Review before sending
-
-Read the current and proposed values before Send to Apple. Saving a draft locally does not send it.
 
 ![The exact App Store Connect changes and before/after values before Send to Apple](docs/images/review-changes.png)
 
 ### Localizations
-
-Edit each language with its character budgets and current saved text together.
 
 ![Localizations with listing fields and character limits for each language](docs/images/localizations.png)

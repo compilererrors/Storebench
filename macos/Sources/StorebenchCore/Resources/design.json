@@ -3132,6 +3132,7 @@
     "assetPreviewHeight": 220,
     "assetPreviewPadding": 12,
     "assetTitleHeight": 40,
+    "assetCompactTitleHeight": 32,
     "assetMetadataHeight": 20,
     "assetBadgeHeight": 24,
     "assetPadding": 16,

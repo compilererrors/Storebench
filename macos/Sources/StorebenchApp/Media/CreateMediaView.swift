@@ -347,10 +347,20 @@ struct CreateMediaView: View {
         Card(title: "Use the Cards", subtitle: "Each card is an opaque \(set.width) × \(set.height) px PNG, the size Apple accepts for \(StoreLocales.displayTypeName(set.displayType)). Saving to Asset Library keeps them on this Mac. Then add them in Release step 2, Text and Screenshots, which uploads them after you approve.") {
             Text(set.cards.count == 1 ? "Save All creates 1 PNG file." : "Save All creates \(set.cards.count) PNG files, one per card, in card order.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
             StorebenchActionGroup {
+                StorebenchBusyButton(title: "Save Draft", loadingTitle: "Saving…", busy: saving, variant: .primary) { Task { _ = await save() } }
+                    .storebenchWorking(!dirty || stale)
                 Button("Save All to Asset Library") { Task { await saveToLibrary(all: true) } }.buttonStyle(StorebenchButtonStyle(.primary))
                 Button("Save This Card") { Task { await saveToLibrary(all: false) } }.help("Save the selected card to Asset Library")
                 Button("Export PNG") { Task { await exportPNG() } }.help("Save the selected card as a PNG file on this Mac")
             }.storebenchWorking(busy)
+            if let openReleaseStep {
+                Button("Open Apple Sync") {
+                    Task {
+                        if await saveToLibrary(all: true) { openReleaseStep("listing") }
+                    }
+                }.help("Save the cards to Asset Library, then choose their language and version in Release before Sync to Apple")
+                    .storebenchWorking(busy || saving || stale)
+            }
         }
     }
 
@@ -674,9 +684,9 @@ struct CreateMediaView: View {
         return result
     }
 
-    private func saveToLibrary(all: Bool) async {
-        guard let session, let set = opened, let index, !busy else { return }
-        guard await save() else { return }
+    @discardableResult private func saveToLibrary(all: Bool) async -> Bool {
+        guard let session, let set = opened, let index, !busy else { return false }
+        guard await save() else { return false }
         working = true; defer { working = false }
         let chosen = all ? Array(set.cards.enumerated()) : [(index, set.cards[index])]
         do {
@@ -692,10 +702,12 @@ struct CreateMediaView: View {
             status = (files.count == 1 ? "1 card" : "\(files.count) cards") + " saved to Asset Library on this Mac"
                 + (kept == 0 ? "" : kept == files.count ? ", already there unchanged" : ", \(kept) already there unchanged") + ". Next, add them in Release step 2, Text and Screenshots."
             statusError = false
+            return true
         } catch let failure as CardExportFailure {
             selectedId = set.cards[failure.position].id
             status = "Card \(failure.position + 1): \(failure.failure.message) Nothing was saved."; statusError = true
-        } catch { status = (error as? PublishFailure)?.message ?? "The cards could not be saved to Asset Library."; statusError = true }
+            return false
+        } catch { status = (error as? PublishFailure)?.message ?? "The cards could not be saved to Asset Library."; statusError = true; return false }
     }
 
     private func exportPNG() async {

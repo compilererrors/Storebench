@@ -158,12 +158,11 @@ struct ReleaseWizardView: View {
                 availability = await session.newVersionAvailability(accountId: account.id, appId: app.id)
                 if !model.dirty { changed() }
                 if creating { go("listing") }
-            })
+            }, sync: { go("send") })
         case "listing":
             if let saved = model.plan, let listing, listing.active, listing.scope.revisionId == saved.sourceRevisionId, listing.versionId == saved.baseVersionId {
-                VersionListingView(account: account, planEditor: model, session: session, focusedLocale: $focusedLocale, providedModel: listing, saved: { continueToSend(guide) })
+                VersionListingView(account: account, planEditor: model, session: session, focusedLocale: $focusedLocale, providedModel: listing, didSync: { afterApple() })
                 .id("version-listing-\(saved.accountId)/\(saved.appId)/\(saved.sourceRevisionId)/\(saved.baseVersionId)")
-                screenshotsSave(guide: guide, listing: listing)
             } else if model.plan != nil {
                 StorebenchLoadState(state: .loading("Reading planned listing…")) { EmptyView() } placeholder: { StorebenchCollectionPlaceholder(rows: 3) }
             }
@@ -324,18 +323,6 @@ struct ReleaseWizardView: View {
     }
     /// The one place screenshots reach App Store Connect: below the editor that chooses and orders them. Its review is prepared
     /// again after edits are saved on this Mac, while the last one stays on screen.
-    @ViewBuilder private func screenshotsSave(guide: ReleaseGuide.Guide, listing: VersionListingEditor) -> some View {
-        if let send = guide.phases.first(where: { $0.id == "send" }), !send.locked, let snapshot = readiness?.snapshot {
-            if ReleaseWizard.sendScope(send) == .metadata {
-                PublishActionPanel(account: account, app: app, session: session, actions: [.metadata], initialRequest: stageRequest(snapshot, PublishRequest.screenshotsStage), automatic: true,
-                                   guided: ("Save to App Previews and Screenshots", "Uploads files Apple does not have yet to Asset Library, then adds them to this version's App Previews and Screenshots in the order above. Text is saved in step \(send.number)."),
-                                   refreshKey: listing.dirty || listing.busy ? "editing" : "saved", fix: { fix(check: $0, in: guide) }, done: { _ in afterApple() })
-                    .id("listing-screenshots")
-            } else {
-                Card(title: "Save to App Previews and Screenshots", subtitle: "The version must exist in App Store Connect first. Create it in step \(send.number), then save its screenshots here.") { EmptyView() }
-            }
-        }
-    }
     /// The step 2 screenshots Save or the step 3 text Save of this version's saved listing.
     private func stageRequest(_ snapshot: ReleaseReadinessSnapshot, _ stage: String) -> PublishRequest {
         var request = self.request(.metadata, snapshot: snapshot); request.mediaStage = stage; return request
@@ -352,20 +339,6 @@ struct ReleaseWizardView: View {
             return .init(accountId: account.id, appId: app.id, scope: scope, versionId: snapshot.targetVersionId)
         }
     }
-    /// Every move between steps saves local edits on this Mac first, then checks the new step against App Store Connect.
-    /// After Save in step 2 the text is sent from its own step: Release opens it and goes to Send to Apple once its review is ready.
-    /// A screenshots review still waiting in step 2 keeps the step open, so it is not left behind.
-    private func continueToSend(_ guide: ReleaseGuide.Guide) {
-        guard phase == "listing", readyReviews?.entries.isEmpty != false, let send = guide.phases.first(where: { $0.id == "send" }), !send.locked else { return }
-        go("send")
-        Task { @MainActor in
-            for _ in 0..<20 {
-                try? await Task.sleep(for: .milliseconds(150)); guard phase == "send" else { return }
-                if let first = readyReviews?.entries.first, !first.sending { readyReviews?.show(first.id); return }
-            }
-        }
-    }
-
     private func go(_ id: String, _ target: ReleaseWizard.Focus? = nil) {
         guard ReleaseWizard.phaseIds.contains(id) else { return }
         let change: @MainActor () -> Void = {

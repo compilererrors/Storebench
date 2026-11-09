@@ -4,6 +4,17 @@ import SwiftUI
 struct LibraryView: View {
     let accounts: [Account]
     let model: LibraryModel
+    init(accounts: [Account], model: LibraryModel, initialLocation: LibraryLocation = LibraryLocation()) {
+        self.accounts = accounts; self.model = model
+        _selection = State(initialValue: initialLocation.selection)
+        _appSection = State(initialValue: initialLocation.section)
+        _editorContext = State(initialValue: initialLocation.context)
+        _portfolioRange = State(initialValue: initialLocation.salesRange)
+        _analyticsKind = State(initialValue: initialLocation.analyticsKind)
+        _connecting = State(initialValue: initialLocation.connecting)
+        _releaseStep = State(initialValue: initialLocation.releaseStep)
+        _navigationHistory = State(initialValue: NavigationHistory(initialLocation))
+    }
     @State private var selection: String? = LibraryOverview.Section.overview.selection
     @State private var connecting = false
     @State private var portfolioRange: SalesPresentation.Range?
@@ -45,7 +56,7 @@ struct LibraryView: View {
                 VStack(spacing: 0) {
                     StorebenchTopbar(breadcrumb: breadcrumb, appName: selected?.1.name, canGoBack: navigationHistory.canGoBack, canGoForward: navigationHistory.canGoForward,
                         back: { navigateHistory(.back) }, forward: { navigateHistory(.forward) }, overview: { selectApp(LibraryOverview.Section.overview.selection) }, signOut: model.lockMode == .password ? {
-                        if EditorWindows.allowLeaving() { Task { await model.signOut() } }
+                        Task { if await EditorWindows.requestClosing(reason: .signOut) { await model.signOut() } }
                     } : nil)
                     Group { if savedReadsSession == session.map(ObjectIdentifier.init) { libraryContent } else { Color.clear } }.frame(maxWidth: .infinity, maxHeight: .infinity)
                         .environment(\.navigationPresentation, NavigationPresentationContext(store: navigationPresentation, entry: navigationHistory.currentID))
@@ -316,7 +327,7 @@ struct LibraryView: View {
     }
 }
 
-private struct LibraryLocation: Equatable, Sendable {
+struct LibraryLocation: Equatable, Sendable {
     var selection: String? = LibraryOverview.Section.overview.selection
     var section: AppNavigation.Section = .overview
     var context: AppNavigation.Context?

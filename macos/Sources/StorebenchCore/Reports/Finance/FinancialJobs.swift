@@ -67,7 +67,7 @@ public struct FinancialDownloadJob: Identifiable, Equatable, Sendable, Persisten
         case ReporterClient.Failure.access: "SB-FINANCE-ACCESS"
         case ReporterClient.Failure.wrongAccount: "SB-REPORTER-CHANGED"
         case ReporterClient.Failure.unsupported: "SB-FINANCE-RESPONSE"
-        case ReporterClient.Failure.invalidToken: "SB-REPORTER-KEYCHAIN"
+        case ReporterClient.Failure.invalidToken: "SB-REPORTER-SETUP"
         case ReporterClient.Failure.size: "SB-REPORT-SIZE"
         case let failure as ReportJobFailure: failure.code
         case is FileMutex.Failure, is JobLock.Failure: "SB-REPORT-LOCK"
@@ -75,7 +75,7 @@ public struct FinancialDownloadJob: Identifiable, Equatable, Sendable, Persisten
         case AppStoreConnectClient.Failure.status(401): "SB-APPLE-AUTH"
         case AppStoreConnectClient.Failure.status(403): "SB-APPLE-ACCESS"
         case ReviewsFailure.noKey, is CredentialAccessFailure: "SB-APPLE-KEYCHAIN"
-        case ReporterClient.Failure.expiredToken: "SB-REPORTER-KEYCHAIN"
+        case ReporterClient.Failure.expiredToken: "SB-REPORTER-SETUP"
         case let failure as FinanceFailure:
             switch failure {
             case .request: "SB-FINANCE-REQUEST"; case .access: "SB-FINANCE-ACCESS"; case .download: "SB-FINANCE-DOWNLOAD";
@@ -130,6 +130,7 @@ extension WorkspaceSession {
     func executeFinancialDownload(account: Account, appId: String, client: AppStoreConnectClient?, reporter: ReporterClient?, job: FinancialDownloadJob,
                                   ownership: ReportJobs.Ownership, now: Date) async throws -> FinancialDownload {
         var current = job
+        var connection: SalesConnection?
         let name = try ReportJobs.name(.financial, accountId: account.id, appId: appId)
         let monitor = Task { [weak self] in
             while !Task.isCancelled {
@@ -141,12 +142,19 @@ extension WorkspaceSession {
         func check() throws {
             try self.financialFileScope(account, appId: appId)
             try self.storeAccess { try ReportJobs.checkCancellation(FinancialDownloadJob.self, ownership: ownership, store: $0) }
+            if let connection {
+                let current = try self.salesConnection(accountId: account.id)
+                let selected = job.selection.source == .api ? current.map { ReportingConnection(accountId: $0.accountId, vendorNumber: $0.vendorNumber, reporter: nil) } : current
+                guard selected == connection else { throw FinanceFailure.access }
+            }
         }
         do {
             try check()
             let selection = job.selection
             let client = try selection.source == .api ? client ?? self.client(for: account) : client
             let reporter = try selection.source == .reporter ? reporter ?? self.reporterClient(accountId: account.id) : nil
+            do { connection = try capturedSalesConnection(accountId: account.id, reporter: reporter, source: selection.source) }
+            catch SalesFailure.changedConnection { throw FinanceFailure.access }
             var review = try await downloadFinancialBody(account: account, appId: appId, region: selection.region,
                 periods: FinancialReports.periods(ending: FiscalPeriod(year: selection.year, period: selection.period), count: selection.periods), client: client,
                 reporter: reporter, source: selection.source, now: now, reviewId: UUID(uuidString: job.id)!, check: check,

@@ -35,10 +35,24 @@ extension WorkspaceSession {
     /// The app's in-app purchase and subscription IDs. A catalog that cannot be read is incomplete, never empty.
     static func productScope(appId: String, client: AppStoreConnectClient) async -> ProductScope {
         var ids: [String] = [], complete = true
-        do { ids += try await client.list("/v1/apps/\(appId)/inAppPurchasesV2?limit=200&fields%5BinAppPurchases%5D=productId").filter { $0.type == "inAppPurchases" }.map(\.id) } catch { complete = false }
+        func checked(_ rows: [AppStoreConnectClient.Resource], type: String, parent: (String, String, String), numeric: Bool) throws -> [AppStoreConnectClient.Resource] {
+            guard Set(rows.map(\.id)).count == rows.count, rows.allSatisfy({ item in
+                guard item.type == type, ProductPricing.opaque(item.id),
+                      !numeric || item.id.range(of: #"\A[0-9]{1,30}\z"#, options: .regularExpression) != nil else { return false }
+                guard let relationship = item.relationships?[parent.0] else { return true }
+                guard case .object(let fields) = relationship else { return false }
+                return fields["data"] == nil || Apple.owned(item, parent.0, parent.1, parent.2)
+            }) else { throw SalesFailure.changedConnection }
+            return rows
+        }
         do {
-            for group in try await client.list("/v1/apps/\(appId)/subscriptionGroups?limit=200") where group.type == "subscriptionGroups" {
-                ids += try await client.list("/v1/subscriptionGroups/\(group.id)/subscriptions?limit=200&fields%5Bsubscriptions%5D=productId,group").map(\.id)
+            ids += try checked(await client.list("/v1/apps/\(appId)/inAppPurchasesV2?limit=200&fields%5BinAppPurchases%5D=productId"),
+                               type: "inAppPurchases", parent: ("app", "apps", appId), numeric: true).map(\.id)
+        } catch { complete = false }
+        do {
+            for group in try checked(await client.list("/v1/apps/\(appId)/subscriptionGroups?limit=200"), type: "subscriptionGroups", parent: ("app", "apps", appId), numeric: false) {
+                ids += try checked(await client.list("/v1/subscriptionGroups/\(group.id)/subscriptions?limit=200&fields%5Bsubscriptions%5D=productId,group"),
+                                   type: "subscriptions", parent: ("group", "subscriptionGroups", group.id), numeric: true).map(\.id)
             }
         } catch { complete = false }
         let valid = ids.filter { $0.range(of: #"^\d{1,30}$"#, options: .regularExpression) != nil }

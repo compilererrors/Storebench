@@ -4,6 +4,7 @@ import SwiftUI
 struct RootView: View {
     let model: LibraryModel
     let recovery: RecoveryCoordinator
+    var initialLocation = LibraryLocation()
     @State private var protection = EditorProtection()
     @State private var shortcutActions = ShortcutActions()
     @Environment(\.scenePhase) private var scenePhase
@@ -11,7 +12,10 @@ struct RootView: View {
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        content.id(model.session.map(ObjectIdentifier.init))
+        Group {
+            if model.isTerminating { ProgressView("Finishing work before quitting…") }
+            else { content }
+        }.id(model.session.map(ObjectIdentifier.init))
             .trackUnsavedChanges(false, busy: model.state == .closing)
             .trackUnsavedChanges(false, busy: shortcutActions.hasPendingActions, id: "keyboard-actions")
             .environment(\.editingPreferences, model.editingPreferences).environment(\.editorProtection, protection)
@@ -29,8 +33,7 @@ struct RootView: View {
         case .accounts, .storage, .help: _ = recovery.open(action, onOpen: { openSettings() })
         case .developerAccount: openURL(URL(string: "https://developer.apple.com/account/")!)
         case .unlock:
-            guard EditorWindows.allowLeaving() else { return }
-            Task { await model.signOut() }
+            Task { if await EditorWindows.requestClosing(reason: .signOut) { await model.signOut() } }
         default: break
         }
     }
@@ -51,7 +54,7 @@ struct RootView: View {
                 }
             }
         case .locked: UnlockView(model: model)
-        case .unlocked(let accounts): LibraryView(accounts: accounts, model: model)
+        case .unlocked(let accounts): LibraryView(accounts: accounts, model: model, initialLocation: initialLocation)
         }
     }
 }

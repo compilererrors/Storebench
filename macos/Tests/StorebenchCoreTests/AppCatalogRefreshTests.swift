@@ -88,6 +88,15 @@ import Testing
         #expect(summary.message.contains("still shown"))
     }
 
+    @Test func anUnexpectedResourceTypeCannotEraseTheSavedAppSelection() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let before = try await session.accounts(), account = try #require(before.first), host = "catalog-wrong-type.appstoreconnect.test"
+        StubProtocol.handle(host) { _ in (200, [:], Data(#"{"data":[{"type":"builds","id":"1000000900"}],"links":{}}"#.utf8)) }
+        let summary = try await session.refreshAppCatalog { _ in try client(account, host: host) }
+        #expect(!summary.complete && !summary.issues.isEmpty)
+        #expect(try await session.accounts() == before)
+    }
+
     @Test @MainActor func aCancelledRefreshDoesNotReplaceTheSavedSelection() async throws {
         let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
         let before = try await session.accounts(), account = try #require(before.first)

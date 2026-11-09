@@ -7,21 +7,43 @@ struct StorageChoiceView: View {
     let model: LibraryModel
     var body: some View {
         StorebenchAuthScreen {
-            StorebenchAuthCard(title: "Use Keychain?", message: "Choose how Storebench saves encryption keys and credentials. Your saved data and media are encrypted with either option.", wide: true) {
-                StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 260) {
-                    StorebenchSetupOption(title: "Mac Keychain", description: "Unlock automatically with your Mac. macOS may ask for permission; choose Always Allow to remember it.", recommended: true) {
+            VStack(spacing: 24) {
+                VStack(spacing: 12) {
+                    StorebenchAppIcon(size: 64).padding(.bottom, 4)
+                    Text("Welcome to Storebench").font(.sbLargeTitle)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Choose how to unlock your saved apps and credentials.")
+                        .font(.sbBody).foregroundStyle(StorebenchTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }.multilineTextAlignment(.center).frame(maxWidth: .infinity)
+
+                VStack(spacing: 0) {
+                    StorebenchSetupOption(title: "Mac Keychain", description: "Unlock automatically with your Mac. Choose Always Allow if macOS asks for access.", recommended: true) {
                         Button("Use Keychain") { Task { await model.selectStorage(.keychain) } }.buttonStyle(StorebenchButtonStyle(.primary))
                     }
-                    StorebenchSetupOption(title: "Password without Keychain", description: "Encrypt keys and credentials with a Storebench password. Enter it when you open the app; it cannot be recovered.") {
+                    StorebenchDivider().padding(.horizontal, 20)
+                    StorebenchSetupOption(title: "Storebench Password", description: "Use a separate password instead of Keychain. You enter it when opening the app; it cannot be recovered.") {
                         Button("Use Password") { Task { await model.selectStorage(.password) } }.help("Use Password Without Keychain").accessibilityLabel("Use Password Without Keychain")
                     }
-                    StorebenchSetupOption(title: "Explore first", description: "Look around with sample data before choosing storage or connecting Apple. Nothing is saved or sent to Apple.") {
-                        Button("Load Sample Data") { Task { await model.openSampleData() } }.help("Explore Storebench with Fictional Apps").accessibilityLabel("Load Sample Data")
+                }
+                .background(StorebenchTheme.surface, in: RoundedRectangle(cornerRadius: StorebenchTheme.radius))
+                .overlay(RoundedRectangle(cornerRadius: StorebenchTheme.radius).strokeBorder(StorebenchTheme.border))
+
+                Text("Your saved data and media are encrypted with either option.")
+                    .font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
+                    .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+
+                VStack(spacing: 0) {
+                    StorebenchDivider().padding(.horizontal, 20)
+                    StorebenchSetupOption(title: "Take a Look Around", description: "Explore Storebench with sample apps before setting up.") {
+                        Button("Load Sample Data") { Task { await model.openSampleData() } }
+                            .buttonStyle(StorebenchButtonStyle(.quiet))
+                            .help("Explore Storebench with Fictional Apps").accessibilityLabel("Load Sample Data")
                     }
                 }
-                Text("If your existing data uses Keychain, choosing password storage offers an explicit copy step before accessing those saved keys.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
-                StorebenchFeedback(text: model.lastError, error: true)
-            }.frame(maxWidth: 760)
+                StorebenchTextSlot(text: model.lastError, height: 44, font: .sbCallout, color: StorebenchTheme.color("color-danger"), live: true)
+                    .accessibilityAddTraits(.updatesFrequently)
+            }.frame(maxWidth: 680)
         }
     }
 }

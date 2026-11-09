@@ -5,6 +5,7 @@ import SwiftUI
 struct TestFlightInformationView: View {
     let account: Account, app: Account.App, session: WorkspaceSession?
     @Environment(\.editorProtection) private var protection
+    @State private var draft: LocalEditorDraftEditor?
     @State private var localizations: [TestFlightLocalization] = []
     @State private var license: String?
     @State private var agreement = ""
@@ -26,6 +27,12 @@ struct TestFlightInformationView: View {
     private var available: [String] { StoreLocales.codes.filter { !codes.contains($0) } }
     private var busy: Bool { working || !busyLocales.isEmpty || publishingLicense }
     private var dirty: Bool { !agreement.utf8.elementsEqual((license ?? "").utf8) }
+    private var draftValue: JSONText { .object([("license", .string(agreement)), ("languages", .array(addedLocales.sorted().map(JSONText.string)))]) }
+    private func restoreDraft(_ value: JSONText) {
+        agreement = value["license"]?.text ?? ""
+        if case .array(let languages)? = value["languages"] { addedLocales = Set(languages.compactMap(\.text)) }
+        licenseReview = nil
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             TestFlightReviewInformationView(account: account, app: app, session: session)
@@ -36,12 +43,13 @@ struct TestFlightInformationView: View {
                         if available.contains(newLocale) {
                             Button("Add Language Card") { guard !busy, available.contains(newLocale) else { return }; addedLocales.insert(newLocale); newLocale = available.first ?? "" }.padding(.top, StorebenchTheme.measure("fieldLabel") + StorebenchTheme.measure("fieldGap"))
                         }
-                    }.environment(\.fieldHintHeight, 0).storebenchWorking(busy)
+                    }.environment(\.fieldHintHeight, 0).storebenchWorking(busy || draft?.loaded != true)
                 }
                 StorebenchActionGroup {
                     StorebenchReadButton(informationReady ? "Reload Languages" : "Read Languages") { if !busy, protection?.allowLeaving() != false { await loadInformation() } }.help(informationReady ? "Reload languages from Apple" : "Read Languages from Apple").accessibilityLabel(informationReady ? "Reload languages from Apple" : "Read Languages from Apple").storebenchWorking(busy)
                 }
                 StorebenchFeedback(text: status, height: 40)
+                if let draft { LocalDraftActions(editor: draft, value: draftValue, restore: restoreDraft, blocked: busy) }
                 StorebenchCollection(items: codes.map { StorebenchCollectionEntry(id: $0, value: $0) }, title: { StoreLocales.name($0.value) }, subtitle: { $0.value + " · " + (summaries[$0.value] ?? "Open to edit TestFlight information") },
                                      empty: informationReady ? "No TestFlight languages yet. Choose a language above, then Add Language Card." : "TestFlight languages have not been read. Choose Read Languages.") { entry in
                     TestFlightLanguageInformationEditor(account: account, app: app, session: session,
@@ -52,21 +60,27 @@ struct TestFlightInformationView: View {
                 }
             }
             Card(title: "License Agreement", subtitle: "The beta license agreement testers accept for this app.") {
-                if licenseReady { StorebenchTextArea(text: $agreement, height: 160).accessibilityLabel("Beta license agreement").storebenchWorking(busy) }
-                StorebenchTextSlot(text: licenseReady && dirty ? (agreement.isEmpty ? "Enter the license agreement text, then choose Prepare Review." : "Not sent yet. This change is kept only while this page is open; choose Prepare Review to send it for your approval.") : "",
+                if licenseReady { StorebenchTextArea(text: $agreement, height: 160).accessibilityLabel("Beta license agreement").storebenchWorking(busy || draft?.loaded != true) }
+                StorebenchTextSlot(text: licenseReady && dirty ? (agreement.isEmpty ? "Enter the license agreement text, then choose Prepare Review." : "Not sent yet. Save Draft keeps this change on this Mac. Sync to Apple prepares it for your approval.") : "",
                                    height: 34, font: .sbCaption, color: agreement.isEmpty ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted, live: true)
                 StorebenchFeedback(text: licenseStatus, height: 40)
                 StorebenchFormFooter {
                     Button("Read from Apple") { if !busy, protection?.allowLeaving() != false { Task { await loadLicense(fresh: true) } } }
-                    Button("Prepare Review") { Task { await prepareLicense() } }.buttonStyle(StorebenchButtonStyle(.primary))
-                .storebenchWorking(!(licenseReady && !agreement.isEmpty && dirty))
+
                 }.storebenchWorking(busy)
+                if let draft { LocalDraftActions(editor: draft, value: draftValue, restore: restoreDraft, blocked: busy, sync: { await prepareLicense() }, syncBlocked: !licenseReady || agreement.isEmpty || !dirty) }
             }
-            ReviewPanel(account: account, app: app, session: session, review: $licenseReview, done: { if licenseReview?.state == "complete" { Task { await loadLicense() } } }, busyChanged: { publishingLicense = $0 })
+            ReviewPanel(account: account, app: app, session: session, review: $licenseReview, done: { if licenseReview?.state == "complete" { Task { await loadLicense() } } }, busyChanged: { publishingLicense = $0 }, syncConfirmation: true)
         }
-        .task(id: "\(account.id):\(app.id)") { await showRemembered(); guard !Task.isCancelled else { return }; await loadInformation(); await loadLicense() }
+        .task(id: "\(account.id):\(app.id)") { await showRemembered(); guard !Task.isCancelled else { return }; await loadInformation(); await loadLicense()
+            if let session {
+                let owner = LocalEditorDraftEditor(scope: .init(accountId: account.id, appId: app.id, editor: "testflight-information", resource: "license-and-languages"), session: session)
+                draft = owner
+                if let saved = await owner.load(initial: draftValue) { restoreDraft(saved) }
+            }
+        }
         .onChange(of: Data(agreement.utf8)) { if !busy, licenseReview?.state == "prepared" { licenseReview = nil } }
-        .trackUnsavedChanges(dirty, busy: busy)
+        .trackUnsavedChanges(draft?.dirty(draftValue) == true, busy: busy || draft?.busy == true, onSave: { await draft?.saveCurrent(value: { draftValue }) == true })
     }
     private func loadInformation() async {
         guard !working, let session else { return }
@@ -83,7 +97,7 @@ struct TestFlightInformationView: View {
             working = true; defer { working = false }
             do {
                 license = try await session.testFlightBetaLicense(account: account, appId: app.id)
-                agreement = license ?? ""; licenseReady = license != nil
+                if draft?.dirty(draftValue) != true { agreement = license ?? "" }; licenseReady = license != nil
                 licenseStatus = license == nil ? "Apple has not provided a beta license agreement for this app." : ""
                 remember { $0.license = .some(license) }
             } catch { licenseStatus = "The license could not be read. Your inputs are kept." }
@@ -101,6 +115,7 @@ struct TestFlightInformationView: View {
     private func prepareLicense() async {
         guard !busy, licenseReady else { return }
         working = true; defer { working = false }
+        guard await draft?.save(draftValue) == true, draft?.dirty(draftValue) == false else { return }
         (licenseReview, licenseStatus) = await prepareTestFlight(account, app, session) { $0.testflightAction = "save-beta-license"; $0.agreementText = agreement }
     }
 }

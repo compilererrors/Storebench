@@ -61,7 +61,7 @@ struct TestFlightReviewInformationView: View {
                     }.storebenchWorking(busy)
                 }
             }
-            ReviewPanel(account: account, app: app, session: session, review: $review, busyChanged: { publishing = $0 })
+            ReviewPanel(account: account, app: app, session: session, review: $review, busyChanged: { publishing = $0 }, syncConfirmation: true)
         }
         .task(id: "\(account.id):\(app.id)") { await load() }
         .trackUnsavedChanges(dirty, busy: busy, problem: { problem ? "TestFlight Beta App Review Information: " + status : nil }, onSave: { await save(); return !dirty })
@@ -69,7 +69,7 @@ struct TestFlightReviewInformationView: View {
     @ViewBuilder private var actions: some View {
         if !loaded { Button("Read Saved Draft") { Task { await load() } } }
         if loaded { Button("Compare with Apple") { Task { await readApple() } } }
-        Button("Prepare Review") { Task { await prepare() } }.storebenchWorking(!(revision > 0 && !dirty))
+        Button("Sync to Apple") { Task { await prepare() } }.storebenchWorking(!loaded || problem)
         Button("Save Draft") { Task { await save() } }.buttonStyle(StorebenchButtonStyle(.primary)).storebenchWorking(!(loaded && dirty))
     }
     private func load() async {
@@ -109,7 +109,9 @@ struct TestFlightReviewInformationView: View {
         catch { problem = true; status = "Not saved. Your inputs remain here; try again." }
     }
     private func prepare() async {
-        guard !busy, !dirty, revision > 0 else { return }
+        guard !busy, loaded, !problem else { return }
+        if dirty || revision == 0 { await save() }
+        guard !busy, !dirty, revision > 0, !problem else { return }
         working = true; defer { working = false }
         (review, status) = await prepareTestFlight(account, app, session) { $0.testflightAction = "save-beta-review-details" }
     }

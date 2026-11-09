@@ -2,6 +2,18 @@ import AppKit
 import StorebenchCore
 import SwiftUI
 
+struct StorebenchAppIcon: View {
+    var size: CGFloat = 64
+    private static let image = NSImage(data: StorebenchDesign.shared.brandIcon)
+
+    var body: some View {
+        if let image = Self.image {
+            Image(nsImage: image).resizable().interpolation(.high).scaledToFit()
+                .frame(width: size, height: size).accessibilityHidden(true)
+        }
+    }
+}
+
 struct StorebenchBrand: View {
     var onDark = false
     private static let icon = NSImage(data: StorebenchDesign.shared.brandIcon)

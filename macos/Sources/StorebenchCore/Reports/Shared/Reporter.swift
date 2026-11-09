@@ -6,6 +6,7 @@ public struct ReporterClient: Sendable {
     public enum Answer: Equatable { case report(Data), noSales, unavailable }
     public enum Failure: Error, Equatable { case expiredToken, access, wrongAccount, unsupported, invalidToken, serviceUnavailable, size }
     let token: String, session: URLSession
+    let pool: BoundedResponse.Pool
     let sales: URL, finance: URL
     struct Selection: Sendable {
         let accountId, accountNumber, vendorNumber, credentialId: String
@@ -21,11 +22,14 @@ public struct ReporterClient: Sendable {
     }
     init(token: String, origin: URL = URL(string: "https://reportingitc-reporter.apple.com")!, configuration: URLSessionConfiguration = .ephemeral, selection: Selection?, accessCheck: @escaping @Sendable () throws -> Void = {}) throws {
         let trimmed = TextSemantics.trim(token)
-        guard trimmed.range(of: #"^[A-Za-z0-9-]{16,200}\z"#, options: .regularExpression) != nil else { throw Failure.invalidToken }
+        // Reporter tokens are opaque; Apple verifies their format and validity during discovery.
+        guard !trimmed.isEmpty, trimmed.utf8.count <= 200,
+              trimmed.unicodeScalars.allSatisfy({ (0x21...0x7e).contains($0.value) }) else { throw Failure.invalidToken }
         configuration.timeoutIntervalForRequest = 60
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.httpShouldSetCookies = false
-        self.token = trimmed; self.session = URLSession(configuration: Network.guarded(configuration)); self.selection = selection
+        let pool = BoundedResponse.Pool(configuration: configuration)
+        self.token = trimmed; self.pool = pool; self.session = pool.session; self.selection = selection
         self.accessCheck = accessCheck
         self.sales = origin.appendingPathComponent("reportservice/sales/v1"); self.finance = origin.appendingPathComponent("reportservice/finance/v1")
     }
@@ -47,9 +51,12 @@ public struct ReporterClient: Sendable {
         request.setValue("application/a-gzip, text/xml, text/plain", forHTTPHeaderField: "Accept")
         var allowed = CharacterSet.alphanumerics; allowed.insert(charactersIn: "-._~")
         request.httpBody = Data("jsonRequest=\(String(decoding: body, as: UTF8.self).addingPercentEncoding(withAllowedCharacters: allowed)!)".utf8)
-        let (data, response) = try await session.data(for: request, delegate: RefuseRedirects())
+        let result: BoundedResponse.Result
+        do { result = try await pool.read(request, maximumBytes: maxReportBytes) }
+        catch BoundedResponse.Failure.tooLarge { throw Failure.size }
+        catch BoundedResponse.Failure.invalidResponse { throw Failure.unsupported }
         try accessCheck()
-        guard let http = response as? HTTPURLResponse else { throw Failure.unsupported }
+        let data = result.data, http = result.response
         if http.statusCode == 429 || http.statusCode >= 500 || http.statusCode == 401 || http.statusCode == 403 {
             let source: ReplyDiagnostics.Source = endpoint == finance ? .reporterFinance : .reporterSales
             ReplyDiagnostics.record(source, ReplyDiagnostics.describe(status: http.statusCode, contentType: http.value(forHTTPHeaderField: "Content-Type"), body: data))

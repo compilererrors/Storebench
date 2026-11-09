@@ -68,10 +68,10 @@ public struct AppPrivacyAnswers: Sendable, Equatable {
             .sorted { (order.firstIndex(of: $0.category) ?? 999, $0.category) < (order.firstIndex(of: $1.category) ?? 999, $1.category) })
     }
 
-    var json: JSONText {
+    public var json: JSONText {
         .object([("collects", .bool(collects)), ("items", .array(items.map { .object([("category", .string($0.category)), ("purposes", .array($0.purposes.map { .string($0) })), ("linked", .bool($0.linked)), ("tracking", .bool($0.tracking))]) }))])
     }
-    init?(_ value: JSONText) {
+    public init?(_ value: JSONText) {
         guard case .bool(let collects)? = value["collects"], case .array(let items)? = value["items"], items.count <= 60 else { return nil }
         self.init(collects: collects, items: items.compactMap { item in
             guard let category = item["category"]?.text, case .array(let purposes)? = item["purposes"] else { return nil }

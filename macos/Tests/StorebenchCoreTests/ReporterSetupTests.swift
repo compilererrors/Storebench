@@ -16,7 +16,7 @@ import Testing
         let text = String(decoding: data, as: UTF8.self), form = URLComponents(string: "?" + text)?.queryItems?.first { $0.name == "jsonRequest" }?.value
         return (try! JSONSerialization.jsonObject(with: Data(form!.utf8))) as! [String: String]
     }
-    func discovery(host: String, f: AccountLifecycleTests.Fixture, accounts: [String] = ["1000"], vendors: [String] = ["200000"], checkUnlocked: Bool = true) {
+    func discovery(host: String, f: AccountLifecycleTests.Fixture, accounts: [String] = ["1000"], vendors: [String] = ["200000"], checkUnlocked: Bool = true, expectedToken: String? = nil) {
         StubProtocol.handle(host) { request in
             #expect(request.httpMethod == "POST" && request.url?.query == nil && request.url?.path == "/reportservice/sales/v1")
             if checkUnlocked {
@@ -24,6 +24,7 @@ import Testing
                 #expect(lock != nil); lock?.release()
             }
             let fields = body(request), query = fields["queryInput"]!
+            if let expectedToken { #expect(fields["accesstoken"] == expectedToken) }
             let xml: String
             if query == "[p=Reporter.properties, Sales.getAccounts]" {
                 #expect(fields["account"] == nil)
@@ -39,6 +40,45 @@ import Testing
         try await f.session.connectReporter(account: f.account, appId: app, token: token ?? self.token, baseline: baseline, selectedAccount: account, selectedVendor: vendor, writer: f.writer, origin: URL(string: "https://\(host)")!, configuration: configuration(), now: Date(timeIntervalSince1970: 1_767_225_600))
     }
     func baseline(_ f: AccountLifecycleTests.Fixture) async throws -> ReportingConnectionState { try await f.session.reportingConnection(account: f.account, appId: app) }
+    @Test func shortOpaqueTokensAreVerifiedAndSavedWithoutChangingTheirContents() async throws {
+        for (index, entered) in ["test-token", " \n test+/_=:! \t"].enumerated() {
+            let f = try await AccountLifecycleTests().fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+            let token = TextSemantics.trim(entered), first = try await baseline(f), host = "reporter-opaque-\(index).reporting.test"
+            discovery(host: host, f: f, expectedToken: token)
+            guard case .connected(let saved) = try await connect(f, baseline: first, host: host, token: entered) else { Issue.record("Expected verified connection"); return }
+            #expect(StubProtocol.requests(host).count == 2)
+            let id = try #require(saved.connection?.reporter?.credentialId)
+            #expect(try f.writer.read().entries["reporter:\(id)"] == token)
+            #expect(saved.connection?.reporter?.accountNumber == "1000" && saved.connection?.reporter?.vendorNumber == "200000")
+            let document = try await f.session.storeAccess { try $0.document(namespace: "sales_connection", key: f.account.id) }
+            #expect(!String(decoding: try #require(document).payload, as: UTF8.self).contains(token))
+        }
+    }
+    @Test func appleRejectionOfAShortTokenKeepsTheSavedConnectionAndCredential() async throws {
+        let f = try await AccountLifecycleTests().fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let host = "reporter-opaque-rejected.reporting.test"
+        discovery(host: host, f: f)
+        guard case .connected(let saved) = try await connect(f, baseline: baseline(f), host: host) else { Issue.record("Expected initial connection"); return }
+        let credentials = try f.writer.read(), writes = f.storage.counts.writes
+        StubProtocol.handle(host) { request in
+            #expect(body(request)["accesstoken"] == "test-token")
+            return (401, ["Content-Type": "text/plain"], Data("Synthetic rejected token".utf8))
+        }
+        await #expect(throws: ReporterClient.Failure.expiredToken) { try await connect(f, baseline: saved, host: host, token: "test-token") }
+        #expect(StubProtocol.requests(host).count == 1)
+        #expect(try await baseline(f) == saved && f.storage.counts.writes == writes)
+        #expect(try f.writer.read().entries == credentials.entries)
+    }
+    @Test func malformedTokenEntriesFailBeforeDiscoveryOrCredentialWrites() async throws {
+        let f = try await AccountLifecycleTests().fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let first = try await baseline(f), host = "reporter-invalid-entry.reporting.test", writes = f.storage.counts.writes
+        discovery(host: host, f: f)
+        for token in ["", " \n\t", "test token", "test\ntoken", "test\u{0}token", "test\u{7f}token", "test\u{200b}token", String(repeating: "x", count: 201)] {
+            await #expect(throws: ReporterClient.Failure.invalidToken) { try await connect(f, baseline: first, host: host, token: token) }
+        }
+        #expect(StubProtocol.requests(host).isEmpty && f.storage.counts.writes == writes)
+        #expect(try await baseline(f) == first)
+    }
     @Test func discoveryAndConnectionContractsMatchTheWebWithBoundedSyntheticCatalogs() throws {
         let fixture = try JSONText.parse(Data(contentsOf: try TestIsolation.require().appendingPathComponent("native-fixtures/reporter-catalogs.json")))
         guard case .array(let catalogs)? = fixture["catalogs"], case .array(let connections)? = fixture["connections"] else { Issue.record("Missing guarded Reporter vectors"); return }

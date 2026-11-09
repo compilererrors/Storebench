@@ -16,6 +16,38 @@ import Observation
     public init() {}
     public func begin() -> UUID { intent = UUID(); return intent }
     public func owns(_ ticket: UUID) -> Bool { intent == ticket }
+    public enum CloseChoice: Equatable, Sendable { case save, discard, cancel }
+    public struct CloseSnapshot: Sendable {
+        fileprivate let ticket: UUID, policy: EditorProtectionPolicy, generations: [String: String]
+        public let canSave: Bool
+        public var hasEdits: Bool { !policy.dirtyIds.isEmpty }
+    }
+    /// Closing a view leaves admitted jobs owned by the session. Quitting separately drains that session.
+    public func beginClose() -> CloseSnapshot {
+        .init(ticket: begin(), policy: policy, generations: generations,
+              canSave: !policy.dirtyIds.isEmpty && policy.dirtyIds.allSatisfy { savers[$0] != nil })
+    }
+    public func allowsClose(_ snapshot: CloseSnapshot) -> Bool {
+        owns(snapshot.ticket) && snapshot.policy.allowsNavigation(after: policy, discardConfirmed: true) &&
+            policy.dirtyIds.allSatisfy { generations[$0] == snapshot.generations[$0] }
+    }
+    public func ownsClose(_ snapshot: CloseSnapshot) -> Bool { owns(snapshot.ticket) }
+    /// Save waits for this exact editor's current work; Discard never revokes a running write's ownership.
+    public func finishClose(_ snapshot: CloseSnapshot, choice: CloseChoice, wait: Duration = .seconds(5)) async -> Bool {
+        guard choice != .cancel, allowsClose(snapshot) else { return false }
+        guard choice == .save else { return true }
+        guard snapshot.canSave || policy.dirtyIds.isEmpty else { return failed(nil) }
+        let deadline = ContinuousClock.now + wait
+        while !policy.dirtyIds.isEmpty && (!savingOwners.isDisjoint(with: policy.dirtyIds) || policy.dirtyIds.contains(where: { policy.isBusy(id: $0) })) {
+            guard allowsClose(snapshot), !Task.isCancelled else { return false }
+            // Stop waiting for Save, without cancelling or expiring any operation's ownership.
+            guard ContinuousClock.now < deadline else { return failed(nil) }
+            do { try await Task.sleep(for: .milliseconds(20)) } catch { return false }
+        }
+        guard allowsClose(snapshot), !Task.isCancelled else { return false }
+        if policy.dirtyIds.isEmpty { return true }
+        return await saveChanges(for: snapshot.ticket) && allowsClose(snapshot)
+    }
     public func register(id: String, priority: Int = 0, generation: String? = nil, problem: (@MainActor () -> String?)? = nil, save: @escaping @MainActor () async -> Bool) {
         savers[id] = save; priorities[id] = priority; generations[id] = generation ?? id; problems[id] = problem
     }

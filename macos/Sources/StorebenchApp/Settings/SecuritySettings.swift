@@ -71,8 +71,7 @@ struct SecuritySettings: View {
                     if model.session != nil {
                         StorebenchFormFooter {
                             Button("Sign Out Now") {
-                                guard EditorWindows.allowLeaving() else { return }
-                                Task { await model.signOut() }
+                                Task { if await EditorWindows.requestClosing(reason: .signOut) { await model.signOut() } }
                             }
                         }
                     }

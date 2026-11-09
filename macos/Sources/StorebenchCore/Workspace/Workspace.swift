@@ -144,6 +144,14 @@ public actor WorkspaceSession {
     var libraryProcessingWait = LibraryProcessingWait()
     /// Tests give App Privacy a synthetic Apple ID session and network instead of Keychain and Apple.
     var appleWebTestRoute: (session: AppleWebSession, configuration: @Sendable () -> URLSessionConfiguration)?
+    /// Synthetic read transport, available only in an owned isolated test run.
+    private var appleReadTestRoute: (origin: URL, configuration: @Sendable () -> URLSessionConfiguration)?
+    func configureAppleReadTestRoute(origin: URL, configuration: @escaping @Sendable () -> URLSessionConfiguration) throws {
+        _ = try TestIsolation.require()
+        guard Network.testMode, origin.scheme == "https", origin.host?.hasSuffix(".test") == true,
+              origin.user == nil, origin.password == nil, origin.query == nil, origin.fragment == nil else { throw AppStoreConnectClient.Failure.invalidPath }
+        appleReadTestRoute = (origin, configuration)
+    }
     var libraryMetadataStamp: String?
     var libraryMetadataCache = BoundedMemoryCache<String, ConnectedApps.Metadata>(capacity: 64, byteLimit: 256 * 1_024)
     var iconCache = AppIcons.Cache()
@@ -181,7 +189,8 @@ public actor WorkspaceSession {
         _ = try currentAccount(account, exact: sharingReads)
         guard let pem = try vaultEntry("apple:\(account.id)") else { throw ReviewsFailure.noKey }
         let scope = JSONText.array([Self.json(account), .string(credentialVersions["apple:\(account.id)"] ?? "initial")]).sha256
-        return AppStoreConnectClient(token: try AppleToken(account: account, privateKeyPEM: pem), readCache: sharingReads ? appleReadCache : nil,
+        return AppStoreConnectClient(token: try AppleToken(account: account, privateKeyPEM: pem), origin: appleReadTestRoute?.origin ?? AppStoreConnectClient.base,
+                                    configuration: appleReadTestRoute?.configuration(), readCache: sharingReads ? appleReadCache : nil,
                                     readCacheScope: scope, accessCheck: sessionRequestCheck())
     }
     nonisolated func sessionRequestCheck() -> @Sendable () throws -> Void {

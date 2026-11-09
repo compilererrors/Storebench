@@ -12,6 +12,7 @@ struct AppInformationView: View {
     /// Told when a review from these cards reaches Apple, so a page that checks Apple's state, such as Release, checks again.
     var changed: () -> Void = {}
     @State private var editor = AppInformationEditor()
+    @State private var draft: LocalEditorDraftEditor?
     @State private var review: PublishReview?
     /// The card whose Prepare Review made the review, which then shows right below that card.
     @State private var reviewPart: Part?
@@ -45,6 +46,7 @@ struct AppInformationView: View {
             // Apple's current answers are read here; the read lives in a headed card like every other section, never loose on the page.
             Card(title: "App Information at Apple", subtitle: "Apple's current answers for this app. Change them below; each card prepares its own review.", actions: AnyView(Group { if session != nil { StorebenchBusyButton(title: "Refresh", loadingTitle: "Loading…", busy: busy) { Task { await load(fresh: true) } }.help("Refresh App Information").accessibilityLabel("Refresh App Information") } })) {
                 StorebenchFeedback(text: status, height: 40)
+                if let draft, !draft.loaded { LocalDraftActions(editor: draft, value: editor.localDraft, restore: { editor.restoreLocalDraft($0) }, blocked: busy) }
             }
             VStack(alignment: .leading, spacing: 20) {
                 if parts.contains(.categories) { informationCard.id("release-info-categories"); reviewPanel(.categories) }
@@ -56,14 +58,19 @@ struct AppInformationView: View {
                     reviewPanel(.exportCompliance)
                 }
                 if parts.contains(.availability) { availabilityCard.id("release-info-availability"); reviewPanel(.availability) }
-            }.storebenchWorking(busy)
+            }.storebenchWorking(busy || draft?.loaded != true)
         }
-        .trackUnsavedChanges(editor.dirty, busy: busy)
+        .trackUnsavedChanges(draft?.dirty(editor.localDraft) ?? editor.dirty, busy: busy || draft?.busy == true, onSave: { await draft?.saveCurrent(value: { editor.localDraft }) == true })
         .historyValue("app-information", Binding(get: { Choices(query: query, family: family) }, set: { query = $0.query; family = $0.family }))
         .task {
             // Apple's answers last read in this window show at once, read-only while they are read again.
             if !editor.informationReady, !editor.ageReady, !editor.accessibilityReady, let remembered = history?.rememberedRead(readKey, as: AppInformationEditor.self) { editor = remembered }
             await load()
+            if let session {
+                let owner = LocalEditorDraftEditor(scope: .init(accountId: account.id, appId: app.id, editor: "app-information", resource: parts.map { String(describing: $0) }.sorted().joined(separator: "/")), session: session)
+                draft = owner
+                if let saved = await owner.load(initial: editor.localDraft) { editor.restoreLocalDraft(saved) }
+            }
         }
     }
 
@@ -72,7 +79,7 @@ struct AppInformationView: View {
         if reviewPart == part, review != nil {
             ReviewPanel(account: account, app: app, session: session, review: $review, done: {
                 if review?.state == "complete" { changed(); Task { await load(fresh: true) } }
-            }, busyChanged: { publishing = $0 }).storebenchWorking(working)
+            }, busyChanged: { publishing = $0 }, syncConfirmation: true).storebenchWorking(working)
         }
     }
 
@@ -101,8 +108,10 @@ struct AppInformationView: View {
                 }
                 // Content Rights and Category are reviewed together, so their one Prepare Review sits in the Category card's footer.
                 StorebenchFormFooter {
-                    StorebenchBusyButton(title: "Prepare Review", loadingTitle: "Preparing…", busy: working && reviewPart == .categories, variant: .primary) { Task { await prepareInformation() } }
-                        .storebenchWorking(!editor.informationChanged).help(editor.informationChanged ? "Prepare App Information Review" : "Change Content Rights or Category first")
+                    if let draft {
+                        LocalDraftActions(editor: draft, value: editor.localDraft, restore: { editor.restoreLocalDraft($0); review = nil }, blocked: busy,
+                                          sync: { await prepareInformation() }, syncBlocked: !editor.informationChanged)
+                    }
                 }
             }
         }
@@ -142,8 +151,10 @@ struct AppInformationView: View {
             }
             Text("\(editor.ageChanges.count) \(editor.ageChanges.count == 1 ? "answer" : "answers") changed for review.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
             StorebenchFormFooter {
-                StorebenchBusyButton(title: "Prepare Review", loadingTitle: "Preparing…", busy: working && reviewPart == .ageRating, variant: .primary) { Task { await prepareAges() } }
-                    .storebenchWorking(!editor.ageReady || editor.ageChanges.isEmpty).help(editor.ageChanges.isEmpty ? "Change an answer first" : "Prepare Age Rating Review")
+                if let draft {
+                    LocalDraftActions(editor: draft, value: editor.localDraft, restore: { editor.restoreLocalDraft($0); review = nil }, blocked: busy,
+                                      sync: { await prepareAges() }, syncBlocked: !editor.ageReady || editor.ageChanges.isEmpty)
+                }
             }
         }
     }
@@ -174,9 +185,11 @@ struct AppInformationView: View {
             let count = AccessibilityDeclarations.applicable(family).filter { editor.answers(for: family)[$0.key] != nil }.count
             Text("\(count) of \(AccessibilityDeclarations.applicable(family).count) features answered for this draft.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
             let canDelete = editor.accessibilityReady && editor.draft(for: family) != nil
+            if let draft {
+                LocalDraftActions(editor: draft, value: editor.localDraft, restore: { editor.restoreLocalDraft($0); review = nil }, blocked: busy,
+                                  sync: { await prepareAccessibility("save-draft") }, syncBlocked: !editor.canSaveAccessibility(family))
+            }
             StorebenchFormFooter {
-                Button("Review Draft") { Task { await prepareAccessibility("save-draft") } }.storebenchWorking(!editor.canSaveAccessibility(family))
-                    .help(editor.canSaveAccessibility(family) ? "Prepare Draft Review" : "Answer the features first").accessibilityLabel("Prepare Draft Review")
                 Button("Review Publication") { Task { await prepareAccessibility("publish-draft") } }.storebenchWorking(!editor.canPublishAccessibility(family))
                     .help(editor.canPublishAccessibility(family) ? "Prepare Publication Review" : "Save a complete draft at Apple first").accessibilityLabel("Prepare Publication Review")
                 Button("Review Deletion", role: .destructive) { Task { await prepareAccessibility("delete-draft") } }.storebenchWorking(!canDelete)
@@ -288,6 +301,9 @@ struct AppInformationView: View {
     private func prepare(_ request: PublishRequest, part: Part) async {
         guard let session, !busy else { return }
         working = true; review = nil; reviewPart = part; defer { working = false }
+        if part != .exportCompliance, let draft {
+            guard await draft.save(editor.localDraft), !draft.dirty(editor.localDraft) else { status = draft.status; return }
+        }
         do { let prepared = try await session.preparePublishing(account: account, request: request, client: try await session.client(for: account)); try Task.checkCancellation(); review = prepared; status = "" }
         catch {
             guard !Task.isCancelled else { return }

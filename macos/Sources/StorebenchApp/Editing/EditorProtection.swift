@@ -3,10 +3,18 @@ import StorebenchCore
 import SwiftUI
 
 @MainActor final class EditorProtection {
+    enum CloseReason { case window, quit, signOut }
     private let departure = EditorDeparture()
+    var chooseClose: @MainActor (CloseReason, Bool) -> EditorDeparture.CloseChoice = EditorProtection.promptClose
     var policy: EditorProtectionPolicy { get { departure.policy } set { departure.policy = newValue } }
     var closingPolicy: EditorProtectionPolicy { departure.closingPolicy }
     var canSave: Bool { departure.canSave }
+    /// Saves every registered form on the page without navigating away or preparing an Apple write.
+    func saveAllDrafts() async -> Bool {
+        guard !policy.dirtyIds.isEmpty else { return true }
+        guard departure.canSave else { return false }
+        return await departure.saveChanges(for: departure.begin())
+    }
     func saveDrafts() {
         guard departure.canSave else { return }
         let ticket = departure.begin()
@@ -76,9 +84,50 @@ import SwiftUI
             action()
         }
     }
-    func allowClosing() -> Bool {
-        let starting = closingPolicy
-        return Self.confirm(starting.decision) && starting.allowsLeaving(after: closingPolicy, discardConfirmed: true)
+    func beginClose() -> EditorDeparture.CloseSnapshot { departure.beginClose() }
+    func allowsClose(_ snapshot: EditorDeparture.CloseSnapshot) -> Bool { departure.allowsClose(snapshot) }
+    func ownsClose(_ snapshot: EditorDeparture.CloseSnapshot) -> Bool { departure.ownsClose(snapshot) }
+    func finishClose(_ snapshot: EditorDeparture.CloseSnapshot, choice: EditorDeparture.CloseChoice) async -> Bool {
+        await departure.finishClose(snapshot, choice: choice)
+    }
+    func requestClosing(_ snapshot: EditorDeparture.CloseSnapshot, reason: CloseReason) async -> EditorDeparture.CloseChoice? {
+        guard !Task.isCancelled, allowsClose(snapshot) else { return nil }
+        let choice = snapshot.hasEdits ? chooseClose(reason, snapshot.canSave) : .discard
+        let allowed = await finishClose(snapshot, choice: choice)
+        if !allowed, choice == .save, !Task.isCancelled, departure.ownsClose(snapshot), discardAfterCloseSaveFailure() {
+            return await finishClose(snapshot, choice: .discard) ? .discard : nil
+        }
+        return allowed ? choice : nil
+    }
+    func discardAfterCloseSaveFailure() -> Bool {
+        let alert = NSAlert(); alert.messageText = "Changes were not saved"
+        alert.informativeText = (departure.failure.map { $0 + "\n\n" } ?? "") + "A draft could not be saved or is still busy. Keep editing, or discard unsaved changes and continue closing. Saved drafts remain available."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Keep Editing").keyEquivalent = "\u{1b}"
+        let discard = alert.addButton(withTitle: "Discard"); discard.keyEquivalent = "d"; discard.keyEquivalentModifierMask = [.command]
+        return alert.runModal() == .alertSecondButtonReturn
+    }
+    static func closeAlert(reason: CloseReason, canSave: Bool) -> NSAlert {
+        let alert = NSAlert()
+        switch reason {
+        case .window: alert.messageText = "Save changes before closing?"
+        case .quit: alert.messageText = "Save changes before quitting?"
+        case .signOut: alert.messageText = "Save changes before signing out?"
+        }
+        alert.informativeText = "Save drafts on this Mac or discard unsaved changes. Saved drafts remain available. Nothing is sent to Apple."
+        if !canSave { alert.informativeText += " Some inputs cannot be saved as drafts. Choose Cancel to finish them in the editor, or Discard to leave without saving them." }
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Save").isEnabled = canSave
+        let discard = alert.addButton(withTitle: "Discard"); discard.keyEquivalent = "d"; discard.keyEquivalentModifierMask = [.command]
+        alert.addButton(withTitle: "Cancel").keyEquivalent = "\u{1b}"
+        return alert
+    }
+    static func promptClose(_ reason: CloseReason, _ canSave: Bool) -> EditorDeparture.CloseChoice {
+        switch closeAlert(reason: reason, canSave: canSave).runModal() {
+        case .alertFirstButtonReturn: .save
+        case .alertSecondButtonReturn: .discard
+        default: .cancel
+        }
     }
     static func confirm(_ decision: EditorProtectionPolicy.Decision) -> Bool {
         switch decision {
@@ -134,6 +183,7 @@ extension View {
 }
 @MainActor enum EditorWindows {
     private static var windows: [ObjectIdentifier: WeakEditorProtection] = [:]
+    private static var closing = false
     static func register(_ protection: EditorProtection) { windows[ObjectIdentifier(protection)] = WeakEditorProtection(protection) }
     static func unregister(_ protection: EditorProtection) { windows.removeValue(forKey: ObjectIdentifier(protection)) }
     static var decision: EditorProtectionPolicy.Decision { EditorProtectionPolicy.combined(windows.values.compactMap { $0.value?.closingPolicy }) }
@@ -145,6 +195,31 @@ extension View {
         let starting = snapshot()
         return EditorProtection.confirm(EditorProtectionPolicy.combined(Array(starting.values))) &&
             EditorProtectionPolicy.allowsLeaving(starting: starting, latest: snapshot(), discardConfirmed: true)
+    }
+    static func requestClosing(reason: EditorProtection.CloseReason,
+                               choose: (@MainActor (EditorProtection.CloseReason, Bool) -> EditorDeparture.CloseChoice)? = nil) async -> Bool {
+        guard !closing else { return false }
+        closing = true; defer { closing = false }
+        let owners = windows.compactMapValues { $0.value }
+        let snapshots = owners.mapValues { $0.beginClose() }
+        let hasEdits = snapshots.values.contains { $0.hasEdits }
+        let canSave = snapshots.values.allSatisfy { !$0.hasEdits || $0.canSave }
+        var choice = hasEdits ? (choose ?? EditorProtection.promptClose)(reason, canSave) : .discard
+        guard choice != .cancel else { return false }
+        for (id, owner) in owners {
+            guard let snapshot = snapshots[id] else { return false }
+            if !(await owner.finishClose(snapshot, choice: choice)) {
+                guard choice == .save, owner.ownsClose(snapshot), owner.discardAfterCloseSaveFailure(),
+                      await owner.finishClose(snapshot, choice: .discard) else { return false }
+                choice = .discard
+            }
+        }
+        // A modal confirmation or a delayed save never approves a newly dirty window.
+        return windows.allSatisfy { id, holder in
+            guard let owner = holder.value else { return true }
+            guard let snapshot = snapshots[id] else { return owner.policy.dirtyIds.isEmpty }
+            return owner.allowsClose(snapshot) && (choice != .save || owner.policy.dirtyIds.isEmpty)
+        }
     }
 }
 
@@ -167,6 +242,8 @@ struct EditorWindowGuard: NSViewRepresentable {
         let protection: EditorProtection
         let role: WindowLifecycle.Role
         weak var window: NSWindow?
+        private var closingTask: Task<Void, Never>?
+        private var approvedClose: (snapshot: EditorDeparture.CloseSnapshot, saved: Bool)?
         nonisolated(unsafe) var previous: (any NSWindowDelegate)?
         init(_ protection: EditorProtection, role: WindowLifecycle.Role) { self.protection = protection; self.role = role }
         func install(_ window: NSWindow?) {
@@ -176,11 +253,30 @@ struct EditorWindowGuard: NSViewRepresentable {
             EditorWindows.register(protection)
         }
         func detach() {
+            closingTask?.cancel(); closingTask = nil; approvedClose = nil
             if let window, window.delegate === self { window.delegate = previous }
             window = nil; previous = nil; EditorWindows.unregister(protection)
         }
         func windowShouldClose(_ sender: NSWindow) -> Bool {
-            protection.allowClosing() && (previous?.windowShouldClose?(sender) ?? true)
+            if let approval = approvedClose {
+                approvedClose = nil
+                let allowed = previous?.windowShouldClose?(sender) ?? true
+                return allowed && protection.allowsClose(approval.snapshot) && (!approval.saved || protection.policy.dirtyIds.isEmpty)
+            }
+            guard closingTask == nil else { return false }
+            let snapshot = protection.beginClose()
+            if !snapshot.hasEdits {
+                let allowed = previous?.windowShouldClose?(sender) ?? true
+                return allowed && protection.allowsClose(snapshot)
+            }
+            closingTask = Task { [weak self, weak sender] in
+                guard let self, let sender else { return }
+                let choice = await protection.requestClosing(snapshot, reason: .window)
+                closingTask = nil
+                guard let choice, !Task.isCancelled, window === sender, sender.delegate === self else { return }
+                approvedClose = (snapshot, choice == .save); sender.performClose(nil)
+            }
+            return false
         }
         func windowWillClose(_ notification: Notification) {
             let delegate = previous
@@ -194,6 +290,8 @@ struct EditorWindowGuard: NSViewRepresentable {
 
 @MainActor final class StorebenchApplicationDelegate: NSObject, NSApplicationDelegate {
     private var requestingWorkspace = false
+    var prepareToTerminate: (@MainActor () async -> Void)?
+    private var terminationTask: Task<Void, Never>?
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.reopenWorkspace() }
@@ -203,7 +301,7 @@ struct EditorWindowGuard: NSViewRepresentable {
         reopenWorkspace(); return false
     }
     private func reopenWorkspace() {
-        guard !requestingWorkspace else { return }
+        guard !requestingWorkspace, terminationTask == nil else { return }
         let windows = NSApp.windows.filter { $0.identifier?.rawValue == WindowLifecycle.workspaceID }
         let snapshot = windows.map { WindowLifecycle.Window(id: $0.windowNumber, role: .workspace, visible: $0.isVisible, miniaturized: $0.isMiniaturized) }
         switch WindowLifecycle.reopen(snapshot) {
@@ -226,6 +324,14 @@ struct EditorWindowGuard: NSViewRepresentable {
         return nil
     }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        EditorWindows.allowLeaving() ? .terminateNow : .terminateCancel
+        guard terminationTask == nil else { return .terminateLater }
+        terminationTask = Task { @MainActor in
+            guard await EditorWindows.requestClosing(reason: .quit) else {
+                terminationTask = nil; sender.reply(toApplicationShouldTerminate: false); return
+            }
+            await prepareToTerminate?()
+            terminationTask = nil; sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }

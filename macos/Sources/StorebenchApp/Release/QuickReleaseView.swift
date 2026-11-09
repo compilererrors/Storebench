@@ -19,6 +19,8 @@ struct QuickReleaseView: View {
     @State private var locale: String?
     @State private var buildId: String?
     @State private var textStatus = ""
+    @State private var textReview: PublishReview?
+    @State private var publishingText = false
     @State private var operation: Task<Void, Never>?
     /// Steps the person opened or closed themselves; the others follow their state.
     @State private var shown: Set<String> = []
@@ -89,7 +91,7 @@ struct QuickReleaseView: View {
                 guard let session else { return }
                 availability = await session.newVersionAvailability(accountId: account.id, appId: app.id)
                 if !model.dirty { changed() }
-            }, quick: true)
+            }, quick: true, sync: { openRelease("send") })
         } else if let plan = model.plan {
             switch id {
             case "create": create(plan)
@@ -210,21 +212,23 @@ struct QuickReleaseView: View {
                 else { Text("No languages in this version yet. Add one in Release.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
                 let feedback = textStatus.isEmpty ? listing.status : textStatus
                 if !feedback.isEmpty { StorebenchTextSlot(text: feedback, height: 40, font: .sbCallout, color: StorebenchTheme.muted, live: true) }
-                if listing.dirty || listing.workflow.phase == .saving {
-                    StorebenchFormFooter {
-                        StorebenchBusyButton(title: "Save", loadingTitle: "Saving…", busy: listing.workflow.phase == .saving, variant: .primary) { save(listing) }
-                            .help("Save the text of every language on this Mac")
-                    }
+                StorebenchFormFooter {
+                    StorebenchBusyButton(title: "Save Draft", loadingTitle: "Saving…", busy: listing.workflow.phase == .saving, variant: .primary) { save(listing) }
+                        .help("Save the text of every language on this Mac")
+                        .storebenchWorking(!listing.dirty || listing.busy || listing.workflow.blocked || publishingText)
+                    StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Preparing…", busy: listing.workflow.phase == .preparing) { save(listing, sync: true) }
+                        .storebenchWorking(listing.busy || listing.workflow.blocked || publishingText)
                 }
             } else {
                 StorebenchLoadState(state: listing == nil && confirmedPlan == nil ? .loading("Save the version first.") : .loading("Reading the version's saved text…")) { EmptyView() }
             }
         }
         .id("quick-text")
-        if let snapshot, QuickRelease.stage(snapshot) == .prepare, let listing {
-            PublishActionPanel(account: account, app: app, session: session, actions: [.metadata], initialRequest: QuickRelease.textRequest(accountId: account.id, appId: app.id, plan: plan), automatic: true,
-                               guided: ("Save to App Store Connect", "Saves Description, Subtitle, Keywords and What's New for every language. Screenshots, Promotional Text and other fields stay as they are at Apple. Nothing is sent until you approve."),
-                               refreshKey: listing.dirty || listing.busy ? "editing" : "saved", fix: { openRelease(ReleaseWizard.phase(containing: $0)) }, done: { _ in afterApple() })
+        .onChange(of: listing?.workflow.lastResult) {
+            if textReview?.state == "prepared", listing?.workflow.lastResult?.reviewReady != true { textReview = nil }
+        }
+        if let listing {
+            ReviewPanel(account: account, app: app, session: session, review: $textReview, done: { if textReview?.state == "complete" { afterApple() } }, busyChanged: { publishingText = $0 }, actionsBusy: listing.busy || listing.dirty || listing.workflow.blocked, syncConfirmation: true)
                 .id("quick-text-save")
         }
     }
@@ -321,12 +325,25 @@ struct QuickReleaseView: View {
         do { try language.change(field, to: value); textStatus = "" }
         catch { textStatus = "Keep each local text field within 10,000 UTF-16 characters. Your previous text is retained." }
     }
-    private func save(_ listing: VersionListingEditor) {
-        guard listing.active, !listing.busy, !listing.workflow.blocked else { return }
+    private func save(_ listing: VersionListingEditor, sync: Bool = false) {
+        guard listing.active, !listing.busy, !listing.workflow.blocked, !publishingText else { return }
+        textReview = nil
         operation = Task {
-            let result = await listing.run()
-            guard listing.active, !Task.isCancelled else { return }
-            textStatus = result.complete ? "Saved on this Mac. Save to App Store Connect sends it." : listing.unsavedItem ?? "The text could not be saved. Your edits are kept."
+            var prepared: LanguageListingReview?, failure: String?
+            let prepare: (@MainActor () async throws -> Void)?
+            if sync {
+                prepare = {
+                    guard let session, let plan = model?.plan else { throw PublishFailure.conflict }
+                    do {
+                        let request = QuickRelease.textRequest(accountId: account.id, appId: app.id, plan: plan)
+                        prepared = try await session.prepareLanguageListingReview(account: account, request: request, client: try await session.client(for: account))
+                    } catch { failure = (error as? PublishFailure)?.message; throw error }
+                }
+            } else { prepare = nil }
+            let result = await listing.run(prepare: prepare)
+            guard listing.active, !Task.isCancelled, listing.workflow.owns(result) else { return }
+            textStatus = failure ?? (result.complete ? "Saved on this Mac. Sync to Apple prepares a review for your approval." : listing.unsavedItem ?? "The text could not be saved. Your edits are kept.")
+            if result.reviewReady, listing.workflow.ready { textReview = prepared?.review }
         }
     }
     /// A Save to App Store Connect clears the shared reads; the status is read again, then what the later steps show, so they open at once.

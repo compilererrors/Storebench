@@ -27,6 +27,33 @@ import Observation
     @ObservationIgnored private let ownsWorkflow: Bool
     @ObservationIgnored private var registrations: [UUID] = []
     @ObservationIgnored private var observer: UUID?
+    @ObservationIgnored private let importedOrder: [String: [String]]
+    private var syncedSignature: String?
+    private var syncRevision = 0
+    private var syncScope: LocalEditorDraft.Scope {
+        .init(accountId: scope.accountId, appId: scope.appId, editor: "media-sync", resource: JSONText.array([.string(scope.revisionId), .string(localizationId)]).stringify())
+    }
+    public var syncSignature: String {
+        JSONText.array((screenshots.map { ($0.id, $0.editor.inputs.signature) } + previews.map { ($0.id, $0.editor.inputs.signature) })
+            .sorted { $0.0 < $1.0 }.map { .array([.string($0.0), .string($0.1)]) }).sha256
+    }
+    public var needsSync: Bool {
+        if dirty { return true }
+        if syncSignature == syncedSignature { return false }
+        return screenshots.contains { $0.editor.includedOrder != (importedOrder[$0.id] ?? []) } || previews.contains { $0.editor.included > 0 }
+    }
+    /// A completed guarded review acknowledges only the exact media selection that was reviewed.
+    public func acknowledgeSync(signature: String, review: PublishReview) async {
+        guard active, review.state == "complete" || review.state == "prepared" && review.steps.isEmpty,
+              review.request.accountId == scope.accountId, review.request.appId == scope.appId,
+              review.request.revisionId == scope.revisionId, review.request.mediaStage == PublishRequest.screenshotsStage else { return }
+        guard let savedReview = try? await session.publishReview(accountId: scope.accountId, appId: scope.appId, id: review.id),
+              savedReview.fingerprint == review.fingerprint, savedReview.state == review.state, savedReview.request == review.request else { return }
+        do {
+            let saved = try await session.saveLocalEditorDraft(.string(signature), scope: syncScope, expected: syncRevision)
+            guard active else { return }; syncRevision = saved.revision; syncedSignature = signature
+        } catch { /* A stale receipt never replaces another editor's acknowledgement. */ }
+    }
     public var busy: Bool {
         loading || copying || fileDialogOpen || workflow.busy || screenshots.contains { $0.editor.busy } || previews.contains { $0.editor.busy } ||
         screenshotSelections.contains { $0.busy } || previewSelections.contains { $0.saving }
@@ -34,6 +61,13 @@ import Observation
     public var dirty: Bool {
         screenshots.contains { $0.editor.dirty } || previews.contains { $0.editor.dirty } ||
         screenshotSelections.contains { $0.dirty } || previewSelections.contains { $0.pending }
+    }
+    public var canRemoveScreenshots: Bool { active && !busy && !catalogFailed && screenshots.allSatisfy { $0.editor.canEditScreenshots } }
+    /// Clears every display size of this language without changing previews or deleting originals.
+    public func removeAllScreenshots() {
+        guard canRemoveScreenshots else { return }
+        for layout in screenshots { layout.editor.removeAllScreenshots() }
+        status = "All screenshots removed from this language locally. Save to keep the changes, or add replacement screenshots to save the layout with them."
     }
     /// The item marked in red that keeps this language's media from saving, with its next step, or nil when nothing is marked.
     public var unsavedItem: String? {
@@ -54,6 +88,7 @@ import Observation
     }
     public init(scope: MediaDraftScope, localization: Revision.Localization, platform: String, session: WorkspaceSession, workflow shared: ListingSaveWorkflow? = nil) {
         self.scope = scope; localizationId = localization.id; self.platform = platform; self.session = session
+        importedOrder = Dictionary(localization.screenshotSets.map { ($0.id, $0.screenshots.map(\.id)) }, uniquingKeysWith: { first, _ in first })
         ownsWorkflow = shared == nil
         workflow = shared ?? ListingSaveWorkflow(identity: JSONText.array([.string(scope.accountId), .string(scope.appId), .string(scope.revisionId), .string(localization.id)]).stringify())
         observer = workflow.observe { [weak self] in self?.didChange() }
@@ -73,6 +108,9 @@ import Observation
     }
     public func load() async {
         guard active, loading, !Task.isCancelled else { return }
+        if let receipt = try? await session.localEditorDraft(syncScope) {
+            syncedSignature = receipt.value.text; syncRevision = receipt.revision
+        }
         do {
             let catalog = try await session.screenshotCatalog(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId, localizationId: localizationId)
             try Task.checkCancellation(); guard active else { return }
@@ -107,9 +145,11 @@ import Observation
               setId == nil || screenshots.contains(where: { $0.id == setId && $0.displayType == displayType }) else { return nil }
         let scope = scope, session = session, localizationId = localizationId
         let selection = PendingScreenshotSelection(scope: scope, platform: platform, setId: setId, displayType: displayType, urls: urls, save: { [weak self] snapshot in
+            guard let self else { throw CancellationError() }
+            try await self.saveScreenshotLayoutsBeforeAdding()
             let receipt = try await session.addScreenshotsWithReceipt(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId,
                 localizationId: localizationId, setId: setId, files: snapshot.items.map { ($0.name, $0.data) })
-            self?.reconcile(receipt); return receipt
+            self.reconcile(receipt); return receipt
         })
         screenshotSelections.append(selection)
         selection.didChange = { [weak self] in self?.inputsChanged() }
@@ -144,10 +184,11 @@ import Observation
     }
     /// Adds screenshots chosen from Asset Library to this language's draft on this Mac right away.
     public func addFromLibrary(_ picks: [LibraryPick], setId: String? = nil) async {
-        guard active, !busy, workflow.ready, !Task.isCancelled else { if active { status = "Save current media edits and selected files before adding from Asset Library." }; return }
+        guard active, !busy, !workflow.blocked, !Task.isCancelled else { if active { status = "Finish or compare current media edits and selected files before adding from Asset Library." }; return }
         guard (1...ScreenshotSpecs.maximum).contains(picks.count) else { status = "Choose between 1 and \(ScreenshotSpecs.maximum) screenshots at a time."; return }
         copying = true; defer { if active { copying = false } }
         do {
+            try await saveScreenshotLayoutsBeforeAdding()
             let receipt = try await session.addScreenshotsWithReceipt(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId, localizationId: localizationId, setId: setId,
                                                                 files: picks.map { ($0.name, $0.data) }, assetIds: picks.map(\.assetId))
             guard active else { return }; reconcile(receipt)
@@ -175,7 +216,7 @@ import Observation
         let result = await workflow.run(prepare: prepare)
         guard active, workflow.owns(result) else { return result }
         switch result.failure {
-        case nil: status = prepare == nil ? "Media draft saved on this Mac." : "Read the prepared review in Publish. Explicit approval is required before sending changes."
+        case nil: status = prepare == nil ? "Media draft saved on this Mac." : "Confirm the changes in Sync to Apple."
         case .blocked: status = "Finish selecting files and correct or compare the blocked editor before continuing."
         case .changed: status = "Earlier changes were saved. Newer edits or a changed media catalog still need attention."
         case .save: status = "The save stopped. Saved changes are kept; remaining selections and edits are available to retry."
@@ -214,6 +255,16 @@ import Observation
     private func register(_ model: MediaLayoutEditor) {
         model.didChange = { [weak self] in self?.inputsChanged() }
         registrations.append(workflow.register(priority: .layout, state: { model.state }, save: { await model.save() }))
+    }
+    /// A validated replacement batch needs the saved exclusions before checking the ten-image limit.
+    /// Each save still compares its original baseline; a conflict keeps the batch available to retry.
+    private func saveScreenshotLayoutsBeforeAdding() async throws {
+        let layouts = screenshots.map(\.editor)
+        guard active, !Task.isCancelled, layouts.allSatisfy({ !$0.state.blocked }) else { throw ScreenshotFailure.stale }
+        for layout in layouts where layout.dirty {
+            guard await layout.save(), active, !Task.isCancelled else { throw ScreenshotFailure.stale }
+        }
+        guard active, !Task.isCancelled, layouts.allSatisfy({ !$0.dirty && !$0.state.blocked }) else { throw ScreenshotFailure.stale }
     }
     private func addScreenshotLayout(id: String, displayType: String, confirmed: MediaLayoutDraft? = nil) {
         let scope = scope, session = session, key = JSONText.array([.string("screenshots"), .string(id)]).stringify()

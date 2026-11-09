@@ -12,7 +12,8 @@ struct ReportDownloadFailureTests {
             (AppStoreConnectClient.Failure.status(503), "SB-REPORT-SERVICE", "SB-FINANCE-SERVICE"),
             (ReporterClient.Failure.serviceUnavailable, "SB-REPORT-SERVICE", "SB-FINANCE-SERVICE"),
             (ReporterClient.Failure.access, "SB-REPORT-ACCESS", "SB-FINANCE-ACCESS"),
-            (ReporterClient.Failure.expiredToken, "SB-REPORTER-KEYCHAIN", "SB-REPORTER-KEYCHAIN"),
+            (ReporterClient.Failure.expiredToken, "SB-REPORTER-SETUP", "SB-REPORTER-SETUP"),
+            (ReporterClient.Failure.invalidToken, "SB-REPORTER-SETUP", "SB-REPORTER-SETUP"),
             (ReporterClient.Failure.wrongAccount, "SB-REPORTER-CHANGED", "SB-REPORTER-CHANGED"),
             (ReporterClient.Failure.unsupported, "SB-REPORTER-RESPONSE", "SB-FINANCE-RESPONSE"),
             (ReporterClient.Failure.size, "SB-REPORT-SIZE", "SB-REPORT-SIZE")

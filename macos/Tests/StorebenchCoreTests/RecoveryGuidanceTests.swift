@@ -131,7 +131,7 @@ import Testing
         #expect(RecoveryIssue.apple(AccountFailure.invalid) == nil)
         #expect(RecoveryIssue.reporter(ReporterSetupFailure.changed) == "SB-REPORTER-CHANGED")
         #expect(RecoveryIssue.reporter(ReporterSetupFailure.keychain) == "SB-REPORTER-KEYCHAIN")
-        #expect(RecoveryIssue.reporter(ReporterClient.Failure.expiredToken) == "SB-REPORTER-KEYCHAIN")
+        #expect(RecoveryIssue.reporter(ReporterClient.Failure.expiredToken) == "SB-REPORTER-SETUP")
         #expect(RecoveryIssue.reporter(ReporterSetupFailure.busy) == "SB-REPORTER-BUSY")
         #expect(RecoveryIssue.finance(FinanceFailure.period) == "SB-FINANCE-PERIOD")
         #expect(RecoveryIssue.sales(SalesFileFailure.format) == "SB-REPORT-FORMAT")

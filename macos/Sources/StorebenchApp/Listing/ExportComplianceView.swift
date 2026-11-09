@@ -11,6 +11,7 @@ struct ExportComplianceCard: View {
     var offersNewDeclaration = true
     @State private var declarations: [EncryptionDeclaration]?
     @State private var questions = EncryptionQuestionnaire()
+    @State private var draft: LocalEditorDraftEditor?
     @State private var fileSelection = FileDialogSelection<String>()
     @State private var status = ""
     @State private var working = false
@@ -33,29 +34,35 @@ struct ExportComplianceCard: View {
             if offersNewDeclaration {
                 // App Store Connect's own questions; the description Apple's API needs is built from the answers.
                 Text("New declaration").font(.sbHeadline)
-                StorebenchChoicePicker(EncryptionAlgorithms.question, selection: $questions.algorithms, options: EncryptionAlgorithms.allCases.map { ($0.rawValue, $0.label) }, style: .radio)
+                StorebenchChoicePicker(EncryptionAlgorithms.question, selection: $questions.algorithms, options: EncryptionAlgorithms.allCases.map { ($0.rawValue, $0.label) }, style: .radio).storebenchWorking(draft?.loaded != true)
                 if let chosen = questions.chosen, !chosen.exempt {
-                    StorebenchChoicePicker("Is your app going to be available on the App Store in France?", selection: $questions.france, options: [("yes", "Yes"), ("no", "No")], style: .radio)
+                    StorebenchChoicePicker("Is your app going to be available on the App Store in France?", selection: $questions.france, options: [("yes", "Yes"), ("no", "No")], style: .radio).storebenchWorking(draft?.loaded != true)
                 }
             }
             StorebenchFeedback(text: status, height: 40, error: !status.isEmpty)
             if offersNewDeclaration {
                 let note = questions.needsDeclaration == false ? "Apple keeps no declaration for encryption within Apple's operating system or for standard encryption outside France. Answer it on the build's Export Compliance questions." : questions.missing ?? questions.nextStep
                 Text(note).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
-                StorebenchFormFooter {
-                    StorebenchBusyButton(title: "Save", loadingTitle: "Preparing…", busy: working, variant: .primary) {
-                        guard let answers = questions.answers else { return }
+                if let draft {
+                    LocalDraftActions(editor: draft, value: questions.json, restore: { questions = EncryptionQuestionnaire(json: $0) }, blocked: working, sync: {
+                        guard !draft.dirty(questions.json), let answers = questions.answers else { return }
                         var request = PublishRequest(accountId: account.id, appId: app.id, scope: .exportCompliance); request.encryptionDeclaration = answers
-                        Task { await prepare(request) }
-                    }
-                    .storebenchWorking(questions.answers == nil).help(questions.answers == nil ? note : "Shows exactly what is sent; Send to Apple in the review below sends it to App Store Connect")
+                        await prepare(request)
+                    }, syncBlocked: questions.answers == nil)
                 }
             }
         }
         .storebenchWorking(working)
         .onChange(of: questions) { changed() }
-        .trackUnsavedChanges(questions.started, busy: working || fileSelection.pending)
-        .task { await load() }
+        .trackUnsavedChanges(draft?.dirty(questions.json) == true, busy: working || fileSelection.pending || draft?.busy == true, onSave: { await draft?.saveCurrent(value: { questions.json }) == true })
+        .task {
+            if offersNewDeclaration, let session {
+                let owner = LocalEditorDraftEditor(scope: .init(accountId: account.id, appId: app.id, editor: "encryption-declaration", resource: "new"), session: session)
+                draft = owner
+                if let saved = await owner.load(initial: questions.json) { questions = EncryptionQuestionnaire(json: saved) }
+            }
+            await load()
+        }
         .fileImporter(isPresented: $fileSelection.isPresented, allowedContentTypes: [.pdf]) { result in
             let declarationId = fileSelection.finish()
             guard !working, case .success(let url) = result, let declarationId, let session else { return }

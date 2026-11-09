@@ -8,14 +8,50 @@ public struct AppInformationEditor: Sendable {
     public private(set) var rights = ""
     public private(set) var categories: [String: String?] = [:]
     private var savedCategories: [String: String?]?
+    private var restoredCategories = false
     public private(set) var ageAnswers: [String: JSONText]?
     public private(set) var ageReady = false
     public private(set) var ageChanges: [String: JSONText] = [:]
     public private(set) var declarations: [AccessibilityDeclarationView]?
     public private(set) var accessibilityReady = false
     private var familyInputs: [String: [String: Bool]] = [:]
+    private var restoredFamilies = Set<String>()
 
     public init() {}
+
+    /// Current form inputs can be kept locally even before Apple's required questions are complete.
+    public var localDraft: JSONText {
+        .object([
+            ("rights", .string(rights)),
+            ("categories", .object(categories.sorted { $0.key < $1.key }.map { ($0.key, $0.value.map(JSONText.string) ?? .null) })),
+            ("ages", .object((ageAnswers ?? [:]).merging(ageChanges) { _, changed in changed }.sorted { $0.key < $1.key }.map { ($0.key, $0.value) })),
+            ("accessibility", .object(AccessibilityDeclarations.families.map { family in
+                (family.0, .object(answers(for: family.0).sorted { $0.key < $1.key }.map { ($0.key, .bool($0.value)) }))
+            }))
+        ])
+    }
+    public mutating func restoreLocalDraft(_ value: JSONText) {
+        if let rights = value["rights"]?.text { self.rights = rights }
+        if case .object(let pairs)? = value["categories"] {
+            categories = Dictionary(uniqueKeysWithValues: pairs.filter { AppInformation.categoryFields.contains($0.0) }.map { ($0.0, $0.1.text) })
+            restoredCategories = !informationReady && !categories.isEmpty
+        }
+        ageChanges = [:]
+        for (key, _) in AgeRating.frequency + AgeRating.boolean + AgeRating.optional {
+            if let answer = value["ages"]?[key], answer != ageAnswers?[key] { ageChanges[key] = answer }
+        }
+        familyInputs = [:]
+        restoredFamilies = []
+        for (family, _) in AccessibilityDeclarations.families {
+            if value["accessibility"]?[family] != nil {
+                familyInputs[family] = [:]
+                if !accessibilityReady { restoredFamilies.insert(family) }
+            }
+            for feature in AccessibilityDeclarations.applicable(family) {
+                if case .bool(let flag)? = value["accessibility"]?[family]?[feature.key] { familyInputs[family, default: [:]][feature.key] = flag }
+            }
+        }
+    }
 
     public var categoryChanged: Bool {
         guard let current = savedCategories else { return false }
@@ -37,14 +73,14 @@ public struct AppInformationEditor: Sendable {
     }
 
     public mutating func receive(_ information: AppInformationState) {
-        let retainRights = self.information != nil && rights != (self.information?.contentRights ?? "")
-        let retainCategories = categoryChanged
+        let retainRights = !rights.isEmpty && rights != (self.information?.contentRights ?? "")
+        let retainCategories = categoryChanged || restoredCategories
         if !retainRights { rights = information.contentRights ?? "" }
         if let saved = information.categories {
             if !retainCategories { categories = saved }
             savedCategories = saved
         } else if savedCategories == nil { categories = Dictionary(uniqueKeysWithValues: AppInformation.categoryFields.map { ($0, String?.none) }) }
-        self.information = information; informationReady = true
+        self.information = information; informationReady = true; restoredCategories = false
     }
     public mutating func informationFailed() { informationReady = false }
     public mutating func chooseRights(_ value: String) { if informationReady { rights = value } }
@@ -91,9 +127,9 @@ public struct AppInformationEditor: Sendable {
         accessibilityReady && draft(for: family).map { draft in AccessibilityDeclarations.applicable(family).allSatisfy { draft.answers[$0.key] != nil } } == true
     }
     public mutating func receiveDeclarations(_ declarations: [AccessibilityDeclarationView]) {
-        let retained = familyInputs.filter { $0.value != draftAnswers($0.key) }
+        let retained = familyInputs.filter { restoredFamilies.contains($0.key) || $0.value != draftAnswers($0.key) }
         self.declarations = declarations
-        familyInputs = retained.filter { $0.value != draftAnswers($0.key) }; accessibilityReady = true
+        familyInputs = retained.filter { $0.value != draftAnswers($0.key) }; accessibilityReady = true; restoredFamilies = []
     }
     public mutating func accessibilityFailed() { accessibilityReady = false }
     public mutating func chooseAccessibility(_ family: String, _ key: String, _ value: Bool?) {

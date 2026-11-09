@@ -25,7 +25,7 @@ struct TestFlightTestersView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            ReviewPanel(account: account, app: app, session: session, review: $review, done: { if review?.state == "complete" { Task { await load(cursor: currentCursor) } } }, busyChanged: { publishing = $0 }).storebenchWorking(!confirmed || working || preparing)
+            ReviewPanel(account: account, app: app, session: session, review: $review, done: { if review?.state == "complete" { Task { await load(cursor: currentCursor) } } }, busyChanged: { publishing = $0 }, syncConfirmation: true).storebenchWorking(!confirmed || working || preparing)
             Card(title: "Find a tester", subtitle: "Search Apple's testers within this app by exact email, or clear the filter to see all app testers.") {
                 StorebenchInputActions {
                     StorebenchTextField("Tester email", text: $email)
