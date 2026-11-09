@@ -3,7 +3,7 @@ import Foundation
 import StorebenchCore
 import SwiftUI
 
-/// Command menus share the control geometry while macOS manages opening and keyboard navigation.
+/// macOS draws command menus and their single-arrow indicator at the shared command width.
 struct StorebenchMenu<Content: View>: View {
     let title, icon: String
     var stretch = false
@@ -14,20 +14,45 @@ struct StorebenchMenu<Content: View>: View {
     }
     var body: some View {
         Menu { content().nativeMenuContent() } label: {
-            HStack(spacing: 8) {
-                StorebenchLabel(title, icon: icon, size: 16).lineLimit(1)
-                Spacer(minLength: 0)
-                StorebenchIcon(name: "down", size: 14)
-            }
-        }.menuStyle(.button).menuIndicator(.hidden)
-            .buttonStyle(StorebenchButtonStyle(stretch: stretch))
+            StorebenchLabel(title, icon: icon, size: 16).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+        }.menuStyle(.button).menuIndicator(.visible).buttonStyle(.bordered).controlSize(.large)
+            .frame(maxWidth: stretch ? StorebenchTheme.actionMaxWidth : StorebenchTheme.actionWidth)
+            .frame(width: stretch ? nil : StorebenchTheme.actionWidth, height: StorebenchTheme.controlHeight)
             .help(title).accessibilityLabel(title)
     }
 }
 
 extension View {
     /// App colors and custom button drawing must not become native menu-item attributes.
-    func nativeMenuContent() -> some View { font(.body).foregroundStyle(.primary).buttonStyle(.automatic).tint(nil) }
+    func nativeMenuContent() -> some View { font(.body).foregroundStyle(.primary).buttonStyle(.automatic).toggleStyle(.automatic).tint(nil) }
+}
+
+/// A submenu in a native command menu, without content-button chrome.
+struct StorebenchSubmenu<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+    init(_ title: String, @ViewBuilder content: @escaping () -> Content) { self.title = title; self.content = content }
+    var body: some View { Menu(title) { content().nativeMenuContent() } }
+}
+
+/// A checked menu item uses the system's state column, keeping every item's title aligned.
+struct StorebenchMenuOption: View {
+    let title: String
+    let selected: Bool
+    let action: () -> Void
+    var body: some View { Toggle(title, isOn: Binding(get: { selected }, set: { if $0 { action() } })).toggleStyle(.automatic) }
+}
+
+struct StorebenchMenuSeparator: View {
+    var body: some View { Divider() }
+}
+
+struct StorebenchExternalMenuItem: View {
+    let title: String
+    let destination: URL
+    @Environment(\.openURL) private var openURL
+    init(_ title: String, destination: URL) { self.title = title; self.destination = destination }
+    var body: some View { Button(title) { openURL(destination) }.help(destination.host ?? title) }
 }
 
 /// The entire field is one native pop-up control. macOS owns menu text, selection and keyboard tracking.
@@ -35,19 +60,11 @@ struct StorebenchNativePicker<Value: Hashable>: View {
     let title: String
     @Binding var selection: Value
     let options: [SelectionOption<Value>]
-    @State private var focused = false
-    @State private var hovered = false
     private var available: Bool { options.contains(where: \.isEnabled) && Set(options.map(\.value)).count == options.count }
-    private var selected: String { SelectionOption.title(for: selection, in: options) ?? (options.isEmpty ? "No options available" : "Choose…") }
     var body: some View {
-        StorebenchSelectionLabel(text: selected)
-            .modifier(StorebenchControlSurface(variant: .field, stretch: true, emphasized: hovered, focused: focused))
-            .accessibilityHidden(true)
-            .overlay {
-                NativeSelectionControl(title: title, selection: $selection, options: options, focusChanged: { focused = $0 })
-                    .frame(maxWidth: .infinity, maxHeight: .infinity).accessibilityHidden(false)
-            }
-            .disabled(!available).onHover { hovered = $0 }
+        NativeSelectionControl(title: title, selection: $selection, options: options)
+            .frame(minWidth: 0, maxWidth: .infinity).frame(height: StorebenchTheme.controlHeight)
+            .disabled(!available)
     }
 }
 
@@ -55,11 +72,13 @@ private struct NativeSelectionControl<Value: Hashable>: NSViewRepresentable {
     let title: String
     @Binding var selection: Value
     let options: [SelectionOption<Value>]
-    let focusChanged: (Bool) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> SelectionPopUpButton {
         let view = SelectionPopUpButton(frame: .zero, pullsDown: false)
-        view.isTransparent = true; view.focusRingType = .none; view.controlSize = .large
+        view.isTransparent = false; view.isBordered = true; view.bezelStyle = .rounded
+        view.focusRingType = .default; view.controlSize = .large
+        view.font = .systemFont(ofSize: StorebenchTheme.measure("inputFont"))
+        view.cell?.lineBreakMode = .byTruncatingMiddle
         view.setContentHuggingPriority(.defaultLow, for: .horizontal)
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         view.target = context.coordinator; view.action = #selector(Coordinator.choose(_:))
@@ -69,12 +88,11 @@ private struct NativeSelectionControl<Value: Hashable>: NSViewRepresentable {
     }
     func updateNSView(_ view: SelectionPopUpButton, context: Context) {
         context.coordinator.parent = self
-        view.focusChanged = focusChanged
         view.isEnabled = context.environment.isEnabled && context.environment.collectionVisible && options.contains(where: \.isEnabled) && Set(options.map(\.value)).count == options.count
         context.coordinator.refresh()
     }
     static func dismantleNSView(_ view: SelectionPopUpButton, coordinator: Coordinator) {
-        coordinator.active = false; view.target = nil; view.action = nil; view.focusChanged = nil; view.prepareForOpening = nil; view.menu?.delegate = nil
+        coordinator.active = false; view.target = nil; view.action = nil; view.prepareForOpening = nil; view.menu?.delegate = nil
     }
     final class CapturedChoice: NSObject {
         let option: SelectionOption<Value>
@@ -105,9 +123,15 @@ private struct NativeSelectionControl<Value: Hashable>: NSViewRepresentable {
                 view.menu = menu; rendered = parent.options; placeholderShown = missing
             }
             view.selectItem(at: index.map { $0 + (placeholderShown ? 1 : 0) } ?? 0)
+            for item in view.itemArray {
+                let captured = item.representedObject as? CapturedChoice
+                item.state = captured?.option.value == parent.selection ? .on : .off
+            }
             let detail = index.map { parent.options[$0].detail ?? parent.options[$0].title } ?? (parent.options.isEmpty ? "No options available" : "Choose…")
-            // A tooltip only when the option explains more than its title shows.
-            view.toolTip = index.flatMap { parent.options[$0].detail }; view.setAccessibilityLabel(parent.title); view.setAccessibilityValue(detail)
+            let selectedTitle = index.map { parent.options[$0].title } ?? detail
+            let explanation = index.flatMap { parent.options[$0].detail }
+            view.toolTip = parent.title + ": " + selectedTitle + (explanation.map { "\n" + $0 } ?? "")
+            view.setAccessibilityLabel(parent.title); view.setAccessibilityValue(selectedTitle)
             view.setAccessibilityHelp("Choose an option. " + detail)
             view.menu?.minimumWidth = max(0, view.bounds.width)
         }
@@ -125,19 +149,10 @@ private struct NativeSelectionControl<Value: Hashable>: NSViewRepresentable {
 }
 
 private final class SelectionPopUpButton: NSPopUpButton {
-    var focusChanged: ((Bool) -> Void)?
     var prepareForOpening: (() -> Void)?
     override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: StorebenchTheme.controlHeight) }
     override func mouseDown(with event: NSEvent) { prepareForOpening?(); super.mouseDown(with: event) }
     override func keyDown(with event: NSEvent) { prepareForOpening?(); super.keyDown(with: event) }
-    override func becomeFirstResponder() -> Bool {
-        let accepted = super.becomeFirstResponder(); if accepted { focusChanged?(true) }; return accepted
-    }
-    override func resignFirstResponder() -> Bool {
-        let accepted = super.resignFirstResponder()
-        if accepted { let changed = focusChanged; Task { @MainActor in changed?(false) } }
-        return accepted
-    }
 }
 
 struct StorebenchActionLink: View {
@@ -191,45 +206,58 @@ struct StorebenchFormField<Content: View>: View {
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .top, spacing: StorebenchTheme.space(4)) {
                         settingsCopy.frame(minWidth: StorebenchTheme.settingsLabelWidth, idealWidth: StorebenchTheme.settingsLabelWidth, maxWidth: .infinity, alignment: .leading)
-                        content().frame(width: StorebenchTheme.settingsControlWidth, alignment: .leading).frame(minHeight: StorebenchTheme.controlHeight)
+                        input.frame(width: StorebenchTheme.settingsControlWidth, alignment: .leading).frame(minHeight: StorebenchTheme.controlHeight)
                     }
                     VStack(alignment: .leading, spacing: StorebenchTheme.measure("fieldGap")) {
                         fieldLabel
-                        content().frame(maxWidth: .infinity, alignment: .leading)
+                        input.frame(maxWidth: .infinity, alignment: .leading)
                         fieldHint
                     }
                 }
             } else {
                 VStack(alignment: .leading, spacing: StorebenchTheme.measure("fieldGap")) {
                     if !hideLabel { fieldLabel }
-                    content().frame(maxWidth: .infinity, alignment: .leading)
-                        .overlay(StorebenchControlOutline(border: needed == nil ? .clear : StorebenchTheme.color("color-danger-border"), focusedOverride: false).allowsHitTesting(false))
+                    input.frame(maxWidth: .infinity, alignment: .leading)
                     fieldHint
                 }
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
+    private var input: some View {
+        content().overlay(StorebenchControlOutline(border: needed == nil ? .clear : StorebenchTheme.color("color-danger-border"), focusedOverride: false).allowsHitTesting(false))
+    }
     /// The label sits level with the control's text line; a hint continues below it in the same column.
     private var settingsCopy: some View {
         VStack(alignment: .leading, spacing: 2) {
             fieldLabel
-            if !hideHint && !hint.isEmpty { StorebenchAdaptiveText(text: hint, maximumHeight: StorebenchTheme.textTrackLimit, font: .sbCaption, color: StorebenchTheme.muted) }
+            fieldHint
         }.padding(.top, max(0, (StorebenchTheme.controlHeight - StorebenchTheme.measure("fieldLabel")) / 2))
     }
     private var fieldLabel: some View {
         HStack(alignment: .center, spacing: StorebenchTheme.space(1)) {
-            StorebenchTextSlot(text: label, height: StorebenchTheme.measure("fieldLabel"), font: .sbCallout.weight(.semibold), color: StorebenchTheme.color("color-text-secondary"))
-                .fixedSize(horizontal: !info.isEmpty, vertical: false)
+            StorebenchHugWidth {
+                StorebenchTextSlot(text: label, height: StorebenchTheme.measure("fieldLabel"), font: .sbCallout.weight(.semibold), color: StorebenchTheme.color("color-text-secondary"))
+            }.layoutPriority(1)
             if !info.isEmpty { StorebenchInfoTip(title: label, text: info); Spacer(minLength: 0) }
         }
     }
     /// The hint, or why this field is the one to fill in next, in the hint's own track so nothing moves.
     @ViewBuilder private var fieldHint: some View {
         if let needed, !hideHint {
-            StorebenchTextSlot(text: needed, height: hintHeight ?? StorebenchTheme.measure("fieldHint"), font: .sbCaption.weight(.semibold), color: StorebenchTheme.color("color-danger"))
-        } else if !hideHint && (!hint.isEmpty || (hintHeight ?? 0) > 0) {
+            StorebenchTextSlot(text: needed, height: hintHeight ?? StorebenchTheme.measure("fieldHint"), font: .sbCaption.weight(.semibold), color: StorebenchTheme.color("color-danger"), live: true)
+        } else if !hideHint {
             StorebenchTextSlot(text: hint, height: hintHeight ?? StorebenchTheme.measure("fieldHint"), font: .sbCaption, color: StorebenchTheme.muted)
         }
+    }
+}
+
+/// The shared Boolean choice follows its form presentation and keeps a name when the visible label is hidden.
+struct StorebenchToggle: View {
+    let title: String
+    @Binding var isOn: Bool
+    init(_ title: String, isOn: Binding<Bool>) { self.title = title; _isOn = isOn }
+    var body: some View {
+        Toggle(title, isOn: $isOn).toggleStyle(StorebenchToggleStyle())
     }
 }
 
@@ -300,11 +328,12 @@ struct StorebenchSearchPicker<Value: Hashable>: View {
     private var selected: String { SelectionOption.title(for: selection, in: options) ?? (options.isEmpty ? "No options available" : "Choose…") }
     var body: some View {
         StorebenchFormField(label: title, hint: hint, hideLabel: hideLabel, hideHint: hideLabel) {
-            Button { if enabled { open = true } } label: { StorebenchSelectionLabel(text: selected).foregroundStyle(SelectionOption.title(for: selection, in: options) == nil ? StorebenchTheme.muted : StorebenchTheme.ink) }
+            Button { if enabled { open = true } } label: { StorebenchSearchSelectionLabel(text: selected).foregroundStyle(SelectionOption.title(for: selection, in: options) == nil ? StorebenchTheme.muted : StorebenchTheme.ink) }
                 .buttonStyle(StorebenchButtonStyle(.field, stretch: true))
                 .popover(isPresented: $open, arrowEdge: .bottom) {
                     StorebenchSearchList(title: title, selection: $selection, options: options) { open = false }
                 }
+                .help(title + ": " + selected + (hint.isEmpty ? "" : "\n" + hint))
                 .accessibilityLabel(title).accessibilityValue(selected).accessibilityHint("Opens a searchable list")
         }
     }
@@ -360,7 +389,7 @@ private struct StorebenchSearchList<Value: Hashable>: View {
                 .contentShape(Rectangle())
         }.buttonStyle(.plain).disabled(!option.isEnabled)
             .onHover { if $0 && option.isEnabled { highlighted = option.value } }
-            .help(option.detail ?? "").accessibilityLabel(option.title).accessibilityAddTraits(chosen ? [.isSelected] : [])
+            .help(option.detail.map { option.title + "\n" + $0 } ?? option.title).accessibilityLabel(option.title).accessibilityAddTraits(chosen ? [.isSelected] : [])
     }
     private func move(_ direction: Int) {
         let enabled = matches.filter(\.isEnabled).map(\.value)
@@ -431,6 +460,7 @@ struct StorebenchChoicePicker<Selection: Hashable>: View {
                         .overlay(StorebenchControlOutline(border: StorebenchTheme.color(chosen ? "color-border-accent" : "color-border-control")))
                 }
             }.buttonStyle(StorebenchPressStyle()).focused($focusedIndex, equals: index)
+                .help(title + ": " + option.1 + (hint.isEmpty ? "" : "\n" + hint) + (info.isEmpty ? "" : "\n" + info))
                 .accessibilityLabel(option.1).accessibilityAddTraits(chosen ? [.isSelected] : [])
                 .onKeyPress { press in
                     guard enabled, press.modifiers.isEmpty else { return .ignored }
@@ -605,7 +635,7 @@ struct StorebenchForm<Content: View>: View {
     @Environment(\.settingsPresentation) private var settingsPresentation
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: StorebenchTheme.gap) { content() }
+            VStack(alignment: .leading, spacing: settingsPresentation ? StorebenchTheme.space(6) : StorebenchTheme.gap) { content() }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .settingsPageInsets(settingsPresentation)
         }.scrollBounceBehavior(.basedOnSize)
@@ -624,8 +654,16 @@ struct StorebenchFormSection<Content: View>: View {
     let title: String
     let help: String
     @ViewBuilder let content: () -> Content
+    @Environment(\.settingsPresentation) private var settingsPresentation
     init(_ title: String, help: String = "", @ViewBuilder content: @escaping () -> Content) { self.title = title; self.help = help; self.content = content }
-    var body: some View { Card(title: title, subtitle: "", help: help) { content() } }
+    var body: some View {
+        if settingsPresentation {
+            StorebenchCardSection(title: title, help: help) { content() }
+                .transformEnvironment(\.navigationPresentation) { $0 = $0?.scoped(title) }
+        } else {
+            Card(title: title, subtitle: "", help: help) { content() }
+        }
+    }
 }
 
 struct StorebenchDateField: View {

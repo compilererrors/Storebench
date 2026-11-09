@@ -84,7 +84,7 @@ struct AssetLibraryAssetsCard: View {
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
     private func option(_ title: String, chosen: Bool, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) { if chosen { StorebenchLabel(title, icon: "check", size: 14) } else { Text(title) } }
+        StorebenchMenuOption(title: title, selected: chosen, action: action)
     }
 
     private func table(_ shown: [AssetLibraryTable.Row]) -> some View {

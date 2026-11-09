@@ -37,14 +37,20 @@ struct SettingsView: View {
         }.frame(width: 0, height: 0))
         .environment(\.recoveryNavigation, RecoveryNavigation(scope: nil, navigate: recover))
         .onAppear { recovery.settingsProtection = protection; updateArea() }
-        .onDisappear { if recovery.settingsProtection === protection { recovery.settingsProtection = nil; recovery.selectedArea = nil } }
+        .onDisappear { if recovery.settingsProtection === protection { recovery.settingsProtection = nil; recovery.selectedArea = nil; recovery.selectedPane = nil } }
         .onChange(of: tab) { updateArea() }
         .onChange(of: recovery.request?.id, initial: true) { receiveRecovery() }
+        .onChange(of: recovery.aiRequest, initial: true) {
+            guard let id = recovery.aiRequest else { return }
+            if recovery.authorizeAI(id, current: protection.policy) { tab = "ai" }
+            recovery.consumeAI(id)
+        }
     }
     @ViewBuilder private var settingsContent: some View {
         switch tab {
         case "periods": PeriodSettings(model: model)
         case "editing": EditingSettings(model: model)
+        case "ai": AISettings(model: model)
         case "security": SecuritySettings(model: model)
         case "accounts": AccountSettings(model: model, recoveryRequest: recoveryRequest)
         case "pricing": PricingProfilesSettingsView(model: model)
@@ -55,6 +61,7 @@ struct SettingsView: View {
         }
     }
     private func updateArea() {
+        recovery.selectedPane = SettingsNavigation.Pane.restored(tab)
         recovery.selectedArea = tab == "accounts" ? .accounts : tab == "general" ? .storage : tab == "help" ? .help : nil
     }
     private func recover(_ action: RecoveryGuidance.Action) {

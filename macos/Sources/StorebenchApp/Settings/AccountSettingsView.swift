@@ -27,11 +27,9 @@ struct AccountSettings: View {
                 if case .unlocked(let accounts) = model.state {
                     StorebenchCollection(items: accounts, title: { $0.name }, empty: "No Apple account connected yet. Choose Connect Account… to add one.") { account in
                         VStack(alignment: .leading, spacing: 10) {
-                            Text(account.name).font(.sbHeadline).lineLimit(2).help(account.name)
-                            Text("\(account.keyType == "team" ? "Team API key" : "Individual key") · Key ID \(account.keyId) · \(account.appIds.count) apps")
-                                .font(.sbCaption).foregroundStyle(StorebenchTheme.muted).lineLimit(2).help(account.keyId)
-                            Text(messages[account.id] ?? "").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
-                                .lineLimit(3).frame(maxWidth: .infinity, minHeight: 48, alignment: .topLeading).help(messages[account.id] ?? "")
+                            StorebenchTextSlot(text: account.name, height: StorebenchTheme.measure("sectionTitle"), font: .sbHeadline)
+                            StorebenchTextSlot(text: "\(account.keyType == "team" ? "Team API key" : "Individual key") · Key ID \(account.keyId) · \(account.appIds.count) apps", height: 36, font: .sbCaption, color: StorebenchTheme.muted)
+                            StorebenchFeedback(text: messages[account.id] ?? "", height: 48)
                             RecoveryActions(code: issueCodes[account.id])
                             StorebenchFormFooter { actions(account) }
                         }.padding(.vertical, 6).id("account-\(account.id)")
@@ -114,14 +112,13 @@ struct ReconnectAccountView: View {
     @State private var protection = EditorProtection()
     var body: some View {
         StorebenchDialog(title: "Reconnect This Key", height: 600, busy: working, close: { if protection.allowLeaving() { privateKey = ""; done() } }) {
-                Text(account.name).font(.sbHeadline).lineLimit(2).help(account.name)
-                Text("Key ID \(account.keyId)\(account.issuerId.map { " · Issuer ID \($0)" } ?? "")")
-                    .font(.sbCallout).lineLimit(3).help(account.keyId)
+                StorebenchTextSlot(text: account.name, height: StorebenchTheme.measure("sectionTitle"), font: .sbHeadline)
+                StorebenchTextSlot(text: "Key ID \(account.keyId)\(account.issuerId.map { " · Issuer ID \($0)" } ?? "")", height: 54, font: .sbCallout)
                 Text("Choose the original downloaded P-256 .p8 file for this key. Storebench verifies app access before replacing the private key in your selected encrypted credential storage. Saved app selections, history and drafts remain available.")
                     .font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
                 HStack {
                     Button("Choose File…") { if !working { choosing = true } }.storebenchWorking(working)
-                    Text(fileName.isEmpty ? "No private key selected" : fileName).lineLimit(1).truncationMode(.middle).help(fileName)
+                    Text(fileName.isEmpty ? "No private key selected" : fileName).lineLimit(1).truncationMode(.middle).help(fileName.isEmpty ? "Choose the original App Store Connect API key file" : fileName)
                 }
                 StorebenchFeedback(text: status, height: 64)
                 RecoveryActions(code: issueCode)

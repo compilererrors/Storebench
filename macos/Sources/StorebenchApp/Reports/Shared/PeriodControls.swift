@@ -85,5 +85,5 @@ struct PeriodRangeField: View {
 
 struct PeriodPreferencesNotice: View {
     let periods: ViewPeriods
-    var body: some View { if !periods.status.isEmpty { Text(periods.status).font(.sbCaption).foregroundStyle(StorebenchTheme.muted).frame(maxWidth: .infinity, alignment: .leading) } }
+    var body: some View { StorebenchTextSlot(text: periods.status, height: 34, font: .sbCaption, color: StorebenchTheme.muted, live: true) }
 }

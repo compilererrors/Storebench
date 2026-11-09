@@ -96,7 +96,7 @@ struct KeywordBulkView: View {
     }
 
     private func territory(_ code: String, name: String) -> some View {
-        Toggle(name, isOn: Binding(get: { territories.contains(code) }, set: { if $0 { territories.insert(code) } else { territories.remove(code) } })).toggleStyle(StorebenchToggleStyle())
+        StorebenchToggle(name, isOn: Binding(get: { territories.contains(code) }, set: { if $0 { territories.insert(code) } else { territories.remove(code) } }))
     }
     private func invalidate() { preview = nil; selected = []; message = "" }
 }

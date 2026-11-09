@@ -33,6 +33,16 @@ public struct LanguageTranslation: Sendable, Equatable {
         }
         /// Every text to translate, in a stable order. Keywords are translated one term at a time so commas stay separators.
         public var segments: [String] { parts.flatMap(\.segments) }
+        public var translationFields: [String] { parts.flatMap { Array(repeating: $0.field, count: $0.segments.count) } }
+        /// Existing target wording is kept unless replacement was explicitly selected.
+        public func indicesToTranslate(target: [LanguageDrafts.Section]?, replacing: Bool) -> [Int] {
+            let fields = translationFields
+            return fields.indices.filter { index in
+                guard let target, !replacing else { return true }
+                guard let section = target.first(where: { $0.draft.fields[fields[index]] != nil }) else { return false }
+                return TextSemantics.trim(section.draft.fields[fields[index]] ?? "").isEmpty
+            }
+        }
 
         static func segments(_ field: String, _ value: String) -> [String] {
             guard !TextSemantics.trim(value).isEmpty else { return [] }

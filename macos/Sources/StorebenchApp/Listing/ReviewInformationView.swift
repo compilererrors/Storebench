@@ -46,7 +46,7 @@ struct ReviewInformationView: View {
                     StorebenchCardSection(title: "Sign-In Information") {
                         Text("Provide a user name and password so Apple's reviewer can sign in to your app.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
                         HStack(spacing: StorebenchTheme.space(1)) {
-                            Toggle("Sign-in required", isOn: $editor.fields.demoAccountRequired)
+                            StorebenchToggle("Sign-in required", isOn: $editor.fields.demoAccountRequired)
                             StorebenchHelpButton(topic: "review-signin")
                         }
                         if editor.fields.demoAccountRequired {
@@ -130,10 +130,9 @@ struct ReviewInformationView: View {
                                  onUse: editor.latest == nil ? nil : { editor.chooseLatest(keepEdits: false); layout = editor.snapshot?.layout ?? ReviewInformationLayout(); review = nil; status = "Showing the latest saved values. Nothing was saved." })
                 if editor.loaded && (editable || editor.dirty) {
                     StorebenchFormFooter {
-                        // Save keeps the details on this Mac and lists what App Store Connect would get; Save Draft only keeps them here.
+                        Button("Save Draft") { Task { await save(prepare: false) } }.help("Save on this Mac only").storebenchWorking(!(editor.dirty))
                         StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Preparing…", busy: saving, variant: .primary) { Task { await save(prepare: true) } }
                             .help("Save on this Mac and list the changes for App Store Connect").storebenchWorking(!(editable))
-                        Button("Save Draft") { Task { await save(prepare: false) } }.help("Save on this Mac only").storebenchWorking(!(editor.dirty))
                     }.storebenchWorking(busy)
                 }
             }

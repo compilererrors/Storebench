@@ -100,6 +100,25 @@ import Testing
         }
     }
 
+    @Test func wrappedCommandsNeverLeaveAnIsolatedFinalButton() {
+        for width in [280.0, 436, 600, 804, 1096] {
+            for count in 2...15 {
+                let layout = ComponentLayout.actionGrid(width: width, heights: (0..<count).map { $0.isMultiple(of: 2) ? 32 : 44 }, trailing: true)
+                let rows = Dictionary(grouping: layout.frames, by: \.minY).sorted { $0.key < $1.key }.map(\.value)
+                #expect(rows.allSatisfy { $0.count == 1 } || rows.allSatisfy { $0.count >= 2 })
+                #expect((rows.map(\.count).max() ?? 0) - (rows.map(\.count).min() ?? 0) <= 1)
+                #expect(layout.frames.allSatisfy { $0.width == min(width, 192) && $0.maxX <= width && $0.maxY <= layout.height })
+                for index in 1..<layout.frames.count {
+                    #expect(!layout.frames[index].intersects(layout.frames[index - 1]))
+                }
+            }
+        }
+        let compact = ComponentLayout.actionGrid(width: 436, heights: [32, 32, 32])
+        #expect(Set(compact.frames.map(\.minY)).count == 3)
+        let four = ComponentLayout.actionGrid(width: 600, heights: [32, 32, 32, 32])
+        #expect(Dictionary(grouping: four.frames, by: \.minY).values.allSatisfy { $0.count == 2 })
+    }
+
     @Test func compactToolsWrapLongLabelsWithinNestedPanelMargins() {
         let inset = StorebenchDesign.shared.number("panel-padding")
         for panelWidth in [1380.0, 1096, 888, 760, 424, 310, 180, 80] {

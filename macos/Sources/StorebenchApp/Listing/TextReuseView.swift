@@ -42,11 +42,11 @@ struct TextReuseView: View {
                     }
                     ScrollView { VStack(alignment: .leading) {
                         StorebenchCollection(items: version.localizations.filter { $0.locale != source }, title: { StoreLocales.name($0.locale) }, subtitle: { $0.locale }, empty: "No other languages in this version. Add a language in Localizations first.") { locale in
-                            Toggle(StoreLocales.name(locale.locale), isOn: choice(locale.locale, in: $targets)).toggleStyle(StorebenchToggleStyle())
+                            StorebenchToggle(StoreLocales.name(locale.locale), isOn: choice(locale.locale, in: $targets))
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading) }.frame(height: min(160, CGFloat(max(1, version.localizations.count - 1)) * 28))
                     Text("Text fields").font(.sbHeadline)
-                    ForEach(TextDrafts.versionFields, id: \.self) { field in Toggle(TextDrafts.labels[field] ?? field, isOn: choice(field, in: $fields)).toggleStyle(StorebenchToggleStyle()) }
+                    ForEach(TextDrafts.versionFields, id: \.self) { field in StorebenchToggle(TextDrafts.labels[field] ?? field, isOn: choice(field, in: $fields)) }
                     if !targets.isEmpty && !fields.isEmpty { Button(working ? "Checking…" : "Preview Text Reuse") { operation = Task { await run(apply: false) } } }
                 }.storebenchWorking(working)
                 }

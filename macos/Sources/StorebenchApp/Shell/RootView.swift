@@ -25,6 +25,7 @@ struct RootView: View {
             .environment(\.recoveryNavigation, RecoveryNavigation(scope: nil, navigate: recover))
             .environment(\.shortcutActions, shortcutActions)
             .focusedSceneValue(\.shortcutActions, shortcutActions).focusedSceneValue(\.shortcutProtection, protection)
+            .modifier(AISetupIntroduction(model: model, recovery: recovery))
             .onChange(of: scenePhase) { if scenePhase == .active { Task { await model.reloadEditingPreferences() } } }
     }
 

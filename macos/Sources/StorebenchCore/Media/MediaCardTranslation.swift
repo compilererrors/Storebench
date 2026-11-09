@@ -10,6 +10,10 @@ public enum MediaCardTranslation {
         set.cards.flatMap { card in fields.map { card[keyPath: $0] }.filter { !TextSemantics.trim($0).isEmpty } }
     }
 
+    public static func translationFields(_ set: MediaCardSet) -> [String] {
+        set.cards.flatMap { card in zip(fields, ["card-title", "card-subtitle", "card-body"]).compactMap { field, name in TextSemantics.trim(card[keyPath: field]).isEmpty ? nil : name } }
+    }
+
     /// The name of the translated set: the source name followed by the language, shortened to fit the name limit.
     public static func name(_ source: String, language: String) -> String {
         let suffix = " · " + StoreLocales.name(language)

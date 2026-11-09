@@ -83,13 +83,41 @@ import Testing
         capture("collection controls", controls(items: 5))
     }
 
-    @Test func emptyStatusTakesNoSpace() {
+    @Test func feedbackAndCopyReserveTheirTracksBeforeTextAppears() {
         let empty = NSHostingController(rootView: StorebenchFeedback(text: "", height: 68)).sizeThatFits(in: CGSize(width: 600, height: CGFloat.infinity))
-        #expect(empty.height < 1, "Measured \(empty)")
+        #expect(abs(empty.height - 68) < 1, "Measured \(empty)")
         let message = NSHostingController(rootView: StorebenchFeedback(text: "Synthetic status", height: 68)).sizeThatFits(in: CGSize(width: 600, height: CGFloat.infinity))
         #expect(abs(message.height - 68) < 1, "Measured \(message)")
+        #expect(empty == message, "A feedback update must not move the commands below it")
+        let long = NSHostingController(rootView: StorebenchFeedback(text: String(repeating: "Synthetic status explanation. ", count: 80), height: 68, error: true)).sizeThatFits(in: CGSize(width: 600, height: CGFloat.infinity))
+        #expect(abs(long.height - empty.height) < 1, "A long error stays inside the reserved feedback track")
         let copy = NSHostingController(rootView: StorebenchTextSlot(text: "Synthetic one line", height: 96, font: .sbCallout)).sizeThatFits(in: CGSize(width: 600, height: CGFloat.infinity))
-        #expect(copy.height < 40, "Static copy measured \(copy)")
+        #expect(abs(copy.height - 96) < 1, "Static copy measured \(copy)")
+        let expanded = NSHostingController(rootView: StorebenchTextSlot(text: String(repeating: "Synthetic explanatory copy. ", count: 80), height: 32, font: .sbCallout)).sizeThatFits(in: CGSize(width: 300, height: CGFloat.infinity))
+        #expect(expanded.height > 32 && expanded.height <= StorebenchTheme.textTrackLimit + 1, "Long copy grows to its reading limit before it scrolls: \(expanded)")
+    }
+
+    @Test func hiddenPickerLabelsKeepFullSelectionContext() throws {
+        let selected = "Synthetic option with a title longer than the visible selection field"
+        let detail = "Synthetic explanation of what this option changes."
+        let host = NSHostingController(rootView: StorebenchPicker("Synthetic Selection", selection: .constant("selected")) {
+            SelectionOption(selected, value: "selected").help(detail)
+        }.labelsHidden().frame(width: 300))
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 320, height: 100), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = host
+        defer { window.close() }
+        host.view.frame = CGRect(x: 0, y: 0, width: 320, height: 100)
+        host.view.layoutSubtreeIfNeeded()
+        func popup(in view: NSView) -> NSPopUpButton? {
+            if let popup = view as? NSPopUpButton { return popup }
+            return view.subviews.lazy.compactMap { popup(in: $0) }.first
+        }
+        let control = try #require(popup(in: host.view))
+        #expect(control.accessibilityLabel() == "Synthetic Selection")
+        #expect(control.accessibilityValue() as? String == selected, "VoiceOver retains the selected value as well as its explanation")
+        #expect(control.toolTip?.contains(selected) == true, "Hover help retains the full value when the field shortens it")
+        #expect(control.toolTip?.contains(detail) == true, "The option explanation remains available on hover")
     }
 
     @Test func headersWithAndWithoutActions() {

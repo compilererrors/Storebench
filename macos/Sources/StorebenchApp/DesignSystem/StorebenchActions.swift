@@ -25,7 +25,7 @@ struct StorebenchFormFooter<Content: View>: View {
     var body: some View {
         VStack(spacing: StorebenchTheme.space(3)) {
             StorebenchDivider()
-            StorebenchActionGroup(alignment: .leading) { content() }
+            StorebenchActionGroup(alignment: .trailing) { content() }
         }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
     }
 }

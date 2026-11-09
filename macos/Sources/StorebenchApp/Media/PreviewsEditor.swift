@@ -79,8 +79,8 @@ struct PreviewSetEditor: View {
                             VStack(alignment: .leading, spacing: StorebenchTheme.space(3)) {
                                 if !scope.local {
                                     HStack(spacing: StorebenchTheme.space(2)) {
-                                        Toggle("Include", isOn: Binding(get: { !editor.inputs.hidden.contains(id) }, set: { if $0 { editor.inputs.hidden.remove(id) } else { editor.inputs.hidden.insert(id) } }))
-                                            .toggleStyle(StorebenchToggleStyle()).accessibilityLabel("Include " + item.fileName)
+                                        StorebenchToggle("Include", isOn: Binding(get: { !editor.inputs.hidden.contains(id) }, set: { if $0 { editor.inputs.hidden.remove(id) } else { editor.inputs.hidden.insert(id) } }))
+                                            .accessibilityLabel("Include " + item.fileName)
                                             .storebenchWorking(reorder.active)
                                         StorebenchReorderHandle(id: id, title: item.fileName, context: editor.reorderContext, order: inputs.order, enabled: canReorder, session: reorder, apply: changeOrder)
                                         Button { move(id, by: -1) } label: { StorebenchIcon(name: "up", size: 16) }.buttonStyle(StorebenchButtonStyle(.quiet, size: .icon))

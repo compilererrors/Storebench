@@ -2,17 +2,15 @@ import AppKit
 import StorebenchCore
 import SwiftUI
 
-/// Static copy takes only the height of its text and grows to show it completely; only copy beyond the
-/// generous limit, or a fixed track offered by its container, scrolls. `live` status and feedback keep
-/// a fixed track sized for realistic messages, so updates never move neighbouring content, and centered
-/// titles keep theirs so they stay level with the icon beside them. Nothing else reserves empty space.
+/// Copy reserves its assigned track and grows to show complete text up to the scroll limit.
+/// Live status keeps a fixed track, including before its first message, so feedback never moves nearby controls.
 struct StorebenchTextTrack<Content: View>: View {
     let height: CGFloat
     var centered = false
     var live = false
     var maximumHeight: CGFloat = StorebenchTheme.textTrackLimit
     @ViewBuilder let content: () -> Content
-    private var reserved: CGFloat { live || centered ? height : 0 }
+    private var reserved: CGFloat { max(0, height) }
     private var limit: CGFloat { live ? height : maximumHeight }
     @State private var overflows = false
     var body: some View {
@@ -108,13 +106,13 @@ struct StorebenchTextSlot: View {
     var body: some View {
         StorebenchTextTrack(height: height, centered: centered, live: live) {
             Text(text).font(font).tracking(tracking).foregroundStyle(color.map(AnyShapeStyle.init) ?? AnyShapeStyle(.foreground)).textSelection(.enabled)
-        }.accessibilityLabel(text)
+        }.accessibilityLabel(text).accessibilityHidden(text.isEmpty)
     }
 }
 
 struct StorebenchAdaptiveText: View {
     let text: String
-    var maximumHeight: CGFloat = 60
+    var maximumHeight: CGFloat = StorebenchTheme.textTrackLimit
     var font: Font = .sbCallout
     var color: Color = StorebenchTheme.ink
     private var label: some View { Text(text).font(font).foregroundStyle(color).fixedSize(horizontal: false, vertical: true) }

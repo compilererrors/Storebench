@@ -99,7 +99,7 @@ struct StorebenchSyncBadge: View {
             .background(fill, in: RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(border))
             .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .ignore).accessibilityLabel(value.label)
+            .help(value.label).accessibilityElement(children: .ignore).accessibilityLabel(value.label)
     }
 }
 
@@ -115,7 +115,7 @@ struct StorebenchStateLabel: View {
                 else { Circle().fill(StorebenchTheme.color(tone == .pending ? "color-warning" : tone == .problem ? "color-danger" : "color-text-tertiary")).frame(width: 9, height: 9) }
             }.frame(width: 12, height: 12).alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
             Text(label).font(.sbCallout).foregroundStyle(StorebenchTheme.ink).lineLimit(lines).fixedSize(horizontal: false, vertical: true)
-        }.accessibilityElement(children: .ignore).accessibilityLabel(label)
+        }.help(label).accessibilityElement(children: .ignore).accessibilityLabel(label)
     }
 }
 

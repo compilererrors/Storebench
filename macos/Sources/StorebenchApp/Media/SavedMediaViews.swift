@@ -52,7 +52,7 @@ struct SavedScreenshotGallery: View {
                 } else if loading { ProgressView("Reading saved image…").frame(maxWidth: .infinity, maxHeight: .infinity) }
             }.frame(maxWidth: .infinity, maxHeight: .infinity).background(StorebenchTheme.color("color-surface-subtle"))
         } actions: {
-            StorebenchActionGroup(alignment: .leading) {
+            StorebenchFlow(spacing: StorebenchTheme.space(2), alignment: .leading) {
                 if request.items.count >= 2 {
                     Button { move(-1) } label: { StorebenchIcon(name: "previous") }
                         .buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).help("Previous screenshot").accessibilityLabel("Previous screenshot").storebenchWorking(saving)
@@ -143,7 +143,7 @@ struct ArchivedScreenshotThumbnail: View {
             ZStack {
                 RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius).fill(StorebenchTheme.color("color-surface-sunken"))
                 if let image { Image(decorative: image.image, scale: 1).resizable().aspectRatio(contentMode: .fit) }
-                else if failed { Text("Not saved").font(.sbCaption) } else { ProgressView().controlSize(.small) }
+                else if failed { Text("Not saved").font(.sbCaption) } else { ProgressView().controlSize(.small).accessibilityLabel("Reading Saved Screenshot") }
             }.padding(8).frame(height: imageHeight).background(StorebenchTheme.color("color-surface-sunken"))
             StorebenchDivider()
             VStack(alignment: .leading, spacing: 4) {

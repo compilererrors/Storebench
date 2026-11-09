@@ -160,7 +160,7 @@ import UniformTypeIdentifiers
                 }
             }
             if jsonHint { Text("JSON restores its original fiscal periods and report regions. Preview checks the file's contents.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
-            else if !chosen.isEmpty { Toggle("Each file is a complete report for the selected region and fiscal period.", isOn: $complete).storebenchWorking(unavailable) }
+            else if !chosen.isEmpty { StorebenchToggle("Each file is a complete report for the selected region and fiscal period.", isOn: $complete).storebenchWorking(unavailable) }
             Text("CSV, TXT, TSV, GZ or JSON · up to 20 files and 10 MB total after decompression. Only direct transactions for this app are saved. Summary, detailed and regional datasets remain separate. Compare amounts before replacing an exact fiscal period and region.")
                 .font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
             if working { Button("Stop Waiting") { stop() } }

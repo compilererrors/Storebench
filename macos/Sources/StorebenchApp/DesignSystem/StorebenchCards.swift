@@ -30,11 +30,12 @@ private struct CardHeading: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .center, spacing: StorebenchTheme.space(2)) {
-                StorebenchTextSlot(text: title, height: StorebenchTheme.measure("sectionTitle"), font: .sbTitle3)
-                    .fixedSize(horizontal: !help.isEmpty, vertical: false)
+                StorebenchHugWidth {
+                    StorebenchTextSlot(text: title, height: StorebenchTheme.measure("sectionTitle"), font: .sbTitle3)
+                }.layoutPriority(1)
                 if !help.isEmpty { StorebenchHelpButton(topic: help); Spacer(minLength: 0) }
             }
-            if !subtitle.isEmpty { StorebenchAdaptiveText(text: subtitle, maximumHeight: StorebenchTheme.measure("sectionDescription"), font: .sbCallout, color: StorebenchTheme.muted) }
+            if !subtitle.isEmpty { StorebenchTextSlot(text: subtitle, height: StorebenchTheme.measure("sectionDescription"), font: .sbCallout, color: StorebenchTheme.muted) }
         }
     }
 }
@@ -66,7 +67,7 @@ struct StorebenchCardSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
-                Text(title).font(.sbHeadline).fixedSize(horizontal: false, vertical: true)
+                Text(title).font(.sbHeadline).fixedSize(horizontal: false, vertical: true).layoutPriority(1)
                 if !help.isEmpty { StorebenchHelpButton(topic: help) }
                 StorebenchDivider()
             }.frame(maxWidth: .infinity, alignment: .leading)

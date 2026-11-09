@@ -104,8 +104,8 @@ private struct FeedbackSubmissionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(build.map { "Build \($0.version)" } ?? "Build details unavailable").font(.sbHeadline).lineLimit(2).textSelection(.enabled)
-            Text([createdDate, submission.device, submission.os].joined(separator: " · ")).font(.sbCaption).foregroundStyle(StorebenchTheme.muted).lineLimit(3)
+            StorebenchTextSlot(text: build.map { "Build \($0.version)" } ?? "Build details unavailable", height: 24, font: .sbHeadline)
+            StorebenchTextSlot(text: [createdDate, submission.device, submission.os].joined(separator: " · "), height: 36, font: .sbCaption, color: StorebenchTheme.muted)
             ScrollView { Text(submission.comment).font(.sbCallout).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 120)
             if submission.kind == .screenshot {
                 if submission.images.isEmpty { Text("No screenshot image is available for this submission.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted) }

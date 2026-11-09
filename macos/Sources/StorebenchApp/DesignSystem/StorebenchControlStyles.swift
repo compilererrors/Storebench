@@ -5,12 +5,16 @@ import SwiftUI
 struct StorebenchToggleStyle: ToggleStyle {
     @Environment(\.isEnabled) private var enabled
     @Environment(\.actionBusy) private var actionBusy
+    @Environment(\.settingsPresentation) private var settingsPresentation
     func makeBody(configuration: Configuration) -> some View {
-        Toggle(isOn: configuration.$isOn) {
+        let toggle = Toggle(isOn: configuration.$isOn) {
             configuration.label.font(.sbCallout).foregroundStyle(enabled || actionBusy ? StorebenchTheme.ink : StorebenchTheme.subtle)
                 .fixedSize(horizontal: false, vertical: true)
-        }.toggleStyle(.checkbox)
-            .frame(maxWidth: .infinity, minHeight: StorebenchTheme.controlHeight, alignment: .leading)
+        }
+        return Group {
+            if settingsPresentation { toggle.toggleStyle(.switch) }
+            else { toggle.toggleStyle(.checkbox) }
+        }.frame(maxWidth: .infinity, minHeight: StorebenchTheme.controlHeight, alignment: .leading)
     }
 }
 
@@ -29,12 +33,12 @@ struct StorebenchPicker<Selection: Hashable>: View {
     }
 }
 
-struct StorebenchSelectionLabel: View {
+struct StorebenchSearchSelectionLabel: View {
     let text: String
     var body: some View {
         HStack(spacing: StorebenchTheme.space(3)) {
-            Text(text).font(.sbBody).lineLimit(1).truncationMode(.tail).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-            StorebenchIcon(name: "down", size: 16).foregroundStyle(StorebenchTheme.muted)
+            Text(text).font(.sbBody).lineLimit(1).truncationMode(.tail).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading).help(text)
+            StorebenchIcon(name: "keywords", size: 16).foregroundStyle(StorebenchTheme.muted)
         }.frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -54,8 +58,9 @@ struct StorebenchNavigationSelect<Options: View>: View {
     @ViewBuilder let options: () -> Options
     var body: some View {
         StorebenchFormField(label: title, hideHint: true) {
-            Menu { options().nativeMenuContent() } label: { StorebenchSelectionLabel(text: selected) }
-                .menuStyle(.button).menuIndicator(.hidden).buttonStyle(StorebenchButtonStyle(.field, stretch: true))
+            Menu { options().nativeMenuContent() } label: { Text(selected).frame(maxWidth: .infinity, alignment: .leading) }
+                .menuStyle(.button).menuIndicator(.visible).buttonStyle(.bordered).controlSize(.large)
+                .frame(height: StorebenchTheme.controlHeight)
                 .foregroundStyle(StorebenchTheme.ink).help(selected).accessibilityLabel("Switch " + title.lowercased()).accessibilityValue(selected)
         }
     }
@@ -71,13 +76,14 @@ struct StorebenchButtonStyle: ButtonStyle {
     @State private var hovering = false
     @Environment(\.isEnabled) private var enabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.settingsPresentation) private var settingsPresentation
     init(_ variant: Variant = .secondary, size: Size = .regular, stretch: Bool = false) { self.variant = variant; self.size = size; self.stretch = stretch }
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .modifier(StorebenchControlSurface(variant: configuration.role == .destructive ? .danger : variant, size: size, stretch: stretch, emphasized: hovering || configuration.isPressed))
-            .scaleEffect(configuration.isPressed && enabled && !reduceMotion ? 0.97 : 1)
+            .scaleEffect(configuration.isPressed && enabled && !reduceMotion ? 0.99 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
-            .contentShape(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
+            .contentShape(RoundedRectangle(cornerRadius: StorebenchControlSurface.cornerRadius(for: configuration.role == .destructive ? .danger : variant, settings: settingsPresentation)))
             .onHover { hovering = $0 }
     }
 }
@@ -93,8 +99,16 @@ struct StorebenchControlSurface: ViewModifier {
     @Environment(\.actionFill) private var actionFill
     @Environment(\.actionBusy) private var actionBusy
     @Environment(\.isEnabled) private var enabled
+    @Environment(\.settingsPresentation) private var settingsPresentation
+    /// Actions are rounded; editable fields keep their distinct shape outside Settings.
+    static func cornerRadius(for variant: ControlColors.Variant, settings: Bool) -> CGFloat {
+        variant == .field && !settings ? StorebenchTheme.controlRadius : StorebenchTheme.controlHeight / 2
+    }
     func body(content: Content) -> some View {
         let colors = ControlColors(variant, enabled: enabled, busy: actionBusy, emphasized: emphasized)
+        let radius = Self.cornerRadius(for: variant, settings: settingsPresentation)
+        let background = variant == .field && settingsPresentation && enabled && !actionBusy
+            ? (emphasized ? "color-surface-sunken" : "color-surface-subtle") : colors.background
         let icon = CGFloat(StorebenchTheme.controlHeight)
         let width: StorebenchCommandWidth = size == .icon ? .init(minimum: icon, maximum: icon, fill: false)
             // Standard commands share one width, so buttons line up on the grid; only chips, fields and stretched tiles size otherwise.
@@ -106,8 +120,8 @@ struct StorebenchControlSurface: ViewModifier {
         }
             .frame(minHeight: StorebenchTheme.controlHeight)
             .foregroundStyle(StorebenchTheme.color(colors.foreground))
-            .background(StorebenchTheme.color(colors.background), in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
-            .overlay(StorebenchControlOutline(border: StorebenchTheme.color(colors.border), focusedOverride: focused))
+            .background(StorebenchTheme.color(background), in: RoundedRectangle(cornerRadius: radius))
+            .overlay(StorebenchControlOutline(border: StorebenchTheme.color(colors.border), radius: radius, focusedOverride: focused))
     }
 }
 

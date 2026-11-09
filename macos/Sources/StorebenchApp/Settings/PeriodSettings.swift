@@ -21,7 +21,7 @@ struct PeriodSettings: View {
                     StorebenchLoadState(state: model.session == nil ? .failed("Open a workspace to change period preferences.", retry: { await load() })
                         : working || status.isEmpty ? .loading("Reading period preferences…") : .failed(status, retry: { await load() })) { EmptyView() }
                 } else {
-                Toggle("Remember my last period choice in each view", isOn: $remember)
+                StorebenchToggle("Remember my last period choice in each view", isOn: $remember)
                 Text("Sales, Analytics, Finance and ASO views open with their remembered choices or these defaults.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
                 PeriodRangeField(choice: $range, latest: PeriodDates.text(Date()), title: "Default dates shown")
                 PeriodDaysField(title: "Default comparison window", value: $compare)
@@ -29,11 +29,10 @@ struct PeriodSettings: View {
                 PeriodDaysField(title: "Sync history", value: $sync)
                 Text("Sync fills report history from this reach. Latest date ranges follow the newest saved report; custom ranges retain exact dates.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
                 Text("\(baseline?.rememberedCount ?? 0) views remember an earlier choice.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
-                Text(status.isEmpty ? changed ? "Unsaved period change. Choose Save Period Defaults to keep it." : "Period preferences are saved." : status)
-                    .font(.sbCallout).foregroundStyle(problem ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted).frame(maxWidth: .infinity, minHeight: 40, alignment: .topLeading)
+                StorebenchTextSlot(text: status.isEmpty ? changed ? "Unsaved period change. Choose Save Period Defaults to keep it." : "Period preferences are saved." : status, height: 40, font: .sbCallout, color: problem ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted, live: true)
                 StorebenchFormFooter {
-                    Button("Save Period Defaults") { Task { await save() } }.buttonStyle(StorebenchButtonStyle(.primary)).storebenchWorking(!changed)
                     Button("Forget Choices") { Task { await forget() } }.storebenchWorking(baseline?.rememberedCount == 0).help("Forget Remembered Choices").accessibilityLabel("Forget Remembered Choices")
+                    Button("Save Period Defaults") { Task { await save() } }.buttonStyle(StorebenchButtonStyle(.primary)).storebenchWorking(!changed)
                 }
                 }
             }

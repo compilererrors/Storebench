@@ -71,9 +71,11 @@ private struct ShortcutEditor: View {
             }
             StorebenchFeedback(text: settings.issue, height: 48)
         } actions: {
-            Button("Cancel", action: close).keyboardShortcut(.cancelAction)
-            Button("Use Shortcut") { if settings.assign(command, specification: draft) { close() } }
-                .buttonStyle(StorebenchButtonStyle(.primary)).keyboardShortcut(.defaultAction).storebenchWorking(settings.recording)
+            StorebenchActionGroup(alignment: .trailing) {
+                Button("Cancel", action: close).keyboardShortcut(.cancelAction)
+                Button("Use Shortcut") { if settings.assign(command, specification: draft) { close() } }
+                    .buttonStyle(StorebenchButtonStyle(.primary)).keyboardShortcut(.defaultAction).storebenchWorking(settings.recording)
+            }
         }
         .trackUnsavedChanges(draft != baseline)
         .onAppear { settings.issue = "" }.onDisappear { settings.recording(false, owner: recordingOwner) }

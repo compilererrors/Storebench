@@ -17,19 +17,17 @@ struct StorebenchTableControls: View {
     @ViewBuilder private var commands: some View {
         StorebenchMenu("Sort: " + (options.first { $0.0 == sort }?.1 ?? "Original order"), icon: descending ? "down" : "up", stretch: true) {
             ForEach(options, id: \.0) { item in
-                Button { sort = item.0 } label: { if sort == item.0 { StorebenchLabel(item.1, icon: "check", size: 14) } else { Text(item.1) } }
+                StorebenchMenuOption(title: item.1, selected: sort == item.0) { sort = item.0 }
             }
             Divider()
-            Button { descending = false } label: { if !descending { StorebenchLabel("Ascending", icon: "check", size: 14) } else { Text("Ascending") } }
-            Button { descending = true } label: { if descending { StorebenchLabel("Descending", icon: "check", size: 14) } else { Text("Descending") } }
+            StorebenchMenuOption(title: "Ascending", selected: !descending) { descending = false }
+            StorebenchMenuOption(title: "Descending", selected: descending) { descending = true }
         }
         if let pageSize {
             // A short label fits the shared tool width; the full meaning is in its help.
-            StorebenchMenu("\(pageSize.wrappedValue) rows", icon: "apps", stretch: true) {
-                ForEach([5, 10, 20, 50], id: \.self) { count in
-                    Button { pageSize.wrappedValue = count } label: { if pageSize.wrappedValue == count { StorebenchLabel("\(count) results", icon: "check", size: 14) } else { Text("\(count) results") } }
-                }
-            }.help("Rows per page")
+            StorebenchPicker("Rows per Page", selection: pageSize) {
+                selectionOptions([5, 10, 20, 50]) { SelectionOption("\($0) Rows", value: $0) }
+            }.labelsHidden().help("Rows per page")
         }
     }
 }
@@ -108,7 +106,7 @@ struct StorebenchTableHeader: View {
                 .accessibilityLabel(name).accessibilityValue(active ? (sorted?.descending == true ? "Sorted descending" : "Sorted ascending") : "")
                 .accessibilityHint("Sorts the table by this column")
         } else {
-            label.accessibilityElement(children: .ignore).accessibilityLabel(name)
+            label.help(name).accessibilityElement(children: .ignore).accessibilityLabel(name)
         }
     }
 }
@@ -133,9 +131,10 @@ struct StorebenchTableValue: View {
             HStack(spacing: 6) {
                 Text(DataTablePresentation.compactText(summary ?? text)).font(.sbCallout).monospacedDigit().foregroundStyle(StorebenchTheme.ink)
                     .lineLimit(lines).truncationMode(.tail).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                StorebenchIcon(name: "info", size: 12).foregroundStyle(StorebenchTheme.muted).opacity(hovering ? 1 : 0)
+                StorebenchIcon(name: "info", size: 12).foregroundStyle(StorebenchTheme.muted).opacity(hovering ? 1 : 0.65)
             }.padding(.horizontal, 12).frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
         }.buttonStyle(StorebenchPressStyle()).onHover { hovering = $0 }
+            .help("Open " + title.lowercased() + " to read the complete value")
             .accessibilityLabel(title + ": " + text).accessibilityHint("Open the complete value")
             .popover(isPresented: $inspecting) {
                 VStack(alignment: .leading, spacing: 12) {

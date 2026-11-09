@@ -201,7 +201,7 @@ struct CountryPricesView: View {
                     StorebenchTextField("Amount", text: $amount)
                 }
             }
-            Toggle("Temporary price", isOn: $temporary)
+            StorebenchToggle("Temporary price", isOn: $temporary)
             if temporary {
                 StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 230) { StorebenchDateField("From", selection: $start, displayedComponents: .date); StorebenchDateField("Through", selection: $end, displayedComponents: .date) }
             }

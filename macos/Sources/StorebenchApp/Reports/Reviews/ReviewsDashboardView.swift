@@ -76,8 +76,8 @@ struct ReviewsDashboardView: View {
                     .init(id: "territory", label: "Territory", less: { $0.territory < $1.territory })
                 ], preferenceID: "customer-reviews", empty: "No reviews match these filters.") { review in
                     Text(review.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                    Toggle("Include in feedback follow-up", isOn: Binding(get: { evidence.contains(review.id) }, set: { if $0 { if evidence.count < 50 { evidence.insert(review.id) } } else { evidence.remove(review.id) } }))
-                        .toggleStyle(StorebenchToggleStyle())
+                    StorebenchToggle("Include in feedback follow-up", isOn: Binding(get: { evidence.contains(review.id) }, set: { if $0 { if evidence.count < 50 { evidence.insert(review.id) } } else { evidence.remove(review.id) } }))
+
                         .opacity(!evidence.contains(review.id) && evidence.count >= 50 ? 0 : 1).allowsHitTesting(evidence.contains(review.id) || evidence.count < 50).accessibilityHidden(!evidence.contains(review.id) && evidence.count >= 50)
                 }
             }

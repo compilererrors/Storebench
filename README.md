@@ -87,6 +87,14 @@ Add screenshots and app previews to a version and language, change their order a
 
 **Create Media** builds screenshot cards with text, backgrounds and reusable styles. Save rendered cards to Asset Library or export PNG files, then select them for a release.
 
+Choose **Create Cards** for the visual editor, or **AI Generate…** to start with screenshots and a short brief. AI proposes the order, titles, layouts and colors; the original screenshots and all text remain editable. Local generation uses Apple Intelligence and text extracted from the screenshots. It requires a compatible Mac with Apple Intelligence enabled on macOS 26 or later.
+
+In **Settings → AI**, choose **Continue with ChatGPT** to connect your ChatGPT plan, or configure your own OpenAI, Claude or Gemini API key. ChatGPT accounts have separate registrations and model choices; you can switch accounts or sign out. ChatGPT tasks use the selected plan's permissions and limits, with no automatic switch to API billing. API connections use the provider's API billing. Cards and translations show the service, model and usage mode together. Choose a model for one task without changing saved defaults; the card draft keeps that selection. Model choices load in the background using the saved connection and are cached separately from generation results. Apple Intelligence uses the on-device model managed by macOS. Selected text and screenshots are sent only to the service you choose. Credentials use the workspace's protected storage and are excluded from backups.
+
+On first opening a workspace, Storebench offers to set up AI. Choose **Not Now** for a reminder in seven days, or select **Don't Ask Again** before choosing **Not Now** to stop future reminders. AI settings remain available either way. ChatGPT is the initial service for new workspaces: sign in, choose **Default Model** under **ChatGPT Plan** and **Save Model**. **Account Options** manages accounts and plan usage. Choose the starting service in **Default AI Service**; Apple Intelligence and API connections remain optional choices. Existing card drafts keep their selected service, and the editor explains what is needed before generating. **Save Draft** works without an available AI service.
+
+**Translate Languages with AI** lets you choose a saved source language and several target languages in Localizations or Release. Empty fields are filled by default; replacing existing wording is explicit. Completed AI results stay encrypted on this Mac and are reused for matching inputs and connections. Failed jobs can be retried. These operations save local drafts; syncing changes to Apple still requires a Publish review.
+
 ## Pricing
 
 Manage the app's download price separately from subscriptions and in-app purchases. Read current and scheduled prices, prepare changes by country or region, and compare proposed prices before sending them.

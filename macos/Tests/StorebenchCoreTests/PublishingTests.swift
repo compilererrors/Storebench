@@ -752,10 +752,11 @@ extension WorkspaceSession {
         #expect(apple.lock.withLock { apple.libraryImages.contains { $0["id"] as? String == "image-1" } })
     }
 
-    @Test func aFailedMediaWaveKeepsSuccessfulReservationsAndStartsNoDependentUploads() async throws {
+    @Test func aFailedMediaPipelineDrainsAdmittedWorkAndNeverUploadsItsFailedReservation() async throws {
         let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
         let account = try #require(try await session.accounts().first), apple = SyntheticApple(), host = "batch-media-failure.appstoreconnect.test"
         let app = "1000000001", revision = "00000000-0000-4000-8000-000000000002"
+        StubProtocol.handle("synthetic.blobstore.apple.com") { _ in (200, [:], Data()) }
         StubProtocol.handle(host) { request in
             if request.httpMethod == "POST" && request.url?.path == "/v1/appAssetLibraryImages" {
                 let data = StubProtocol.body(request)
@@ -773,9 +774,17 @@ extension WorkspaceSession {
         let prepared = try await session.preparePublishing(account: account, request: request, client: client)
         let failed = try await session.approvePublishing(account: account, appId: app, id: prepared.id, fingerprint: prepared.fingerprint, client: client)
         #expect(failed.state == "failed" && !failed.steps.contains { $0.state == "running" })
-        #expect(failed.steps.filter { $0.guardValue?["kind"]?.text == "release-media-reserve" && $0.state == "done" }.count == 3)
-        #expect(failed.steps.filter { $0.kind == .upload }.allSatisfy { $0.state == "pending" })
-        #expect(apple.lock.withLock { apple.writes.allSatisfy { $0.0 == "POST" && $0.1 == "/v1/appAssetLibraryImages" } })
+        let failedReservation = try #require(failed.steps.first { $0.guardValue?["kind"]?.text == "release-media-reserve" && $0.state == "failed" })
+        #expect(failedReservation.guardValue?["asset"]?["fileName"] == .string("synthetic-fail-0.png"))
+        #expect(failed.steps.filter { $0.group == failedReservation.key && $0.key != failedReservation.key }.allSatisfy { $0.state == "pending" })
+        let successful = failed.steps.filter { $0.guardValue?["kind"]?.text == "release-media-reserve" && $0.state == "done" }
+        #expect(successful.count >= 3 && successful.allSatisfy { $0.resultId != nil })
+        for upload in failed.steps where upload.kind == .upload && upload.state == "done" {
+            #expect(successful.contains { $0.key == upload.group })
+        }
+        #expect(apple.lock.withLock { apple.writes.allSatisfy {
+            $0.0 == "POST" && $0.1 == "/v1/appAssetLibraryImages" || $0.0 == "PATCH" && $0.1.hasPrefix("/v1/appAssetLibraryImages/")
+        } })
         await #expect(throws: PublishFailure.used) { try await session.approvePublishing(account: account, appId: app, id: failed.id, fingerprint: failed.fingerprint, client: client) }
     }
 

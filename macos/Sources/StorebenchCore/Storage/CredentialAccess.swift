@@ -32,7 +32,7 @@ extension VaultWriter {
     }
     static func credentialLocation(root: URL, key: String) throws -> URL {
         let parts = key.split(separator: ":", maxSplits: 1).map(String.init)
-        guard parts.count == 2, ["apple", "reporter", "appleid", "appleidpassword"].contains(parts[0]), parts[1].range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil else { throw VaultWriter.Failure.invalid }
+        guard parts.count == 2, ["apple", "reporter", "appleid", "appleidpassword", "ai"].contains(parts[0]), parts[1].range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil else { throw VaultWriter.Failure.invalid }
         return root.appendingPathComponent("credential-state/\(JSONText.string("\(LocalPaths.lexical(root))\u{0}\(parts[0])\u{0}\(parts[1])").rawSHA256)")
     }
     func snapshot(migrating key: String? = nil) throws -> Snapshot {

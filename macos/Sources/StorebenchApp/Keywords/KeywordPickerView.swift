@@ -49,7 +49,7 @@ struct KeywordPickerView: View {
                     }
                     StorebenchPicker("Sort", selection: $sort) { SelectionOption("Default order", value: ""); SelectionOption("Keyword", value: "keyword"); SelectionOption("Source", value: "source") }
                 }
-                Toggle("Descending", isOn: $descending).toggleStyle(StorebenchToggleStyle())
+                StorebenchToggle("Descending", isOn: $descending)
             }.storebenchWorking(working)
             HStack {
                 if !matching.isEmpty { Button("Select Matching") { chosen.formUnion(matching.map(\.id)) }.help("Select Matching Keyword Ideas").accessibilityLabel("Select Matching Keyword Ideas") }

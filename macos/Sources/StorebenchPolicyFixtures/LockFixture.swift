@@ -28,7 +28,8 @@ import StorebenchCore
             let marker = Array("held".utf8), written = write(descriptor, marker, marker.count)
             close(descriptor)
             guard written == marker.count else { throw FileMutex.Failure.unavailable }
-            let deadline = ContinuousClock.now + .seconds(30)
+            // This owned helper starts before the suites; allow time for other isolated tests to run first.
+            let deadline = ContinuousClock.now + .seconds(90)
             while !FileManager.default.fileExists(atPath: urls[2].path) {
                 guard ContinuousClock.now < deadline else { throw FileMutex.Failure.timeout }
                 Thread.sleep(forTimeInterval: 0.01)

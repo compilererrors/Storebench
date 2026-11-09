@@ -23,7 +23,7 @@ struct ExportComplianceCard: View {
             ForEach(declarations ?? []) { declaration in
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(declaration.description.isEmpty ? declaration.id : declaration.description).lineLimit(2)
+                        StorebenchTextSlot(text: declaration.description.isEmpty ? declaration.id : declaration.description, height: 34)
                         Text("\(AppStoreNames.state(declaration.state))\(declaration.platform.isEmpty ? "" : " · \(Releases.platformName(declaration.platform))")").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
                     }
                     Spacer()

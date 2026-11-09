@@ -171,7 +171,7 @@ struct ConnectAccountView: View {
                     StorebenchSetupStep(number: 4, title: "Choose the file here", detail: "Storebench fills in the Key ID from the file name. Check it against the Key ID shown in App Store Connect.", done: !privateKey.isEmpty && !keyId.trimmingCharacters(in: .whitespaces).isEmpty) {
                         HStack {
                             Button("Choose File…") { choosing = true }
-                            Text(fileName.isEmpty ? "No file chosen" : fileName).foregroundStyle(StorebenchTheme.muted).lineLimit(1).truncationMode(.middle)
+                            Text(fileName.isEmpty ? "No file chosen" : fileName).foregroundStyle(StorebenchTheme.muted).lineLimit(1).truncationMode(.middle).help(fileName.isEmpty ? "Choose an App Store Connect API key file" : fileName)
                         }.accessibilityElement(children: .contain).accessibilityLabel("Private key (.p8)")
                         StorebenchTextField("Key ID", text: $keyId, hint: "Filled in from the file name when possible.")
                         .info("The 10-character identifier App Store Connect shows next to the key, such as 2X9R4HXF34.")
@@ -188,11 +188,11 @@ struct ConnectAccountView: View {
                     StorebenchFeedback(text: status, height: 52)
                     RecoveryActions(code: issueCode)
                     StorebenchFormFooter {
+                        if canCancel { Button("Cancel") { if !working, protection?.allowLeaving() ?? true { privateKey = ""; done() } }.controlSize(.large).storebenchWorking(working) }
                         if working || !privateKey.isEmpty && !keyId.trimmingCharacters(in: .whitespaces).isEmpty && !(keyType == "team" && issuerId.isEmpty) {
                             Button(working ? "Connecting…" : "Connect Account") { Task { await connect() } }.help(working ? "Connecting…" : "Connect Apple Account").accessibilityLabel(working ? "Connecting…" : "Connect Apple Account")
                                 .buttonStyle(StorebenchButtonStyle(.primary)).controlSize(.large).storebenchWorking(working)
                         }
-                        if canCancel { Button("Cancel") { if !working, protection?.allowLeaving() ?? true { privateKey = ""; done() } }.controlSize(.large).storebenchWorking(working) }
                     }
                 }
                 Text("Your Apple password stays with Apple. Connecting checks access and finds apps; publishing uses a separate review and approval.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)

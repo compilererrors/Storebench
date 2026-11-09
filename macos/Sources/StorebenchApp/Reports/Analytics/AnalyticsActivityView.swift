@@ -74,12 +74,8 @@ struct AnalyticsActivityView: View {
                 StorebenchCardSection(title: "Activity summary", description: coverageText) { StorebenchMetricGrid { metrics(summary) } }
                 activityCard(summary, metric: prepared.input.metric)
                 StorebenchCardSection(title: "Activity over time", description: "Each point is one complete saved activity period in UTC. Missing intervals break the line. Indexed lines have an average of 100.") {
-                    StorebenchMetricGrid(maximumColumns: 4, minimumWidth: 180) {
-                    ForEach(measures, id: \.0) { key, title in
-                        Toggle(title, isOn: Binding(get: { overlay.contains(key) }, set: { checked in var chosen = overlay; if checked && chosen.count < 4 { chosen.append(key) } else if !checked { chosen.removeAll { $0 == key } }; chartMetrics = chosen }))
-                    }
-                    }
-                    StorebenchPicker("Scale", selection: $scale) { SelectionOption("Reported values", value: "absolute"); SelectionOption("Indexed · average = 100", value: "indexed") }.storebenchFormColumn()
+                    ChartMeasureToggles(options: measures.map { (key: $0.0, title: $0.1) }, selection: Binding(get: { overlay }, set: { chartMetrics = $0 }))
+                    StorebenchPicker("Scale", selection: $scale, hint: ChartScalePicker.explanation) { SelectionOption("Reported values", value: "absolute"); SelectionOption("Indexed · average = 100", value: "indexed") }.storebenchFormColumn()
                     if prepared.input.overlay.count == 1 && !prepared.input.indexed {
                         Text("Total: \(periods.isEmpty ? "—" : AsoProgress.count(summary.totals[prepared.input.overlay[0]] ?? 0))").font(.sbHeadline).frame(minHeight: 36, alignment: .topLeading)
                     }

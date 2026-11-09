@@ -76,21 +76,28 @@ public enum ComponentLayout {
         public let frames: [CGRect]
         public let height: Double
     }
-    /// Commands keep a shared width, including the final incomplete row, without stretching to fill a module.
+    /// Commands keep a shared width. Wrapped rows are balanced, without leaving one command on its own.
     /// `cell` is the group's shared command width (its widest label); without it commands use the shared action width.
     public static func actionGrid(width: Double, heights: [Double], trailing: Bool = false, cell preferred: Double? = nil, design: StorebenchDesign = .shared) -> ActionGrid {
         let width = usableWidth(width), gap = design.number("action-gap"), cell = min(width, max(0, preferred ?? design.number("action-width")))
         let ratio = (width + gap) / max(1, cell + gap)
         let columns = ratio.isFinite ? max(1, min(heights.count, Int(min(ratio, 10_000)))) : 1
+        guard !heights.isEmpty else { return ActionGrid(frames: [], height: 0) }
+        let minimumRows = (heights.count + columns - 1) / columns
+        let rows = minimumRows > 1 && heights.count / minimumRows < 2 ? heights.count : minimumRows
+        let perRow = heights.count / rows, extra = heights.count % rows
         var frames: [CGRect] = [], y = 0.0
-        for start in stride(from: 0, to: heights.count, by: columns) {
-            let row = heights[start..<min(start + columns, heights.count)].map { max(0, $0) }
+        var start = 0
+        for index in 0..<rows {
+            let count = perRow + (index < extra ? 1 : 0)
+            let row = heights[start..<start + count].map { max(0, $0) }
             let rowWidth = Double(row.count) * cell + Double(max(0, row.count - 1)) * gap
             let x = trailing ? width - rowWidth : 0
             for (index, height) in row.enumerated() { frames.append(CGRect(x: x + Double(index) * (cell + gap), y: y, width: cell, height: height)) }
             y += (row.max() ?? 0) + gap
+            start += count
         }
-        return ActionGrid(frames: frames, height: heights.isEmpty ? 0 : y - gap)
+        return ActionGrid(frames: frames, height: y - gap)
     }
     public struct NavigationRow: Sendable {
         public let icon, text, action: CGRect

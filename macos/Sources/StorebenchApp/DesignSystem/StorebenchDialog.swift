@@ -18,6 +18,7 @@ struct StorebenchDialog<Content: View, Actions: View>: View {
     @Environment(\.workspaceHeight) private var viewportHeight
     var body: some View {
         let dimensions = ComponentLayout.dialog(viewportWidth: width, viewportHeight: viewportHeight, wide: wide, preferredHeight: height)
+        let shape = RoundedRectangle(cornerRadius: StorebenchTheme.measure("dialogRadius"))
         VStack(spacing: 0) {
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -35,7 +36,7 @@ struct StorebenchDialog<Content: View, Actions: View>: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
                             content()
-                            if inlineActions && Actions.self != EmptyView.self { VStack(alignment: .trailing, spacing: 12) { actions() }.environment(\.naturalActions, true) }
+                            if inlineActions && Actions.self != EmptyView.self { VStack(alignment: .trailing, spacing: 12) { actions() } }
                         }.padding(StorebenchTheme.measure("dialogBodyPadding"))
                     }
                 } else {
@@ -44,13 +45,13 @@ struct StorebenchDialog<Content: View, Actions: View>: View {
             }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             if !inlineActions && Actions.self != EmptyView.self {
                 StorebenchDivider()
-                VStack(alignment: .trailing, spacing: 12) { actions() }.padding(.vertical, media ? 10 : 16).padding(.horizontal, media ? 16 : 20)
+                VStack(alignment: .trailing, spacing: 12) { actions() }.padding(.vertical, media ? 10 : 16).padding(.horizontal, StorebenchTheme.measure("dialogBodyPadding"))
                     .frame(maxWidth: .infinity, alignment: .trailing)
-                    .environment(\.naturalActions, true)
             }
         }.frame(width: dimensions.width, height: dimensions.height)
-            .background(StorebenchTheme.surface, in: RoundedRectangle(cornerRadius: media ? 12 : StorebenchTheme.measure("dialogRadius")))
-            .overlay(RoundedRectangle(cornerRadius: media ? 12 : StorebenchTheme.measure("dialogRadius")).strokeBorder(StorebenchTheme.border))
+            .background(StorebenchTheme.surface, in: shape)
+            .clipShape(shape)
+            .overlay(shape.strokeBorder(StorebenchTheme.border))
             .modifier(StorebenchAppearance())
             .onExitCommand { if !busy { close?() } }
     }
@@ -60,12 +61,10 @@ struct StorebenchFeedback: View {
     let text: String
     var height: CGFloat = 34
     var error = false
-    /// No message takes no space; a message keeps a fixed track, so later updates do not move the content below.
+    /// The empty and populated states share one track so feedback never moves the controls below.
     var body: some View {
-        if !text.isEmpty {
-            StorebenchTextSlot(text: text, height: height, font: .sbCallout, color: error ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted, live: true)
-                .accessibilityAddTraits(.updatesFrequently)
-        }
+        StorebenchTextSlot(text: text, height: height, font: .sbCallout, color: error ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted, live: true)
+            .accessibilityAddTraits(.updatesFrequently)
     }
 }
 

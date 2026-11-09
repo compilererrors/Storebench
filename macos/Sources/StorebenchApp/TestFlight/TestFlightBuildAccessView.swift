@@ -36,7 +36,7 @@ struct TestFlightBuildAccessView: View {
                 StorebenchCollection(items: assigned, title: { $0.email }, subtitle: { $0.name }, empty: loaded ? "No individual testers assigned to this build." : "Reading individual testers…") { tester in
                     HStack(alignment: .top) {
                         VStack(alignment: .leading) {
-                            Text(tester.email).lineLimit(2).textSelection(.enabled)
+                            StorebenchTextSlot(text: tester.email, height: 36, font: .sbBody)
                             Text(AppStoreNames.state(tester.state)).font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
                         }
                         Spacer()

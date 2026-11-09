@@ -36,7 +36,7 @@ struct TestFlightReviewInformationView: View {
                         StorebenchTextField("Phone number", text: $fields.contactPhone)
                         StorebenchTextField("Email", text: $fields.contactEmail)
                     }.environment(\.fieldHintHeight, 17)
-                    Toggle("Sign-in required", isOn: $fields.demoAccountRequired)
+                    StorebenchToggle("Sign-in required", isOn: $fields.demoAccountRequired)
                     if fields.demoAccountRequired {
                         StorebenchFormGrid() {
                             StorebenchTextField("User name", text: $fields.demoAccountName)

@@ -183,7 +183,7 @@ struct AsoDiffView: View {
     private func fields(_ left: AsoSnapshot?, _ right: AsoSnapshot, changedOnly: Bool? = nil, beforeLabel: String = "Left", afterLabel: String = "Right") -> some View {
         let rows = AsoComparison.fields(left, right, primary: primary), changed = rows.filter(\.changed), filtered = changedOnly ?? onlyChanged
         return Card(title: "ASO fields · \(right.version)", subtitle: left == nil ? "First saved version on this platform · \(rows.count) baseline fields." : "\(changed.count) of \(rows.count) tracked fields differ. Saved values are aligned below.") {
-            if changedOnly == nil { Toggle("Show only changed fields", isOn: $onlyChanged).toggleStyle(StorebenchToggleStyle()) }
+            if changedOnly == nil { StorebenchToggle("Show only changed fields", isOn: $onlyChanged) }
             Text("App-wide name and subtitle are values observed at import, not a separate history for each release.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
             if changedOnly == nil, let left {
                 HStack(alignment: .top, spacing: 16) { versionSummary(left); versionSummary(right) }

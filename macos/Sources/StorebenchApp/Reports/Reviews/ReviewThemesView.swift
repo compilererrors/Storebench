@@ -103,9 +103,9 @@ import SwiftUI
             StorebenchTextField("Search all saved feedback", text: $evidenceQuery).storebenchWorking(unavailable)
             StorebenchCollection(items: rows, title: { $0.title.isEmpty ? "Review evidence" : $0.title }, subtitle: { "\($0.rating) / 5 · \($0.territory)" }, preferenceID: "evidence-chooser", empty: "No saved feedback matches. Change or clear the search.") { row in
                 evidenceDetails(row)
-                Toggle("Use as theme evidence", isOn: Binding(get: { evidence.contains(row.id) }, set: { selected in
+                StorebenchToggle("Use as theme evidence", isOn: Binding(get: { evidence.contains(row.id) }, set: { selected in
                     if selected { if evidence.count < 50 { evidence.insert(row.id) } } else { evidence.remove(row.id) }
-                })).toggleStyle(StorebenchToggleStyle()).storebenchWorking(unavailable)
+                })).storebenchWorking(unavailable)
                     .opacity(evidence.count >= 50 && !evidence.contains(row.id) ? 0 : 1).allowsHitTesting(evidence.count < 50 || evidence.contains(row.id)).accessibilityHidden(evidence.count >= 50 && !evidence.contains(row.id))
             }
 

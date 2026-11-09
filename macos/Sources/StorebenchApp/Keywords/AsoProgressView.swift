@@ -94,19 +94,10 @@ struct AsoProgressView: View {
                     }
                 }
                 Card(title: indexed ? "Measures indexed to their average (100)" : "Measures per \(granularity.rawValue)", subtitle: indexed ? "Each line is scaled so its average is 100. Dashed lines mark listing changes." : "Weeks and months show the average per reported day. Dashed lines mark listing changes. Use Indexed to compare measures of different size.") {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 200))], alignment: .leading) {
-                        ForEach(AsoProgress.metrics.filter { available.contains($0.key) }, id: \.key) { item in
-                            let full = !measures.contains(item.key) && measures.count >= 4
-                            Toggle(item.title, isOn: Binding(get: { measures.contains(item.key) }, set: { selected in
-                                if selected && measures.count < 4 { measures.append(item.key) }
-                                else if !selected { measures.removeAll { $0 == item.key } }
-                            })).opacity(full ? 0 : 1).allowsHitTesting(!full).accessibilityHidden(full)
-                        }
-                    }
-                    Text("Choose up to four measures with saved reports.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
+                    ChartMeasureToggles(options: AsoProgress.metrics.filter { available.contains($0.key) }.map { (key: $0.key, title: $0.title) }, selection: $measures)
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 230))], alignment: .leading) {
                         StorebenchPicker("Group by", selection: $granularity) { selectionOptions(AsoProgress.Granularity.allCases) { SelectionOption($0.rawValue.capitalized, value: $0) } }
-                        StorebenchPicker("Scale", selection: $indexed) { SelectionOption("Reported values", value: false); SelectionOption("Indexed (average = 100)", value: true) }
+                        ChartScalePicker(indexed: $indexed)
                     }
                     SavedReportChart(series: series, markers: markers, format: format, markerKinds: Self.markerKinds) { target in
                         if target.hasPrefix("note:") { withAnimation { reader.scrollTo("chart-notes", anchor: .top) } } else { reveal = .init(id: target) }

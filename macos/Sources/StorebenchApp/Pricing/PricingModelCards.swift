@@ -58,7 +58,7 @@ struct AppPriceCard: View {
             }
             if !free {
                 StorebenchCardSection(title: "Launch Sale", description: "A lower price for the first days, such as a launch sale. The price returns the day after the end date.") {
-                    Toggle("Start with a launch sale", isOn: $sale)
+                    StorebenchToggle("Start with a launch sale", isOn: $sale)
                     StorebenchMetricGrid(maximumColumns: 3, minimumWidth: 200) {
                         PricingLevelPicker(title: "Sale Price", levels: choices.levels, selection: $saleId).disabled(!sale)
                         StorebenchDateField("Start Date", selection: $saleStart, displayedComponents: .date).disabled(!sale)
@@ -66,7 +66,7 @@ struct AppPriceCard: View {
                     }
                 }
                 StorebenchCardSection(title: "Planned Price Change", description: "A new price from a later date, such as after an introductory period.") {
-                    Toggle("Change the price later", isOn: $change)
+                    StorebenchToggle("Change the price later", isOn: $change)
                     StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 230) {
                         PricingLevelPicker(title: "New Price", levels: choices.levels, selection: $changeId, includeFree: false).disabled(!change)
                         StorebenchDateField("Start Date", selection: $changeDate, displayedComponents: .date).disabled(!change)
@@ -180,7 +180,7 @@ struct PurchasesCard: View {
                     PricingCountryPicker(title: "Base Country or Region", territories: choices.territories, selection: $territory)
                     PricingAmountPicker(levels: choices.levels, selection: $amount, none: "Set the price later")
                 }
-                Toggle("Family Sharing", isOn: $family).disabled(type != "NON_CONSUMABLE").help(type == "NON_CONSUMABLE" ? "Family members can use the purchase. It cannot be turned off again." : "Family Sharing applies to non-consumable purchases.")
+                StorebenchToggle("Family Sharing", isOn: $family).disabled(type != "NON_CONSUMABLE").help(type == "NON_CONSUMABLE" ? "Family members can use the purchase. It cannot be turned off again." : "Family Sharing applies to non-consumable purchases.")
             }
         }
         .task { await choices.loadTerritories(account: account, session: session); if territory.isEmpty { territory = state.appPrice.territory ?? (choices.territories.contains { $0.code == "USA" } ? "USA" : "") } }
@@ -308,7 +308,7 @@ struct SubscriptionsStep: View {
                 StorebenchTextField("Product ID", text: plan.productId, hint: "Unique and permanent, such as com.example.app.monthly.")
                     .storebenchNeeded(apple == nil && PricingSetupChange.referenceName(plan.wrappedValue.name) != nil && !PricingSetupChange.validProductId(plan.wrappedValue.productId) ? "Enter the Product ID with letters, numbers, underscores or periods." : nil)
             }
-            Toggle("Family Sharing", isOn: plan.familySharing).help("Family members share the subscription. It cannot be turned off again.")
+            StorebenchToggle("Family Sharing", isOn: plan.familySharing).help("Family members share the subscription. It cannot be turned off again.")
             StorebenchActionGroup {
                 StorebenchCommand(title: "Remove", busy: false, unavailable: draft.plans.count == 1 ? "Keep at least one subscription." : apple != nil ? "This subscription is in App Store Connect." : nil, primary: false) {
                     draft.plans.removeAll { $0.id == plan.wrappedValue.id }

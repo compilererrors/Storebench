@@ -139,7 +139,7 @@ struct LanguageEditor: View {
                 let differing = editor.fields.filter { editor.differsFromImport($0) }.count
                 Text("\(differing) \(differing == 1 ? "field differs" : "fields differ") from the \(originalLabel)").font(.sbCallout)
                 Spacer()
-                if !failed { Toggle("Show changed fields only", isOn: $showChanges).toggleStyle(StorebenchToggleStyle()).storebenchWorking(busy) }
+                if !failed { StorebenchToggle("Show changed fields only", isOn: $showChanges).storebenchWorking(busy) }
             }
             let over = editor.fields.filter { TextDrafts.used($0.key, editor.value($0)) > (TextDrafts.limits[$0.key] ?? .max) }
             statusTrack(over.isEmpty ? "Text budgets and source comparisons remain visible in closed section headings." : "Over Apple’s limit: " + over.map(\.label).joined(separator: ", "), height: 24, error: !over.isEmpty)

@@ -326,6 +326,8 @@ struct AppOverview: View {
             }
             if let version = editing.versions.first(where: { $0.id == selection.versionId }) {
                 if section == .localizations {
+                    AIListingTranslationView(account: account, appId: app.id, revisionId: editing.id, version: version, session: session, changed: { Task { await reload() } })
+                        .id("\(scope.accountId)/\(scope.appId)/\(scope.revisionId)/ai/\(version.id)")
                     StorebenchCollection(items: selection.locales.map { StorebenchCollectionEntry(id: $0, value: $0) },
                         title: { StoreLocales.name($0.value) }, subtitle: { $0.value + " · " + (languageSummaries[scope.revisionId + "/" + version.id + "/" + $0.value] ?? "Open to read saved text") },
                         focusedID: selection.locale, empty: "No languages in this version yet. Add a language to start editing its text.", onOpen: { chooseEditor(version: version.id, locale: $0.value) }) { language in

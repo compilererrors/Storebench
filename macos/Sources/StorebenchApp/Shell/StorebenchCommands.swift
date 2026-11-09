@@ -67,16 +67,31 @@ struct StorebenchCommands: Commands {
                 .modifier(StorebenchCommandBinding(binding: shortcuts.keymap.binding(.save)))
                 .disabled(shortcuts.recording || protection?.canSave != true)
         }
+        CommandGroup(after: .importExport) { commandButton(.chooseImages) }
         CommandMenu("Navigate") {
-            ForEach(ShortcutCommand.allCases.filter { $0.group == "Navigation" }, id: \.self) { command in commandButton(command) }
+            commandButton(.back); commandButton(.forward)
+            StorebenchMenuSeparator()
+            commandButton(.previousSection); commandButton(.nextSection)
+            StorebenchMenuSeparator()
+            commandButton(.overview); commandButton(.apps)
+            StorebenchMenuSeparator()
+            ForEach(AppNavigation.Group.allCases, id: \.self) { group in
+                StorebenchSubmenu(group.rawValue) {
+                    ForEach(ShortcutCommand.allCases.filter { $0.section?.group == group }, id: \.self) { command in commandButton(command) }
+                }
+            }
         }
-        CommandMenu("Actions") {
-            ForEach([ShortcutCommand.refresh, .syncApp, .syncAll, .retry, .stop, .chooseImages], id: \.self) { command in commandButton(command) }
+        CommandMenu("Data") {
+            commandButton(.refresh)
+            StorebenchMenuSeparator()
+            commandButton(.syncApp); commandButton(.syncAll)
+            StorebenchMenuSeparator()
+            commandButton(.retry); commandButton(.stop)
         }
         CommandGroup(replacing: .help) { commandButton(.help) }
     }
     private func commandButton(_ command: ShortcutCommand) -> some View {
-        Button(command.title + (actions?.busy(command) == true ? "…" : "")) { if allowed(command, enabled: actions?.enabled(command) == true) { actions?.perform(command) } }
+        Button(command.title) { if allowed(command, enabled: actions?.enabled(command) == true) { actions?.perform(command) } }
             .modifier(StorebenchCommandBinding(binding: shortcuts.keymap.binding(command)))
             .disabled(shortcuts.recording || actions?.enabled(command) != true)
     }

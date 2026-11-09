@@ -39,6 +39,8 @@ struct VersionListingView: View {
                     StorebenchLoadState(state: .loading(Self.readingLanguages)) { EmptyView() } placeholder: { StorebenchCollectionPlaceholder(rows: 3) }
                 }
                 if let revision = model.revision, let version = model.version {
+                    AIListingTranslationView(account: account, appId: model.scope.appId, revisionId: model.scope.revisionId, version: version, session: session, model: model)
+                        .id("\(model.scope.accountId)/\(model.scope.appId)/\(model.scope.revisionId)/ai/\(version.id)")
                     if let languageLayout { LanguageLayoutControls(editor: languageLayout, accountId: account.id, appId: model.scope.appId, session: session) }
                     StorebenchCollection(items: model.languages, title: { StoreLocales.name($0.locale) },
                         subtitle: { $0.locale + ($0.text.dirty || $0.media.contains { $0.dirty } ? " · Unsaved changes" : " · Saved language and media") },

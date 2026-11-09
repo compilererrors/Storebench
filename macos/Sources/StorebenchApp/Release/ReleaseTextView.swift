@@ -76,7 +76,7 @@ struct ReleaseTextView: View {
                 StorebenchCollection(items: destinations, title: { StoreLocales.name($0.locale) }, subtitle: { $0.locale + (targets.contains($0.locale) ? " · Selected destination" : "") },
                                      empty: "No other languages yet. Add a language in Localizations, then copy or edit its release text here.") { row in
                     VStack(alignment: .leading, spacing: 10) {
-                        Toggle(StoreLocales.name(row.locale), isOn: Binding(get: { targets.contains(row.locale) }, set: { if $0 { targets.insert(row.locale) } else { targets.remove(row.locale) }; resetReview() })).toggleStyle(StorebenchToggleStyle()).storebenchWorking(working)
+                        StorebenchToggle(StoreLocales.name(row.locale), isOn: Binding(get: { targets.contains(row.locale) }, set: { if $0 { targets.insert(row.locale) } else { targets.remove(row.locale) }; resetReview() })).storebenchWorking(working)
                         ForEach(ReleaseText.fields, id: \.self) { field in
                             VStack(alignment: .leading, spacing: 4) {
                                 let used = TextDrafts.used(field, values[row.locale]?[field] ?? ""), limit = TextDrafts.limits[field] ?? 0
@@ -97,7 +97,7 @@ struct ReleaseTextView: View {
                     }
                 }
                 StorebenchSetupStep(number: 3, title: "Copy or edit, then save", detail: targets.isEmpty ? "Select at least one destination language in step 2." : "Copy the source text into the selected languages, or edit them above. Save Draft keeps them on this Mac.") {
-                    Toggle("Replace filled fields when copying", isOn: $replace).storebenchWorking(working)
+                    StorebenchToggle("Replace filled fields when copying", isOn: $replace).storebenchWorking(working)
                     StorebenchTextSlot(text: exceeded ? "Shorten the text that is over Apple's limit, then save." : "", height: 20, font: .sbCallout, color: StorebenchTheme.color("color-danger"), live: true)
                     if !targets.isEmpty || dirty {
                         StorebenchActionGroup {

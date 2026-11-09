@@ -74,12 +74,23 @@ struct AppInformationView: View {
         }
     }
 
+    private var draftFieldsForReview: [[String]]? {
+        switch review?.request.scope {
+        case .appInformation: return [["rights"], ["categories"]]
+        case .ageRating: return [["ages"]]
+        case .accessibility:
+            guard review?.request.accessibilityAction == "save-draft", let family = review?.request.accessibilityFamily else { return nil }
+            return [["accessibility", family]]
+        default: return nil
+        }
+    }
+
     /// The review prepared from one card, right below it, so preparing never moves the page.
     @ViewBuilder private func reviewPanel(_ part: Part) -> some View {
         if reviewPart == part, review != nil {
             ReviewPanel(account: account, app: app, session: session, review: $review, done: {
                 if review?.state == "complete" { changed(); Task { await load(fresh: true) } }
-            }, busyChanged: { publishing = $0 }, syncConfirmation: true, localDraft: draft, draftPaths: part == .categories ? [["rights"], ["categories"]] : part == .ageRating ? [["ages"]] : [["accessibility", review?.request.accessibilityFamily ?? ""]]).storebenchWorking(working)
+            }, busyChanged: { publishing = $0 }, syncConfirmation: true, localDraft: draftFieldsForReview == nil ? nil : draft, draftPaths: draftFieldsForReview).storebenchWorking(working)
         }
     }
 
@@ -119,7 +130,7 @@ struct AppInformationView: View {
 
     private var ageCard: some View {
         Card(title: "Age Rating", subtitle: "Check each answer against your app's content. Apple calculates the displayed rating.") {
-            Text(ageStatus).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true).frame(minHeight: 20)
+            StorebenchFeedback(text: ageStatus, height: 40)
             if editor.ageReady || reading(editor.ageReady) {
             StorebenchActionGroup {
                 Button("All None") { editor.chooseAllAges(frequency: "NONE"); review = nil }.help("Answer None to every content question")
@@ -161,7 +172,7 @@ struct AppInformationView: View {
 
     private var accessibilityCard: some View {
         Card(title: "Accessibility", subtitle: "Self-reported accessibility features, per device family. Saving an Apple draft and publishing it require separate reviews.") {
-            Text(accessibilityStatus).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true).frame(minHeight: 20)
+            StorebenchFeedback(text: accessibilityStatus, height: 40)
             StorebenchPicker("Device family", selection: $family) { selectionOptions(AccessibilityDeclarations.families) { SelectionOption($0.1, value: $0.0) } }.storebenchFormColumn().onChange(of: family) { review = nil }
             if editor.accessibilityReady || reading(editor.accessibilityReady) {
                 let records = (editor.declarations ?? []).filter { $0.family == family && $0.state != "REPLACED" }

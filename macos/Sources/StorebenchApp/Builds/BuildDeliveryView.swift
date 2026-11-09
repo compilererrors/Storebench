@@ -30,24 +30,18 @@ struct BuildDeliveryView: View {
         VStack(alignment: .leading, spacing: 16) {
             Card(title: "Build delivery", subtitle: "Stage a signed IPA or PKG locally, then review its exact destination before approving the upload. Apple processes delivered builds asynchronously.") {
                 if let package {
-                    Text(package.fileName).font(.sbHeadline).lineLimit(2).textSelection(.enabled)
+                    StorebenchTextSlot(text: package.fileName, height: 24, font: .sbHeadline)
                     Text("\(ByteCountFormatter.string(fromByteCount: Int64(package.size), countStyle: .binary)) · \(package.uti)").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
                     ScrollView(.horizontal) { Text("SHA-256: \(package.sha256)").font(.sbCaption.monospaced()).textSelection(.enabled).fixedSize() }.frame(height: 28)
-                    ViewThatFits {
-                        HStack(alignment: .top, spacing: 12) { inputs }.storebenchWorking(draft?.loaded != true)
-                        VStack(alignment: .leading, spacing: 12) { inputs }
-                    }
-                    ViewThatFits {
-                        HStack(spacing: 12) { uploadActions(package) }
-                        VStack(alignment: .leading, spacing: 12) { uploadActions(package) }
-                    }
+                        .help("SHA-256 identifies the exact package bytes. The publishing review checks this fingerprint before uploading.")
+                    StorebenchFormGrid { inputs }.storebenchWorking(draft?.loaded != true)
+                    StorebenchActionGroup { uploadActions(package) }
                 } else {
                     Text("One package per app, up to 16 GiB. The staged copy is encrypted and included in your local backups.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
-                    if loaded { Button("Choose IPA or PKG") { if !working { choosingFile = true } }.storebenchWorking(working) }
+                    if loaded { Button("Choose Package…") { if !working { choosingFile = true } }.storebenchWorking(working).help("Choose a Signed IPA or PKG File") }
                 }
                 if let draft { LocalDraftActions(editor: draft, value: draftValue, restore: restoreDraft, blocked: working || publishing) }
-                Text(status.isEmpty ? "Confirm that the version, build number and platform match the signed package." : status)
-                    .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).frame(maxWidth: .infinity, minHeight: 40, alignment: .topLeading)
+                StorebenchTextSlot(text: status.isEmpty ? "Confirm that the version, build number and platform match the signed package." : status, height: 40, font: .sbCallout, color: StorebenchTheme.muted, live: true)
             }
             ReviewPanel(account: account, app: app, session: session, review: $review, done: {
                 if review?.state == "complete" { version = ""; number = "" }
@@ -56,13 +50,13 @@ struct BuildDeliveryView: View {
             Card(title: "Apple delivery status", subtitle: "Pending and failed delivery records can be removed through a separate publishing review. A processing or linked build cannot be removed here.", actions: AnyView(
                 Button(readingDeliveries ? "Reading…" : "Refresh Status") { Task { await refresh() } }.help(readingDeliveries ? "Reading…" : "Refresh Delivery Status").accessibilityLabel(readingDeliveries ? "Reading…" : "Refresh Delivery Status").storebenchWorking(working)
             )) {
-                if !deliveryStatus.isEmpty { Text(deliveryStatus).foregroundStyle(StorebenchTheme.muted) }
-                StorebenchCollection(items: deliveries, title: { AppStoreNames.platform($0.platform) + " " + $0.version + " · Build " + $0.buildNumber }, subtitle: { $0.state }, empty: !deliveryStatus.isEmpty ? "" : loaded ? "Apple has not returned a delivery record for this app." : "Delivery records have not been read yet.") { delivery in
+                StorebenchFeedback(text: deliveryStatus, height: 40)
+                StorebenchCollection(items: deliveries, title: { AppStoreNames.platform($0.platform) + " " + $0.version + " · Build " + $0.buildNumber }, subtitle: { AppStoreNames.state($0.state) }, empty: !deliveryStatus.isEmpty ? "" : loaded ? "Apple has not returned a delivery record for this app." : "Delivery records have not been read yet.") { delivery in
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("\(AppStoreNames.platform(delivery.platform)) \(delivery.version) · Build \(delivery.buildNumber)").font(.sbHeadline).lineLimit(2)
-                        Text(delivery.state).font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
+                        StorebenchTextSlot(text: "\(AppStoreNames.platform(delivery.platform)) \(delivery.version) · Build \(delivery.buildNumber)", height: 24, font: .sbHeadline)
+                        StorebenchStateLabel(code: delivery.state)
                         if let date = delivery.uploadedDate ?? delivery.createdDate { Text("\(date.prefix(16).replacingOccurrences(of: "T", with: " ")) UTC").font(.sbCaption).foregroundStyle(StorebenchTheme.muted) }
-                        if let id = delivery.buildId { Text("Processed build: \(id)").font(.sbCaption).lineLimit(2).textSelection(.enabled) }
+                        if let id = delivery.buildId { StorebenchTextSlot(text: "Processed build: \(id)", height: 28, font: .sbCaption) }
                         if !delivery.details.isEmpty {
                             ScrollView {
                                 VStack(alignment: .leading, spacing: 8) {

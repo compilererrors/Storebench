@@ -213,10 +213,10 @@ struct QuickReleaseView: View {
                 let feedback = textStatus.isEmpty ? listing.status : textStatus
                 if !feedback.isEmpty { StorebenchTextSlot(text: feedback, height: 40, font: .sbCallout, color: StorebenchTheme.muted, live: true) }
                 StorebenchFormFooter {
-                    StorebenchBusyButton(title: "Save Draft", loadingTitle: "Saving…", busy: listing.workflow.phase == .saving, variant: .primary) { save(listing) }
+                    StorebenchBusyButton(title: "Save Draft", loadingTitle: "Saving…", busy: listing.workflow.phase == .saving) { save(listing) }
                         .help("Save the text of every language on this Mac")
                         .storebenchWorking(!listing.dirty || listing.busy || listing.workflow.blocked || publishingText)
-                    StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Preparing…", busy: listing.workflow.phase == .preparing) { save(listing, sync: true) }
+                    StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Preparing…", busy: listing.workflow.phase == .preparing, variant: .primary) { save(listing, sync: true) }
                         .storebenchWorking(listing.busy || listing.workflow.blocked || publishingText)
                 }
             } else {

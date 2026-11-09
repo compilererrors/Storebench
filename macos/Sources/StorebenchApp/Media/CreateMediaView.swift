@@ -7,6 +7,10 @@ import UniformTypeIdentifiers
 /// finished cards become local Asset Library originals. Nothing here contacts Apple.
 struct CreateMediaView: View {
     let account: Account, app: Account.App, session: WorkspaceSession?
+    var selectAIScreenshots: @MainActor (Int) async throws -> [SelectedFiles.File] = MediaFileSelection.screenshots
+    var availableTranslationTargets: @MainActor (String, [String]) async -> [String] = ListingTranslation.translatableTargets
+    @State private var creationMode: String?
+    @State private var aiComposerId = UUID()
     @State private var saved: [WorkspaceSession.SavedMediaCardSet] = []
     @State private var history: MediaCardHistory?
     @State private var savedSet: MediaCardSet?
@@ -31,11 +35,15 @@ struct CreateMediaView: View {
     @State private var previewIssue = ""
     @State private var dragStart: MediaCard?
     @State private var translateTo = ""
+    @State private var translationService = ""
+    @State private var translationModel = ""
+    @State private var aiConnections: [AIConnection] = []
     @State private var translationTargets: [String] = []
     @State private var translation: ListingTranslationRequest?
     @FocusState private var canvasFocused: Bool
     @Environment(\.workspaceHeight) private var viewportHeight
     @Environment(\.confirmDestructive) private var confirm
+    @Environment(\.editorProtection) private var protection
     @Environment(\.openReleaseStep) private var openReleaseStep
 
     private var opened: MediaCardSet? { history?.set }
@@ -46,6 +54,23 @@ struct CreateMediaView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
+            Card(title: "Create Media", subtitle: "Choose how to start your App Store cards.") {
+                StorebenchActionGroup {
+                    Button("Create Cards") { chooseMode("manual") }
+                    Button("AI Generate…") { chooseMode("ai") }
+                        .storebenchControlID("media.ai")
+                        .help("Let AI propose editable cards from screenshots and a short brief")
+                }
+            }
+            if creationMode == "ai" {
+                let composerId = aiComposerId
+                AICardsCreator(account: account, app: app, session: session, selectScreenshots: selectAIScreenshots) { value in
+                    saved.removeAll { $0.set.id == value.set.id }; saved.insert(value, at: 0)
+                    guard creationMode == "ai", aiComposerId == composerId else { return }
+                    show(value); creationMode = "manual"
+                }
+            }
+            if creationMode == "manual" {
             if !loading { stepsCard }
             setsCard
             if let set = opened, let current, let index {
@@ -54,13 +79,14 @@ struct CreateMediaView: View {
                 saveCard(set)
                 translateCard(set)
             }
+            }
         }
         .task { await load() }
         .task(id: textLanguage) {
-            let source = textLanguage, found = await ListingTranslation.translatableTargets(from: source, among: StoreLocales.codes)
+            let source = textLanguage, found = await availableTranslationTargets(source, StoreLocales.codes)
             guard !Task.isCancelled, source == textLanguage else { return }
             translationTargets = found
-            if !found.contains(translateTo) { translateTo = found.first ?? "" }
+            if translationService.isEmpty, !found.contains(translateTo) { translateTo = found.first ?? "" }
         }
         .listingTranslation(translation) { request, translate in await translateSet(request, translate) } finished: { translation = nil }
         .task(id: history?.set) {
@@ -76,6 +102,13 @@ struct CreateMediaView: View {
                                         fontLoaded: current.map { font($0) != nil } ?? false)) { await renderPreview() }
         .onDisappear { mediaRead?.cancel(); mediaReadId = UUID() }
         .trackUnsavedChanges(dirty, busy: busy || saving, onSave: { await save() })
+    }
+
+    private func chooseMode(_ mode: String) {
+        guard creationMode != mode else { return }
+        let choose: @MainActor @Sendable () -> Void = { creationMode = mode; if mode == "ai" { aiComposerId = UUID() } }
+        if let protection { protection.requestLeaving(choose) }
+        else { Task { if dirty { guard await save() else { return } }; choose() } }
     }
 
     // MARK: Steps
@@ -261,7 +294,7 @@ struct CreateMediaView: View {
                 StorebenchSliderField(title: "Corner radius (%)", value: style(\.cornerRadius, "cornerRadius"), range: 0...20, step: 0.5)
                 StorebenchSliderField(title: "Border width (%)", value: style(\.borderWidth, "borderWidth"), range: 0...6, step: 0.1)
                 StorebenchColorField("Border Color", selection: color(\.borderColor, "borderColor"))
-                Toggle("Shadow", isOn: style(\.shadow, "shadow")).toggleStyle(StorebenchToggleStyle())
+                StorebenchToggle("Shadow", isOn: style(\.shadow, "shadow"))
                 StorebenchActionGroup { Button("Recenter Crop") { change("crop") { $0.zoom = 1; $0.x = 0.5; $0.y = 0.5 } } }
             }.padding(.top, 8)
         }
@@ -350,6 +383,7 @@ struct CreateMediaView: View {
                 StorebenchBusyButton(title: "Save Draft", loadingTitle: "Saving…", busy: saving, variant: .primary) { Task { _ = await save() } }
                     .storebenchWorking(!dirty || stale)
                 Button("Save All to Asset Library") { Task { await saveToLibrary(all: true) } }.buttonStyle(StorebenchButtonStyle(.primary))
+                    .storebenchControlID("media.save-library")
                 Button("Save This Card") { Task { await saveToLibrary(all: false) } }.help("Save the selected card to Asset Library")
                 Button("Export PNG") { Task { await exportPNG() } }.help("Save the selected card as a PNG file on this Mac")
             }.storebenchWorking(busy)
@@ -370,26 +404,38 @@ struct CreateMediaView: View {
     private var textLanguage: String { opened?.language ?? "en-US" }
 
     private func translateCard(_ set: MediaCardSet) -> some View {
-        Card(title: "Other Languages", subtitle: "Make a copy of this card set in another language. Apple’s translation runs on this Mac and translates every title, subtitle and body text. The copy keeps the same background, layout and screenshots, so replace screenshots that show text from your app in another language.", help: "media") {
+        Card(title: "Other Languages", subtitle: "Make a translated copy using Apple Translation or your chosen AI service. The copy keeps the same background, layout and screenshots. Replace screenshots that show another language.", help: "media") {
             StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 260) {
                 StorebenchPicker("Card Text Language", selection: Binding(get: { textLanguage }, set: { value in change("language", set: { $0.language = value }) })) {
                     selectionOptions(StoreLocales.codes) { SelectionOption(StoreLocales.name($0), value: $0) }
                 }
                 StorebenchPicker("Translate To", selection: $translateTo) {
-                    selectionOptions(translationTargets) { SelectionOption(StoreLocales.name($0), value: $0) }
+                    selectionOptions(translationService.isEmpty ? translationTargets : StoreLocales.codes.filter { $0 != textLanguage }) { SelectionOption(StoreLocales.name($0), value: $0) }
                 }
             }
-            Text(translationTargets.isEmpty ? "This Mac cannot translate \(StoreLocales.name(textLanguage)). Translation needs macOS 15 or later and a language Apple’s translation supports."
-                 : "The new card set is named after this one and the language. macOS asks before it downloads a language it does not have yet.")
+            AIServicePicker(session: session, selection: $translationService, modelID: $translationModel, includesTranslation: true, loaded: { aiConnections = $0 })
+                .onChange(of: translationService) {
+                    let options = translationService.isEmpty ? translationTargets : StoreLocales.codes.filter { $0 != textLanguage }
+                    if !options.contains(translateTo) { translateTo = options.first ?? "" }
+                }
+            Text(translationService.isEmpty && translationTargets.isEmpty ? "This Mac cannot translate \(StoreLocales.name(textLanguage)). Translation needs macOS 15 or later and a language Apple’s translation supports."
+                 : translationService.isEmpty ? "macOS asks before downloading a missing translation language. The original card set is kept."
+                 : "AI translates the card text. The original card set is kept; review the translated copy before using it.")
                 .font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
             StorebenchActionGroup {
                 Button(translation == nil ? "Translate Card Set" : "Translating…") {
                     guard !translateTo.isEmpty else { return }
                     Task {
                         if dirty, !(await save()) { return }
-                        translation = ListingTranslationRequest(source: textLanguage, target: translateTo)
+                        let request = ListingTranslationRequest(source: textLanguage, target: translateTo)
+                        let selectedModel = translationModel.isEmpty ? nil : translationModel
+                        if let provider = AIProvider(rawValue: translationService), let session {
+                            await translateSet(request) { texts in
+                                try await session.translateWithAI(accountId: account.id, appId: app.id, provider: provider, texts: texts, source: request.source, target: request.target, fields: MediaCardTranslation.translationFields(set), model: selectedModel)
+                            }
+                        } else { translation = request }
                     }
-                }.help("Create a translated copy of this card set").storebenchWorking(translateTo.isEmpty || MediaCardTranslation.segments(set).isEmpty || translation != nil)
+                }.help("Create a translated copy of this card set").storebenchWorking(translateTo.isEmpty || MediaCardTranslation.segments(set).isEmpty || translation != nil || (translationService == AIProvider.apple.rawValue && !AppleLocalAI.available) || (!translationService.isEmpty && translationService != AIProvider.apple.rawValue && !aiConnections.contains { $0.provider.rawValue == translationService }))
             }.storebenchWorking(busy || stale)
         }
     }
@@ -401,7 +447,7 @@ struct CreateMediaView: View {
         do {
             let texts = MediaCardTranslation.segments(source)
             let translated: [String]
-            do { translated = try await translate(texts) } catch { throw MediaCardFailure.translation }
+            do { translated = try await translate(texts) } catch let error as AIFailure { throw error } catch { throw MediaCardFailure.translation }
             let copy = try MediaCardTranslation.translated(source, to: request.target, translations: translated)
             guard opened == source, savedSet == source else { status = "This card set changed while it was being translated. Translate it again."; statusError = true; return }
             let next = try await session.saveMediaCardSet(accountId: account.id, appId: app.id, set: copy, expected: 0)
@@ -409,6 +455,7 @@ struct CreateMediaView: View {
             show(.init(revision: next, set: copy))
             status = "\(copy.name) created. Read each card’s text and replace screenshots that show another language, then save the cards to Asset Library."; statusError = false
         } catch let failure as MediaCardFailure { status = failure.message; statusError = true }
+        catch let failure as AIFailure { status = failure.message; statusError = true }
         catch { status = "The translated card set could not be saved. This card set is unchanged."; statusError = true }
     }
 

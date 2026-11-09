@@ -8,9 +8,9 @@ struct SavedDeltaCard: View {
     private var maximum: Double { max(1, max(before ?? 0, after ?? 0)) }
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.sbCaption.bold()).lineLimit(2).frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
-            Text(value).font(.sbHeadline).foregroundStyle(tone).lineLimit(2).frame(minHeight: 42, alignment: .topLeading)
-            Text(detail).font(.sbCaption).foregroundStyle(StorebenchTheme.muted).lineLimit(2).frame(minHeight: 28, alignment: .topLeading)
+            StorebenchTextSlot(text: title, height: 32, font: .sbCaption.bold())
+            StorebenchTextSlot(text: value, height: 42, font: .sbHeadline, color: tone, live: true)
+            StorebenchTextSlot(text: detail, height: 28, font: .sbCaption, color: StorebenchTheme.muted, live: true)
             side(before, label: beforeLabel, color: StorebenchTheme.muted)
             side(after, label: afterLabel, color: tone)
         }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
@@ -19,7 +19,7 @@ struct SavedDeltaCard: View {
     }
     private func side(_ number: Double?, label: String, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(.sbCaption).lineLimit(2).frame(minHeight: 28, alignment: .topLeading)
+            StorebenchTextSlot(text: label, height: 28, font: .sbCaption)
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 2).fill(StorebenchTheme.color("color-surface-sunken"))

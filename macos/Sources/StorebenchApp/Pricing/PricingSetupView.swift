@@ -67,6 +67,10 @@ struct PricingView: View {
         StorebenchDialog(title: "Change Pricing Model", height: 640, busy: saving, close: { changing = false }) {
             StorebenchChoicePicker("Pricing Model", selection: $proposal, options: PricingModelKind.allCases.map { ($0, $0.title) }, style: .radio)
             Text(proposal.summary).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
+            StorebenchActionGroup {
+                Button("Use Apple's Model") { Task { await choose(nil) } }.buttonStyle(StorebenchButtonStyle(.quiet)).storebenchWorking(saving)
+                    .disabled(!saving && chosen == nil).help(chosen == nil ? "Pricing already follows App Store Connect." : "Use the model App Store Connect's products and price show.")
+            }
             StorebenchCardSection(title: "What Changes at Apple") {
                 ForEach(PricingSetup.changes(from: shown, to: proposal, state: setup), id: \.self) { line in
                     Text(line).font(.sbCallout).fixedSize(horizontal: false, vertical: true)
@@ -74,9 +78,7 @@ struct PricingView: View {
             }
             if !saveProblem.isEmpty { StorebenchAttention { Text(saveProblem).fixedSize(horizontal: false, vertical: true) } }
         } actions: {
-            StorebenchActionGroup {
-                Button("Use Apple's Model") { Task { await choose(nil) } }.storebenchWorking(saving)
-                    .disabled(!saving && chosen == nil).help(chosen == nil ? "Pricing already follows App Store Connect." : "Use the model App Store Connect's products and price show.")
+            StorebenchActionGroup(alignment: .trailing) {
                 Button("Cancel") { changing = false }.storebenchWorking(saving)
                 StorebenchCommand(title: "Use This Model", running: "Saving…", busy: saving, unavailable: proposal == shown && chosen != nil ? "This is the current pricing model." : nil) { Task { await choose(proposal) } }
             }

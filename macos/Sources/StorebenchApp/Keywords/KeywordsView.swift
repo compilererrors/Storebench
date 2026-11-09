@@ -158,7 +158,7 @@ struct KeywordsView: View {
             StorebenchTextSlot(text: row.notes.isEmpty ? "No research notes yet. Edit the idea to explain why this term is relevant." : row.notes, height: 72, font: .sbCallout, color: StorebenchTheme.muted)
             if !row.reference.isEmpty { StorebenchTextSlot(text: row.reference, height: 40, font: .sbCaption, color: StorebenchTheme.muted) }
             StorebenchHeader {
-                Toggle("Select for composition", isOn: Binding(get: { chosen.contains(row.id) }, set: { if $0 { chosen.insert(row.id) } else { chosen.remove(row.id) } })).toggleStyle(StorebenchToggleStyle())
+                StorebenchToggle("Select for composition", isOn: Binding(get: { chosen.contains(row.id) }, set: { if $0 { chosen.insert(row.id) } else { chosen.remove(row.id) } }))
             } actions: {
                 Button("Edit Idea") { idea = row }
             }
@@ -269,8 +269,8 @@ struct KeywordRows: View {
                             Section {
                                 ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                                     StorebenchTableRow(index: index) {
-                                        Toggle(isOn: Binding(get: { chosen.contains(row.id) }, set: { if $0 { chosen.insert(row.id) } else { chosen.remove(row.id) } })) { Text(picker ? "Use" : "Select") }
-                                            .toggleStyle(StorebenchToggleStyle()).labelsHidden()
+                                        StorebenchToggle(picker ? "Use" : "Select", isOn: Binding(get: { chosen.contains(row.id) }, set: { if $0 { chosen.insert(row.id) } else { chosen.remove(row.id) } }))
+                                            .labelsHidden()
                                             .accessibilityLabel("\(picker ? "Use" : "Select") \(row.term) · \(row.territory.isEmpty ? "any territory" : row.territory)")
                                             .frame(height: 42).padding(.horizontal, 12).frame(width: widths[0])
                                         StorebenchTableCell(text: picker ? "\(row.term)\n\(row.territory.isEmpty ? "Any territory" : row.territory)" : row.term, width: widths[1], lines: picker ? 3 : 4)

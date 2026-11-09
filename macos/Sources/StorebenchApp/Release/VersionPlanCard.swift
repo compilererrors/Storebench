@@ -40,23 +40,28 @@ struct VersionPlanCard: View {
             }
             if model.loaded && !model.needsComparison {
                 StorebenchFormFooter {
-                    StorebenchBusyButton(title: "Save Draft", loadingTitle: "Saving…", busy: model.busy, variant: .primary) { run(model, removing: false) }
+                    if let plan = model.plan {
+                        StorebenchMenu("Version Options", icon: "settings") {
+                            Button("Revert Changes") { model.revert() }.storebenchWorking(!model.dirty)
+                            StorebenchMenuSeparator()
+                            Button("Remove Version…", role: .destructive) {
+                                guard confirm(.removeVersion, title: "Remove version \(plan.targetVersion) from this Mac?",
+                                              message: "The version plan is removed from this Mac. Its text and screenshots stay saved as a local draft. Nothing changes at App Store Connect.", action: "Remove") else { return }
+                                run(model, removing: true)
+                            }
+                        }.storebenchWorking(model.busy)
+                    }
+                    StorebenchBusyButton(title: "Save Draft", loadingTitle: "Saving…", busy: model.busy, variant: sync == nil ? .primary : .secondary) { run(model, removing: false) }
                             .help(model.plan == nil ? "Create the new version on this Mac and continue" : "Save the version on this Mac")
                             .storebenchWorking(model.plan != nil && !model.dirty)
                     if let sync {
-                        StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Saving…", busy: model.busy) {
+                        StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Saving…", busy: model.busy, variant: .primary) {
                             operation = Task {
                                 guard await model.save(), model.active, !model.dirty, !Task.isCancelled else { return }
                                 await didSave(false); sync()
                             }
                         }
                     }
-                    if model.dirty && !model.busy && model.plan != nil { Button("Revert") { model.revert() }.help("Revert to the saved version") }
-                    if model.plan != nil && !model.busy { Button("Remove", role: .destructive) {
-                        guard let plan = model.plan, confirm(.removeVersion, title: "Remove version \(plan.targetVersion) from this Mac?",
-                                                             message: "The version plan is removed from this Mac. Its text and screenshots stay saved as a local draft. Nothing changes at App Store Connect.", action: "Remove") else { return }
-                        run(model, removing: true)
-                    }.help("Remove this version from this Mac. Nothing changes at Apple.") }
                 }
             }
         }

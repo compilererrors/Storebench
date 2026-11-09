@@ -69,7 +69,7 @@ struct ScreenshotImageEditor: View {
                 let ratio = min(bounds.size.width / Double(value.width), bounds.size.height / Double(value.height))
                 ZStack {
                     if let preview, renderedEdits == value { Image(decorative: preview.image, scale: 1).resizable().interpolation(.high) }
-                    else { Rectangle().fill(StorebenchTheme.color("color-surface-sunken")); ProgressView() }
+                    else { Rectangle().fill(StorebenchTheme.color("color-surface-sunken")); ProgressView().accessibilityLabel("Rendering Screenshot Preview") }
                 }
                 .frame(width: Double(value.width) * ratio, height: Double(value.height) * ratio)
                 .contentShape(Rectangle()).focusable(!working, interactions: .edit).focused($focused)
@@ -105,7 +105,7 @@ struct ScreenshotImageEditor: View {
                 do { let result = try await ScreenshotRenderer.previewAsync(source, edits: value); try Task.checkCancellation(); preview = result; renderedEdits = value }
                 catch is CancellationError {} catch let failure as ScreenshotEditFailure { status = failure.message } catch { status = ScreenshotEditFailure.render.message }
             }
-        } else { Rectangle().fill(StorebenchTheme.color("color-surface-sunken")).overlay { if loading { ProgressView() } } }
+        } else { Rectangle().fill(StorebenchTheme.color("color-surface-sunken")).overlay { if loading { ProgressView().accessibilityLabel("Reading Original Screenshot") } } }
     }
 
     private func edit<Value>(_ key: WritableKeyPath<ScreenshotEdits, Value>) -> Binding<Value> {
@@ -146,7 +146,7 @@ struct ScreenshotImageEditor: View {
             }
             HStack {
                 Button("Rotate 90°") { edits?.rotation = (edits!.rotation + 90) % 360; edits?.x = 0.5; edits?.y = 0.5 }
-                Toggle("Flip Horizontally", isOn: edit(\.flip)).toggleStyle(StorebenchToggleStyle())
+                StorebenchToggle("Flip Horizontally", isOn: edit(\.flip))
             }
             Button("Reset") { if let source { edits = try? initial(source) } }
             DisclosureGroup("Make Image a Card") { cardControls }
@@ -162,7 +162,7 @@ struct ScreenshotImageEditor: View {
     }
     private var cardControls: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Toggle("Enable Image Card", isOn: card(\.enabled))
+            StorebenchToggle("Enable Image Card", isOn: card(\.enabled))
             if edits!.card.enabled {
                 StorebenchSliderField(title: "Frame width (%)", value: card(\.frame), range: 0...20, step: 0.5)
                 StorebenchColorField("Frame Color", selection: color(\.color), supportsOpacity: false)

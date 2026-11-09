@@ -88,7 +88,7 @@ struct SavedComparisonTable: View {
     private func column(_ column: Column, rows: [AsoProgressRow], maximumWidth: Double = 640) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: 4) {
-                Text(column.title).font(.sbCaption.bold()).foregroundStyle(StorebenchTheme.color("color-text-tertiary")).lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading).accessibilityLabel(column.title)
+                Text(column.title).font(.sbCaption.bold()).foregroundStyle(StorebenchTheme.color("color-text-tertiary")).lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading).help(column.title).accessibilityLabel(column.title)
                 StorebenchColumnHandle(title: column.title, width: width(column), live: { dragging[column.id] = min(640, max(144, $0)) }) { value in
                     dragging.removeValue(forKey: column.id); resize(column, to: value)
                 }.offset(x: 12)
@@ -101,6 +101,7 @@ struct SavedComparisonTable: View {
                             Text(DataTablePresentation.compactText(shown.value + " · " + shown.detail)).font(.sbCallout)
                                 .lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12)
                         }.buttonStyle(StorebenchPressStyle()).foregroundStyle(StorebenchTheme.color("color-accent-muted"))
+                            .help(shown.explanation + "\nOpen the saved listing change")
                             .accessibilityAddTraits(.isLink).accessibilityLabel(shown.explanation)
                     } else {
                         StorebenchTableValue(text: shown.value + "\n" + shown.detail + "\n\n" + shown.explanation, title: column.title + " · " + row.version, summary: shown.value + " · " + shown.detail)

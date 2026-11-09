@@ -225,9 +225,9 @@ struct ReviewPanel: View {
                 } else if review.state == "complete", let recheck {
                     Button("Recheck Selections") { recheck() }.buttonStyle(StorebenchButtonStyle(.primary)).storebenchWorking(actionsBusy).help("Check saved selections again for a new review")
                 } else {
-                    approveButton(review)
                     Button("Discard") { self.review = nil }.storebenchWorking(working || review.state != "prepared")
                         .help(review.state == "prepared" ? "Discard this review; nothing was sent" : "Only a review waiting for approval can be discarded")
+                    approveButton(review)
                 }
             }
             .id(Self.sendAnchor(review.id))

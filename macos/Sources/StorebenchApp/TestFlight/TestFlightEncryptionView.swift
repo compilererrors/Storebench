@@ -71,8 +71,7 @@ struct TestFlightEncryptionView: View {
     }
 
     @ViewBuilder private func content(_ compliance: BuildExportCompliance) -> some View {
-        Text("Current declaration: " + (compliance.currentId.map { id in compliance.current.map(describe) ?? id } ?? "None"))
-            .font(.sbCallout).lineLimit(3).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+        StorebenchTextSlot(text: "Current declaration: " + (compliance.currentId.map { id in compliance.current.map(describe) ?? id } ?? "None"), height: 42, font: .sbCallout)
         switch compliance.next {
         case .done:
             Text("Apple approved this declaration. This step is complete.").font(.sbCallout).fixedSize(horizontal: false, vertical: true)

@@ -169,6 +169,7 @@ import UniformTypeIdentifiers
     private var downloadProgress: some View {
         VStack(alignment: .leading, spacing: 8) {
             ProgressView(value: Double(downloadJob?.completed ?? 0), total: Double(max(1, downloadJob?.total ?? 0)))
+                .accessibilityLabel("Analytics Download Progress")
                 .accessibilityLabel(downloadRunning ? "Analytics download progress" : "Latest Analytics download")
             ScrollView {
                 Text(downloadProgressMessage).font(.sbCallout).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
@@ -208,7 +209,7 @@ import UniformTypeIdentifiers
                 }
                 StorebenchTextField("Processing date (UTC) · YYYY-MM-DD", text: $processingDate).storebenchWorking(unavailable)
                 StorebenchStepper("Segments in this instance: \(segments)", value: $segments, in: 1...20).storebenchWorking(unavailable)
-                if !chosen.isEmpty { Toggle("I selected every segment from the same report instance.", isOn: $complete).storebenchWorking(unavailable) }
+                if !chosen.isEmpty { StorebenchToggle("I selected every segment from the same report instance.", isOn: $complete).storebenchWorking(unavailable) }
                 if !chosen.isEmpty && (!complete || processingDate.isEmpty) { Text("Enter the processing date and confirm that every segment is selected to preview these files.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true) }
             } else { Text("JSON retains original processing dates, detail levels and granularities. Preview validates its contents and configured app.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
             Text("CSV, TXT, TSV, GZ or JSON · up to 20 files and 10 MB total after decompression. Only this app's rows are saved. Standard and detailed reports, and daily, weekly and monthly periods remain separate.")

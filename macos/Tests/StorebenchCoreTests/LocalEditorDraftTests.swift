@@ -69,7 +69,7 @@ import Testing
     }
     @Test func publishedDraftDoesNotReplaceLaterAppleValuesAndPreservesUnpublishedFields() async throws {
         let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
-        let original = JSONText.object([("name", .string("Synthetic original")), ("notes", .string("Original notes"))])
+        let original = JSONText.object([("notes", .string("Original notes")), ("name", .string("Synthetic original"))])
         let changed = original.setting("name", .string("Synthetic published")).setting("notes", .string("Unpublished notes"))
         let editor = LocalEditorDraftEditor(scope: scope, session: session)
         _ = await editor.load(initial: original); #expect(await editor.save(changed))
@@ -81,6 +81,13 @@ import Testing
         let restored = try #require(await reopened.load(initial: remote))
         #expect(restored["name"] == remote["name"] && restored["notes"] == changed["notes"])
         #expect(!reopened.needsComparison)
+        #expect(!reopened.dirty(.object([("name", remote["name"]!), ("notes", changed["notes"]!)])))
+        let conflict = LocalEditorDraftEditor(scope: scope, session: session)
+        #expect(await conflict.load(initial: remote.setting("notes", .string("New remote notes"))) == nil)
+        #expect(conflict.needsComparison && conflict.latest?.value["name"] == remote["name"])
+        #expect(conflict.latest?.value["notes"] == changed["notes"])
+        await conflict.readLatest()
+        #expect(conflict.latest?.value["name"] == remote["name"])
     }
 
     @Test func successfulSyncClearsHighlightAndAnOlderReviewCannotAcknowledgeNewerSavedEdits() async throws {
@@ -101,7 +108,7 @@ import Testing
 
     @Test func concurrentRemoteEditsRequireComparisonAndIndependentEditsMerge() async throws {
         let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
-        let original = JSONText.object([("name", .string("Synthetic original")), ("notes", .string("Original notes"))])
+        let original = JSONText.object([("notes", .string("Original notes")), ("name", .string("Synthetic original"))])
         let editor = LocalEditorDraftEditor(scope: scope, session: session)
         _ = await editor.load(initial: original)
         #expect(await editor.save(original.setting("name", .string("Synthetic local"))))

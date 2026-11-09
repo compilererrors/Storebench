@@ -89,6 +89,16 @@ public actor WorkspaceSession {
     let appleReadCache = AppStoreReadCache()
     let media: EncryptedMediaStore
     let mediaFileWork = MediaFileWork()
+    let aiQueue = AIWorkQueue()
+    var aiTasks: [String: Task<JSONText, Error>] = [:]
+    var aiModelReads: [AIConnection: AIModelRead] = [:]
+    var aiModelCatalogs: [AIProvider: AIModelCatalog] = [:]
+    var aiTestConfiguration: (@Sendable () -> URLSessionConfiguration)?
+    var chatGPTAttempts: [String: ChatGPTSignIn] = [:]
+    var chatGPTSignInTasks: [String: Task<ChatGPTSignInResult, Error>] = [:]
+    var chatGPTRenewals: [String: Task<String, Error>] = [:]
+    var chatGPTSignOutTasks: [String: Task<Bool, Error>] = [:]
+    var chatGPTBlocks: [String: AIFailure] = [:]
 
     /// The open store's key, kept for the session for encrypted snapshots.
     var databaseKey: Data
@@ -279,6 +289,13 @@ public actor WorkspaceSession {
             return
         }
         for task in reportTasks.values { task.cancel() }
+        for task in aiTasks.values { task.cancel() }
+        for read in aiModelReads.values { read.task.cancel() }
+        aiModelCatalogs.removeAll()
+        chatGPTAttempts.removeAll()
+        for task in chatGPTSignInTasks.values { task.cancel() }
+        for task in chatGPTRenewals.values { task.cancel() }
+        for task in chatGPTSignOutTasks.values { task.cancel() }
         for icon in iconTasks.values { icon.task.cancel() }
         await appleReadCache.invalidate()
         releaseStatusMemory.removeAll()

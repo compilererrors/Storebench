@@ -27,9 +27,27 @@ extension EnvironmentValues {
 /// Opening a settings tab protects only editors in that settings window; app editors stay mounted.
 @MainActor @Observable final class RecoveryCoordinator {
     private(set) var request: RecoveryIntent?
+    private(set) var aiRequest: UUID?
+    private var aiConfirmedPolicy = EditorProtectionPolicy()
     private var confirmedPolicy = EditorProtectionPolicy()
     @ObservationIgnored weak var settingsProtection: EditorProtection?
     @ObservationIgnored var selectedArea: RecoveryGuidance.Target.Area?
+    @ObservationIgnored var selectedPane: SettingsNavigation.Pane?
+    func openAI(onOpen: @escaping @MainActor () -> Void) {
+        let proceed: @MainActor () -> Void = { [weak self] in
+            guard let self else { return }
+            let latest = settingsProtection?.policy ?? EditorProtectionPolicy()
+            guard latest.navigationDecision != .wait else { return }
+            aiConfirmedPolicy = latest; aiRequest = UUID(); onOpen()
+        }
+        if let settingsProtection, selectedPane != .ai { settingsProtection.requestLeaving(proceed) }
+        else { proceed() }
+    }
+    func authorizeAI(_ id: UUID, current: EditorProtectionPolicy) -> Bool {
+        guard aiRequest == id, current.navigationDecision != .wait else { return false }
+        return selectedPane == .ai || aiConfirmedPolicy.allowsNavigation(after: current, discardConfirmed: true)
+    }
+    func consumeAI(_ id: UUID) { if aiRequest == id { aiRequest = nil } }
     private func decision(_ action: RecoveryGuidance.Action, _ current: EditorProtectionPolicy.Decision) -> EditorProtectionPolicy.Decision {
         selectedArea == action.target.area && current != .wait ? .ready : current
     }

@@ -84,7 +84,7 @@ struct ScreenshotThumbnail: View {
             if let image { Image(decorative: image.image, scale: 1).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius)) }
             else if missing { Text("Not saved").font(.sbCaption).foregroundStyle(StorebenchTheme.muted) }
-            else { ProgressView().controlSize(.small) }
+            else { ProgressView().controlSize(.small).accessibilityLabel("Reading Saved Media") }
         }
         .frame(width: canvasHeight == nil ? 140 * min(ratio, 2) : nil, height: canvasHeight ?? 140 * min(1 / ratio, 2.2))
         .frame(maxWidth: canvasHeight == nil ? nil : .infinity)

@@ -127,7 +127,7 @@ struct SubscriptionOffersCard: View {
                 StorebenchStepper("Time Since Last Subscribed, from: \(lapsedMinimum) months", value: $lapsedMinimum, in: 1...24)
                 StorebenchStepper("Time Since Last Subscribed, to: \(lapsedMaximum) months", value: $lapsedMaximum, in: 1...24)
                 StorebenchStepper("Wait Between Offers: \(waitMonths) months", value: $waitMonths, in: 1...24).disabled(!waits)
-                Toggle("Wait between offers", isOn: $waits)
+                StorebenchToggle("Wait between offers", isOn: $waits)
                 StorebenchPicker("Priority", selection: $priority) { selectionOptions(PricingSetupChange.priorities) { SelectionOption($0.1, value: $0.0) } }
             }
         }
@@ -145,8 +145,8 @@ struct SubscriptionOffersCard: View {
     private var datesFields: some View {
         StorebenchCardSection(title: "Start and End Dates") {
             StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 230) {
-                Toggle("Set a start date", isOn: Binding(get: { startsLater }, set: { dated = $0 })).disabled(kind != .introductoryOffer)
-                Toggle("Set an end date", isOn: $ends)
+                StorebenchToggle("Set a start date", isOn: Binding(get: { startsLater }, set: { dated = $0 })).disabled(kind != .introductoryOffer)
+                StorebenchToggle("Set an end date", isOn: $ends)
                 StorebenchDateField("Start Date", selection: $start, displayedComponents: .date).disabled(!startsLater)
                 StorebenchDateField("End Date", selection: $end, displayedComponents: .date).disabled(!ends)
             }

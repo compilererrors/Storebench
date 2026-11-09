@@ -10,7 +10,7 @@ struct SavedRevisionList: View {
     @Environment(\.confirmDestructive) private var confirm
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            StorebenchAdaptiveText(text: status, maximumHeight: 48, color: StorebenchTheme.muted)
+            StorebenchFeedback(text: status, height: 48)
             StorebenchCollection(items: revisions, title: { ($0.local ? "Local draft · " : "Import · ") + LibraryOverview.timestamp($0.importedAt) }, subtitle: { $0.versionTitles.joined(separator: " · ") }, sorts: [.init(id: "date", label: "Saved date", less: { $0.importedAt < $1.importedAt })], empty: "No saved revisions remain.") { revision in
                 VStack(alignment: .leading, spacing: StorebenchTheme.space(2)) {
                     Text(revision.local ? "A version plan's starting material, saved on this Mac. It holds \(revision.versionTitles.joined(separator: ", "))."

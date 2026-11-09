@@ -15,7 +15,7 @@ public enum SessionFailure: Error, Equatable {
 /// elapsed time never cancels a lease or proves that its owner finished.
 final class SessionLifetime: @unchecked Sendable {
     enum Phase: Sendable { case open, closing, closed }
-    enum Kind: Sendable { case report, publishing, transfer, connection }
+    enum Kind: Sendable { case report, publishing, transfer, connection, ai }
     final class Lease: @unchecked Sendable {
         let id = UUID()
         let owner: SessionLifetime

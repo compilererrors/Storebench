@@ -136,7 +136,7 @@ struct ProductInformationCard: View {
                           account: account, app: app, session: session, blocked: blocked, request: request, done: done, followUp: followUp) {
             StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 230) {
                 StorebenchSearchPicker("Language", selection: $locale) { selectionOptions(StoreLocales.codes) { SelectionOption(StoreLocales.name($0), value: $0) } }
-                Toggle("Available in all countries and regions", isOn: $everywhere).disabled(!needsAvailability)
+                StorebenchToggle("Available in all countries and regions", isOn: $everywhere).disabled(!needsAvailability)
                     .help(needsAvailability ? "Apple sells the product wherever the app is available, including new countries and regions." : "Apple already has this product's availability.")
                 StorebenchTextField("Display Name", text: $name, hint: "Up to 35 characters, shown on the App Store.")
                 StorebenchTextField("Description", text: $details, hint: "Up to 55 characters, shown on the App Store.")
