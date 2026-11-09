@@ -117,7 +117,7 @@ struct ReleaseBuildStep: View {
         }
         ReviewPanel(account: account, app: app, session: session, review: $review, done: {
             if review?.state == "complete" { review = nil; Task { await load(fresh: true) }; done() }
-        }, busyChanged: { publishing = $0 }, syncConfirmation: true).id("release-build-review")
+        }, busyChanged: { publishing = $0 }, syncConfirmation: true, localDraft: draft).id("release-build-review")
     }
     /// What Apple has for the version's build, and the one next step.
     @ViewBuilder private var attachment: some View {

@@ -233,22 +233,32 @@ extension WorkspaceSession {
     }
 
     /// Adds an app preview video: its container is checked, then the file is encrypted into local media. Nothing is sent to Apple.
-    public func addPreview(accountId: String, appId: String, revisionId: String, localizationId: String, type: String, file: URL) throws {
-        _ = try addPreviewWithReceipt(accountId: accountId, appId: appId, revisionId: revisionId, localizationId: localizationId, type: type, file: file)
+    public func addPreview(accountId: String, appId: String, revisionId: String, localizationId: String, type: String, file: URL) async throws {
+        _ = try await addPreviewWithReceipt(accountId: accountId, appId: appId, revisionId: revisionId, localizationId: localizationId, type: type, file: file)
     }
 
-    public func addPreviewWithReceipt(accountId: String, appId: String, revisionId: String, localizationId: String, type: String, file: URL) throws -> MediaAdditionReceipt {
+    public func addPreviewWithReceipt(accountId: String, appId: String, revisionId: String, localizationId: String, type: String, file: URL) async throws -> MediaAdditionReceipt {
         let fileName = String(String(file.lastPathComponent.unicodeScalars.map { $0 == "\\" || $0 == "/" || $0.value < 0x20 || $0.value == 0x7f ? "_" : Character($0) }).utf16.prefix(100)) ?? "Preview.mp4"
         let ext = (fileName.split(separator: ".").last.map(String.init) ?? "").lowercased()
         guard ["mp4", "mov", "m4v"].contains(ext) else { throw PreviewFailure.invalid("Choose an MP4, M4V or MOV video.") }
-        let movie = try PreviewSpecs.read(file)
-        try PreviewSpecs.validate(movie, type: type, extension: ext)
         let key = "\(localizationId):\(type)"
         // Checked before the long encryption, and again in the draft write.
         let current = try previewSet(accountId: accountId, appId: appId, revisionId: revisionId, localizationId: localizationId, type: type)
         guard current.items.filter({ !current.hidden.contains($0.id) }).count < PreviewSpecs.maximum else { throw PreviewFailure.limit }
-        let saved = try media.write(fileAt: file, limit: PreviewSpecs.maximumBytes)
-        return try mutateDraft(accountId: accountId, appId: appId, revisionId: revisionId) { draft, source in
+        let lease = try lifetime.admit(.transfer); defer { lease.finish() }
+        let media = self.media, access = sessionRequestCheck()
+        let (movie, saved) = try await mediaFileWork.run {
+            try SessionContext.$lease.withValue(lease) {
+                try access(); try Task.checkCancellation()
+                let movie = try PreviewSpecs.read(file)
+                try PreviewSpecs.validate(movie, type: type, extension: ext)
+                let saved = try media.write(fileAt: file, limit: PreviewSpecs.maximumBytes)
+                try access(); try Task.checkCancellation()
+                return (movie, saved)
+            }
+        }
+        try Task.checkCancellation()
+        return try SessionContext.$lease.withValue(lease) { try mutateDraft(accountId: accountId, appId: appId, revisionId: revisionId) { draft, source in
             try previewVersion(draft, source, localizationId: localizationId, type: type)
             let id = "preview-\(UUID().uuidString.lowercased())"
             let video = JSONText.object([("id", .string(id)), ("localizationId", .string(localizationId)), ("previewType", .string(type)), ("fileName", .string(fileName)), ("extension", .string(ext)),
@@ -258,7 +268,7 @@ extension WorkspaceSession {
             let change = MediaCatalogChange(before: .previews(localizationId: localizationId, type: type, draft: try Self.previewSetDraft(draft, localizationId: localizationId, type: type)),
                                             after: .previews(localizationId: localizationId, type: type, draft: try Self.previewSetDraft(next, localizationId: localizationId, type: type)))
             return (next, MediaAdditionReceipt(scope: .init(accountId: accountId, appId: appId, revisionId: revisionId), count: 1, changes: [change]))
-        }
+        } }
     }
 
     /// Saves preview order, selection and poster frames, only onto the layout the editor loaded.

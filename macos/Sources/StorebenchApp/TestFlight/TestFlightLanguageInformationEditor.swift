@@ -60,7 +60,7 @@ struct TestFlightLanguageInformationEditor: View {
             }.storebenchWorking(busy || parentBusy)
             if let draft { LocalDraftActions(editor: draft, value: draftValue, restore: restoreDraft, blocked: busy || parentBusy, sync: { await prepare() }, syncBlocked: !dirty || !complete || !available) }
             }
-            ReviewPanel(account: account, app: app, session: session, review: $review, done: { if review?.state == "complete" { Task { await read() } } }, busyChanged: { publishing = $0 }, syncConfirmation: true)
+            ReviewPanel(account: account, app: app, session: session, review: $review, done: { if review?.state == "complete" { Task { await read() } } }, busyChanged: { publishing = $0 }, syncConfirmation: true, localDraft: draft)
                 .storebenchWorking(working || parentBusy && !publishing)
         }.trackUnsavedChanges(draft?.dirty(draftValue) == true, busy: busy || draft?.busy == true, onSave: { await draft?.saveCurrent(value: { draftValue }) == true })
             .task(id: source.locale) {

@@ -70,7 +70,7 @@ struct TestFlightInformationView: View {
                 }.storebenchWorking(busy)
                 if let draft { LocalDraftActions(editor: draft, value: draftValue, restore: restoreDraft, blocked: busy, sync: { await prepareLicense() }, syncBlocked: !licenseReady || agreement.isEmpty || !dirty) }
             }
-            ReviewPanel(account: account, app: app, session: session, review: $licenseReview, done: { if licenseReview?.state == "complete" { Task { await loadLicense() } } }, busyChanged: { publishingLicense = $0 }, syncConfirmation: true)
+            ReviewPanel(account: account, app: app, session: session, review: $licenseReview, done: { if licenseReview?.state == "complete" { Task { await loadLicense() } } }, busyChanged: { publishingLicense = $0 }, syncConfirmation: true, localDraft: draft, draftPaths: [["license"]])
         }
         .task(id: "\(account.id):\(app.id)") { await showRemembered(); guard !Task.isCancelled else { return }; await loadInformation(); await loadLicense()
             if let session {

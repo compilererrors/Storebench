@@ -119,7 +119,9 @@ import Observation
     }
     public func publishingRequest(targetMode: String) throws -> PublishRequest {
         guard active, !state.blocked, !dirty, let editor else { throw PublishFailure.invalid("Confirm and save the language text before preparing its App Store review.") }
-        return try editor.publishingRequest(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId, versionId: versionId, targetMode: targetMode)
+        var request = try editor.publishingRequest(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId, versionId: versionId, targetMode: targetMode)
+        request.listingLocale = locale
+        return try request.validated()
     }
     /// Only this listing's clean, matching before snapshot can adopt its own confirmed bulk save.
     @discardableResult public func reconcile(_ receipt: ReleaseTextSaveReceipt) -> Bool {

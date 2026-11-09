@@ -274,65 +274,52 @@ extension WorkspaceSession {
         review.state = "running"; review.pid = getpid(); review.approvedAt = CustomerReview.isoString(now()); review.updatedAt = review.approvedAt!
         revision = try savePublishReview(review, expected: revision)
         let grant = PublishGrant(accountId: account.id, appId: appId, reviewId: id)
-        var ids: [String: String] = [:]
-        // Apple returns a reservation's upload operations in its creation response; the upload step of that reservation uses them.
-        var operations: [String: JSONValue] = [:]
-        func persist() throws { review.updatedAt = CustomerReview.isoString(now()); revision = try savePublishReview(review, expected: revision) }
         do {
-            for index in review.steps.indices {
-                if review.steps[index].state == "done" { continue }
-                let together = Self.stepsReadyTogether(review.steps, from: index, ids: ids)
-                if together.count > 1 {
-                    // Only independent, ready steps share a wave; each keeps the serial executor's checks.
-                    try requirePublishingAccount(account, appId: appId, client: client)
-                    let queued = together.map { ($0, review.steps[$0]) }
-                    let resolvedIds = ids, reservedOperations = operations
-                    var failure: Error?
-                    let limit = Self.publishingBatchLimit(review.steps[index])
-                    for wave in stride(from: 0, to: queued.count, by: limit) where failure == nil {
-                        let sending = Array(queued[wave..<min(wave + limit, queued.count)])
-                        try requirePublishingAccount(account, appId: appId, client: client)
-                        for (item, _) in sending { review.steps[item].state = "running" }
-                        try persist()
-                        var persistenceFailure: Error?
-                        await withTaskGroup(of: SentTogether.self) { group in
-                            for entry in sending {
-                                let item = entry.0, step = entry.1
+            let startingReview = review, startingRevision = revision
+            let outcome = await withTaskGroup(of: SentTogether.self, returning: (PublishReview, Int?, Error?).self) { group in
+                var review = startingReview, revision = startingRevision
+                var ids: [String: String] = [:], operations: [String: JSONValue] = [:]
+                var failure: Error?
+                func persist() throws {
+                    review.updatedAt = CustomerReview.isoString(now())
+                    revision = try savePublishReview(review, expected: revision)
+                }
+                var active = Set<Int>()
+                while true {
+                    if failure == nil, let first = review.steps.firstIndex(where: { $0.state != "done" }) {
+                        let ready = Self.stepsReadyTogether(review.steps, from: first, ids: ids, active: active, rolling: true)
+                        for item in ready {
+                            do {
+                                try requirePublishingAccount(account, appId: appId, client: client)
+                                review.steps[item].state = "running"; try persist()
+                                active.insert(item)
+                                let step = review.steps[item], resolvedIds = ids, reservedOperations = operations
                                 group.addTask { [self] in
                                     do {
                                         let output = try await performPublishingStep(step, ids: resolvedIds, operations: reservedOperations, account: account, appId: appId, client: client, grant: grant)
                                         return SentTogether(item: item, output: output, error: nil)
                                     } catch { return SentTogether(item: item, output: nil, error: error) }
                                 }
-                            }
-                            for await result in group {
-                                if let error = result.error { review.steps[result.item].state = "failed"; failure = failure ?? error }
-                                else {
-                                    if let id = result.output?.id { ids[review.steps[result.item].key] = id; review.steps[result.item].resultId = id }
-                                    if let reserved = result.output?.operations { operations[review.steps[result.item].key] = reserved }
-                                    if review.steps[result.item].kind != .verify && review.sentAt == nil { review.sentAt = CustomerReview.isoString(now()) }
-                                    review.steps[result.item].state = "done"
-                                }
-                                // Keep each completed result visible while slower siblings still wait on Apple.
-                                // If storage fails, still collect every already admitted write before stopping.
-                                if persistenceFailure == nil { do { try persist() } catch { persistenceFailure = error } }
-                            }
+                            } catch { failure = error; break }
                         }
-                        if let persistenceFailure { throw persistenceFailure }
-                        try persist()
                     }
-                    if let failure { throw failure }
-                    continue
+                    guard !active.isEmpty, let result = await group.next() else { break }
+                    active.remove(result.item)
+                    if let error = result.error { review.steps[result.item].state = "failed"; failure = failure ?? error }
+                    else {
+                        if let id = result.output?.id { ids[review.steps[result.item].key] = id; review.steps[result.item].resultId = id }
+                        if let reserved = result.output?.operations { operations[review.steps[result.item].key] = reserved }
+                        if review.steps[result.item].kind != .verify && review.sentAt == nil { review.sentAt = CustomerReview.isoString(now()) }
+                        review.steps[result.item].state = "done"
+                    }
+                    // Drain admitted writes even if a sibling or persistence fails. No further work is admitted after failure.
+                    do { try persist() } catch { failure = failure ?? error }
                 }
-                try requirePublishingAccount(account, appId: appId, client: client)
-                review.steps[index].state = "running"; try persist()
-                let step = review.steps[index]
-                let output = try await performPublishingStep(step, ids: ids, operations: operations, account: account, appId: appId, client: client, grant: grant)
-                if let id = output.id { ids[step.key] = id; review.steps[index].resultId = id }
-                if let reserved = output.operations { operations[step.key] = reserved }
-                if step.kind != .verify && review.sentAt == nil { review.sentAt = CustomerReview.isoString(now()) }
-                review.steps[index].state = "done"; try persist()
+                return (review, revision, failure)
             }
+            review = outcome.0; revision = outcome.1
+            if let failure = outcome.2 { throw failure }
+            guard review.steps.allSatisfy({ $0.state == "done" }) else { throw PublishFailure.write("The remaining publishing steps have unresolved dependencies. Prepare a new review.") }
             review.state = "complete"; review.completedAt = CustomerReview.isoString(now())
         } catch {
             if let active = review.steps.firstIndex(where: { $0.state == "running" }) { review.steps[active].state = "failed" }
@@ -340,8 +327,8 @@ extension WorkspaceSession {
             review.error = Self.publishingError(error)
             if case .refused(_, let problems)? = error as? PublishFailure { review.problems = problems }
         }
-        review.pid = nil
-        try persist()
+        review.pid = nil; review.updatedAt = CustomerReview.isoString(now())
+        _ = try savePublishReview(review, expected: revision)
         return review
     }
 

@@ -32,6 +32,10 @@ struct ReviewPanel: View {
     var reveals = true
     /// Editors use one sync command followed by this concrete approval sheet.
     var syncConfirmation = false
+    var localDraft: LocalEditorDraftEditor? = nil
+    var draftPaths: [[String]]? = nil
+    @State private var draftSnapshot: LocalEditorDraftEditor.SyncSnapshot?
+    @State private var draftReviewId: String?
     @State private var syncPresented = false
     @Environment(\.pageScroll) private var pageScroll
     @Environment(\.pageReveal) private var pageReveal
@@ -72,8 +76,14 @@ struct ReviewPanel: View {
             if !syncConfirmation || review?.state != "prepared" { panel }
         }
         .onChange(of: review?.id, initial: true) {
-            if syncConfirmation, let review, review.state == "prepared" {
-                if review.steps.isEmpty { done() } else { syncPresented = true }
+            if let review, review.state == "prepared" {
+                draftSnapshot = localDraft?.syncSnapshot(paths: draftPaths); draftReviewId = review.id
+                if syncConfirmation {
+                    if review.steps.isEmpty {
+                        let snapshot = draftSnapshot
+                        Task { if let snapshot { await localDraft?.acknowledge(snapshot) }; done() }
+                    } else { syncPresented = true }
+                }
             }
         }
         .sheet(isPresented: Binding(get: { syncPresented && review?.state == "prepared" }, set: { syncPresented = $0 })) {
@@ -345,6 +355,7 @@ struct ReviewPanel: View {
         do {
             let completed = try await session.approvePublishing(account: account, appId: app.id, id: prepared.id, fingerprint: prepared.fingerprint, client: try await session.client(for: account))
             progress.cancel(); review = completed
+            if completed.state == "complete", draftReviewId == prepared.id, let draftSnapshot { await localDraft?.acknowledge(draftSnapshot) }
             statusText = review?.state == "complete" ? "Published." : ""
         } catch let failure as PublishFailure {
             progress.cancel()

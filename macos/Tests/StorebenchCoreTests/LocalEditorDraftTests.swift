@@ -67,4 +67,51 @@ import Testing
         #expect(editor.dirty(.string("Synthetic newer inputs")))
         #expect(try await session.localEditorDraft(scope)?.value == .string("Synthetic captured draft"))
     }
+    @Test func publishedDraftDoesNotReplaceLaterAppleValuesAndPreservesUnpublishedFields() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let original = JSONText.object([("name", .string("Synthetic original")), ("notes", .string("Original notes"))])
+        let changed = original.setting("name", .string("Synthetic published")).setting("notes", .string("Unpublished notes"))
+        let editor = LocalEditorDraftEditor(scope: scope, session: session)
+        _ = await editor.load(initial: original); #expect(await editor.save(changed))
+        let snapshot = try #require(editor.syncSnapshot(paths: [["name"]]))
+        await editor.acknowledge(snapshot)
+        #expect(editor.hasChangesToSync(changed))
+        let remote = original.setting("name", .string("Synthetic newer Apple value"))
+        let reopened = LocalEditorDraftEditor(scope: scope, session: session)
+        let restored = try #require(await reopened.load(initial: remote))
+        #expect(restored["name"] == remote["name"] && restored["notes"] == changed["notes"])
+        #expect(!reopened.needsComparison)
+    }
+
+    @Test func successfulSyncClearsHighlightAndAnOlderReviewCannotAcknowledgeNewerSavedEdits() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let editor = LocalEditorDraftEditor(scope: scope, session: session)
+        _ = await editor.load(initial: .string("Synthetic original"))
+        #expect(await editor.save(.string("Synthetic published")))
+        let snapshot = try #require(editor.syncSnapshot())
+        await editor.acknowledge(snapshot)
+        #expect(!editor.hasChangesToSync(.string("Synthetic published")))
+        let reopened = LocalEditorDraftEditor(scope: scope, session: session)
+        #expect(await reopened.load(initial: .string("Synthetic newer Apple value")) == nil)
+        #expect(await editor.save(.string("Synthetic newer draft")))
+        await editor.acknowledge(snapshot)
+        #expect(editor.hasChangesToSync(.string("Synthetic newer draft")))
+        #expect(try await session.localEditorDraft(scope)?.value == .string("Synthetic newer draft"))
+    }
+
+    @Test func concurrentRemoteEditsRequireComparisonAndIndependentEditsMerge() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let original = JSONText.object([("name", .string("Synthetic original")), ("notes", .string("Original notes"))])
+        let editor = LocalEditorDraftEditor(scope: scope, session: session)
+        _ = await editor.load(initial: original)
+        #expect(await editor.save(original.setting("name", .string("Synthetic local"))))
+        let conflict = LocalEditorDraftEditor(scope: scope, session: session)
+        #expect(await conflict.load(initial: original.setting("name", .string("Synthetic remote"))) == nil)
+        #expect(conflict.needsComparison && conflict.latest?.value["name"] == .string("Synthetic local"))
+        #expect(!(await conflict.save(original)))
+        let independent = LocalEditorDraftEditor(scope: scope, session: session)
+        let merged = try #require(await independent.load(initial: original.setting("notes", .string("Remote notes"))))
+        #expect(merged["name"] == .string("Synthetic local") && merged["notes"] == .string("Remote notes"))
+    }
+
 }

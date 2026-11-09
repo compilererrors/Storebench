@@ -10,7 +10,7 @@ import Observation
         public let type: String, editor: MediaLayoutEditor
         public var id: String { type }
     }
-    public let scope: MediaDraftScope, localizationId: String, platform: String
+    public let scope: MediaDraftScope, localizationId: String, platform: String, locale: String
     public let workflow: ListingSaveWorkflow
     public private(set) var screenshots: [ScreenshotLayout] = []
     public private(set) var previews: [PreviewLayout] = []
@@ -39,13 +39,14 @@ import Observation
     }
     public var needsSync: Bool {
         if dirty { return true }
-        if syncSignature == syncedSignature { return false }
+        if let syncedSignature { return syncSignature != syncedSignature }
         return screenshots.contains { $0.editor.includedOrder != (importedOrder[$0.id] ?? []) } || previews.contains { $0.editor.included > 0 }
     }
     /// A completed guarded review acknowledges only the exact media selection that was reviewed.
     public func acknowledgeSync(signature: String, review: PublishReview) async {
         guard active, review.state == "complete" || review.state == "prepared" && review.steps.isEmpty,
               review.request.accountId == scope.accountId, review.request.appId == scope.appId,
+              (review.request.listingLocale == nil || review.request.listingLocale == locale),
               review.request.revisionId == scope.revisionId, review.request.mediaStage == PublishRequest.screenshotsStage else { return }
         guard let savedReview = try? await session.publishReview(accountId: scope.accountId, appId: scope.appId, id: review.id),
               savedReview.fingerprint == review.fingerprint, savedReview.state == review.state, savedReview.request == review.request else { return }
@@ -87,7 +88,7 @@ import Observation
         return nil
     }
     public init(scope: MediaDraftScope, localization: Revision.Localization, platform: String, session: WorkspaceSession, workflow shared: ListingSaveWorkflow? = nil) {
-        self.scope = scope; localizationId = localization.id; self.platform = platform; self.session = session
+        self.scope = scope; localizationId = localization.id; self.platform = platform; locale = localization.locale; self.session = session
         importedOrder = Dictionary(localization.screenshotSets.map { ($0.id, $0.screenshots.map(\.id)) }, uniquingKeysWith: { first, _ in first })
         ownsWorkflow = shared == nil
         workflow = shared ?? ListingSaveWorkflow(identity: JSONText.array([.string(scope.accountId), .string(scope.appId), .string(scope.revisionId), .string(localization.id)]).stringify())
@@ -160,8 +161,10 @@ import Observation
         guard active, !busy, file.isFileURL, previews.contains(where: { $0.type == type }) else { return nil }
         let scope = scope, session = session, localizationId = localizationId
         let selection = PendingPreviewSelection(scope: scope, type: type, file: file, save: { [weak self] file in
+            guard let self else { throw CancellationError() }
+            try await self.saveLayoutsBeforeAdding(self.previews.map(\.editor))
             let receipt = try await session.addPreviewWithReceipt(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId, localizationId: localizationId, type: type, file: file)
-            self?.reconcile(receipt); return receipt
+            self.reconcile(receipt); return receipt
         })
         previewSelections.append(selection)
         selection.didChange = { [weak self] in self?.inputsChanged() }
@@ -259,7 +262,9 @@ import Observation
     /// A validated replacement batch needs the saved exclusions before checking the ten-image limit.
     /// Each save still compares its original baseline; a conflict keeps the batch available to retry.
     private func saveScreenshotLayoutsBeforeAdding() async throws {
-        let layouts = screenshots.map(\.editor)
+        try await saveLayoutsBeforeAdding(screenshots.map(\.editor))
+    }
+    private func saveLayoutsBeforeAdding(_ layouts: [MediaLayoutEditor]) async throws {
         guard active, !Task.isCancelled, layouts.allSatisfy({ !$0.state.blocked }) else { throw ScreenshotFailure.stale }
         for layout in layouts where layout.dirty {
             guard await layout.save(), active, !Task.isCancelled else { throw ScreenshotFailure.stale }

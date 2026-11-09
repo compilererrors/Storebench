@@ -57,6 +57,8 @@ public struct PublishRequest: Equatable, Sendable {
     /// "upload" limits a Languages & media review to uploading its screenshots and app previews to Asset Library, as App Store
     /// Connect's Upload does. The full review then adds them to App Previews and Screenshots with the text.
     public var mediaStage: String?
+    /// Limits a listing review to this language; omitted for version-wide actions.
+    public var listingLocale: String?
     public static let uploadStage = "upload"
     /// Release step 2: uploads missing files to Asset Library and adds them to App Previews and Screenshots in the saved order. No text is sent.
     public static let screenshotsStage = "screenshots"
@@ -102,6 +104,7 @@ public struct PublishRequest: Equatable, Sendable {
         if let taxCategory { fields.append(("taxCategory", taxCategory.json)) }
         if let assetLibraryChange { fields.append(("assetLibraryChange", assetLibraryChange.json)) }
         if let mediaStage { fields.append(("mediaStage", .string(mediaStage))) }
+        if let listingLocale { fields.append(("listingLocale", .string(listingLocale))) }
         return .object(fields)
     }
 
@@ -132,7 +135,7 @@ public struct PublishRequest: Equatable, Sendable {
         if case .bool(let flag)? = value["internalGroup"] { internalGroup = flag }
         groupSettingValue = value["groupSettingValue"]
         if let change = value["assetLibraryChange"] { guard let parsed = try? AssetLibrary.Change(change) else { return nil }; assetLibraryChange = parsed }
-        mediaStage = value["mediaStage"]?.text
+        mediaStage = value["mediaStage"]?.text; listingLocale = value["listingLocale"]?.text
         subscriptionPrice = value["subscriptionPrice"].flatMap(SubscriptionPriceChange.init); purchasePrice = value["purchasePrice"].flatMap(PurchasePriceChange.init)
         if let change = value["pricingSetup"] { guard let parsed = PricingSetupChange(change) else { return nil }; pricingSetup = parsed }
         if let answers = value["appPrivacy"] { guard let parsed = AppPrivacyAnswers(answers) else { return nil }; appPrivacy = parsed }
@@ -149,6 +152,7 @@ public struct PublishRequest: Equatable, Sendable {
         }
         guard assetLibraryChange == nil else { throw PublishFailure.invalid("Choose Asset Library changes in their own review.") }
         for value in [revisionId, versionId, buildId, profileId, groupId, testerId, buildUploadId, packageId, declarationId, reviewAttachmentId] { if let value, value.range(of: "^[a-zA-Z0-9_-]{1,256}$", options: .regularExpression) == nil { throw PublishFailure.invalid("Invalid publishing selection.") } }
+        if let listingLocale, scope != .metadata || !StoreLocales.codes.contains(listingLocale) || versionId == nil { throw PublishFailure.invalid("Choose one supported listing language and version.") }
         if let mediaStage, scope != .metadata || ![Self.uploadStage, Self.screenshotsStage, Self.textStage, Self.quickStage].contains(mediaStage) { throw PublishFailure.invalid("Choose a valid Asset Library upload.") }
         if mediaStage == Self.quickStage, targetMode != "release-plan" { throw PublishFailure.invalid("Quick Release saves the text of the planned version only.") }
         if reviewAttachmentId != nil && scope != .reviewInfo { throw PublishFailure.invalid("Choose App Review attachment removal in its own review.") }

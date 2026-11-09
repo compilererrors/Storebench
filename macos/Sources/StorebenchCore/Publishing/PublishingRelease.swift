@@ -111,7 +111,11 @@ extension WorkspaceSession {
         let firstVersion = !versions.contains { $0.id != remote.id && $0.attributes?["platform"]?.string == platform }
         func sendable(_ fields: [(String, String)]) -> [(String, String)] { firstVersion ? fields.filter { $0.0 != "whatsNew" } : fields }
         var addedLanguages: [String] = []
-        for locale in Self.items(local["localizations"]) {
+        if let code = request.listingLocale {
+            let available = Self.items(local["localizations"]) + Self.items(working["appInfos"]).flatMap { Self.items($0["localizations"]) }
+            guard available.contains(where: { $0["fields"]?["locale"]?.text == code }) else { throw PublishFailure.invalid("The selected language is not in this saved listing.") }
+        }
+        for locale in Self.items(local["localizations"]) where request.listingLocale == nil || locale["fields"]?["locale"]?.text == request.listingLocale {
             let code = locale["fields"]?["locale"]?.text ?? "", id = locale["id"]?.text ?? ""
             let current = remoteLocales.first { $0.attributes?["locale"]?.string == code }
             let drafted = texts?[id].map(Self.fieldPairs)
@@ -161,6 +165,7 @@ extension WorkspaceSession {
         let localInfos = Self.items(working["appInfos"]).flatMap { Self.items($0["localizations"]) }
         func onlyRecord(_ locale: JSONText) -> Bool { localInfos.filter { TextSemantics.same($0["fields"]?["locale"]?.text, locale["fields"]?["locale"]?.text) }.count == 1 }
         let infoEdits = localInfos.filter { locale in
+            guard request.listingLocale == nil || locale["fields"]?["locale"]?.text == request.listingLocale else { return false }
             let drafted = texts?[locale["id"]?.text ?? ""]
             return quick ? drafted?["subtitle"] != nil : drafted != nil || onlyRecord(locale)
         }

@@ -130,6 +130,7 @@ struct MediaListingView: View {
                 result = await model.run(prepare: {
                     var request = PublishRequest(accountId: scope.accountId, appId: scope.appId, scope: .metadata, targetMode: targetMode, revisionId: scope.revisionId, versionId: version.id)
                     request.mediaStage = PublishRequest.screenshotsStage
+                    request.listingLocale = localization.locale
                     review = try await session.prepareLanguageListingReview(account: account, request: request, client: try await session.client(for: account))
                 })
             } else { result = await model.run() }

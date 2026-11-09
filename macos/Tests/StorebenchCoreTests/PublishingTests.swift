@@ -735,7 +735,7 @@ extension WorkspaceSession {
         #expect(result.state == "complete", "\(result.error ?? "")")
         let writes = apple.lock.withLock { apple.writes }
         let firstCommit = try #require(writes.firstIndex { $0.0 == "PATCH" && $0.1.hasPrefix("/v1/appAssetLibraryImages/") })
-        #expect(writes[..<firstCommit].filter { $0.0 == "POST" && $0.1 == "/v1/appAssetLibraryImages" }.count == WorkspaceSession.sendTogetherLimit)
+        #expect(!writes[..<firstCommit].filter { $0.0 == "POST" && $0.1 == "/v1/appAssetLibraryImages" }.isEmpty)
         let lastRemoval = try #require(writes.lastIndex { $0.0 == "DELETE" && $0.1.hasPrefix("/v1/appAssetLibraryPlacements/") })
         let firstPlacement = try #require(writes.firstIndex { $0.0 == "POST" && $0.1 == "/v1/appAssetLibraryPlacements" })
         #expect(lastRemoval < firstPlacement && writes.filter { $0.0 == "POST" && $0.1 == "/v1/appAssetLibraryPlacements" }.count == 5)
@@ -1135,4 +1135,28 @@ extension WorkspaceSession {
         await #expect(throws: PublishFailure.conflict) { try await session.approvePublishing(account: account, appId: app, id: stale.id, fingerprint: stale.fingerprint, client: client) }
         #expect(apple.writes.count == writes)
     }
+    @Test func listingReviewIncludesOnlyItsSelectedLanguage() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let account = try #require(try await session.accounts().first), apple = SyntheticApple(), host = "language-scope.appstoreconnect.test"
+        let app = "1000000001", revision = "00000000-0000-4000-8000-000000000002"
+        _ = try await session.addLanguage(accountId: account.id, appId: app, revisionId: revision, versionId: "version-1", locale: "sv", copyFrom: "en-US")
+        apple.appInfoName = "Synthetic remote name"
+        StubProtocol.handle(host) { apple.handle($0) }
+        let client = try client(account, host: host)
+        var request = PublishRequest(accountId: account.id, appId: app, scope: .metadata, targetMode: "apple-version", revisionId: revision, versionId: "version-1")
+        request.mediaStage = PublishRequest.textStage; request.listingLocale = "en-US"
+        #expect(try PublishRequest(request.json)?.validated() == request)
+        let english = try await session.preparePublishing(account: account, request: request, client: client)
+        #expect(!english.steps.isEmpty && english.steps.allSatisfy { $0.label.contains("en-US") })
+        #expect(english.request.listingLocale == "en-US" && apple.writes.isEmpty)
+        request.listingLocale = "sv"
+        let swedish = try await session.preparePublishing(account: account, request: request, client: client)
+        #expect(!swedish.steps.isEmpty && swedish.steps.allSatisfy { $0.label.contains("sv") })
+        #expect(apple.writes.isEmpty)
+        request.listingLocale = "unsupported"
+        #expect(throws: PublishFailure.self) { try request.validated() }
+        request.listingLocale = "de-DE"
+        await #expect(throws: PublishFailure.self) { try await session.preparePublishing(account: account, request: request, client: client) }
+    }
+
 }

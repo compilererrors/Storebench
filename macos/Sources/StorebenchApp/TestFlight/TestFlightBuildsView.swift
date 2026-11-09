@@ -66,7 +66,7 @@ struct TestFlightBuildsView: View {
                 TestFlightEncryptionView(account: account, app: app, build: selected, session: session, busyChanged: { encryptionBusy = $0 }, didPublish: { Task { await load() } }).id(selected.id).storebenchWorking(!confirmed || loading)
                 TestFlightMetricsView(account: account, app: app, build: selected, session: session).id(selected.id)
             }
-            ReviewPanel(account: account, app: app, session: session, review: $review, done: { Task { await load() } }, busyChanged: { publishing = $0 }, syncConfirmation: true).storebenchWorking(!confirmed || loading)
+            ReviewPanel(account: account, app: app, session: session, review: $review, done: { Task { await load() } }, busyChanged: { publishing = $0 }, syncConfirmation: true, localDraft: review?.request.testflightAction == "save-build-notes" ? draft : nil, draftPaths: [["notes", review?.request.locale ?? locale]]).storebenchWorking(!confirmed || loading)
             // The builds you test come first; uploading a new package and Apple's delivery records follow.
             Card(title: "Uploaded builds", subtitle: "Processed builds delivered through Storebench, Xcode or Transporter. Apple controls beta review and approval.", help: "testflight", actions: AnyView(
                 Button(loading ? "Reading Builds…" : "Refresh Builds") { if !busy, !accessBusy, !encryptionBusy { Task { await load(fresh: true) } } }.storebenchWorking(busy || accessBusy || encryptionBusy)

@@ -88,6 +88,7 @@ public actor WorkspaceSession {
     private var accountCatalogCache: (document: EncryptedDocumentStore.Document?, value: [Account])?
     let appleReadCache = AppStoreReadCache()
     let media: EncryptedMediaStore
+    let mediaFileWork = MediaFileWork()
 
     /// The open store's key, kept for the session for encrypted snapshots.
     var databaseKey: Data

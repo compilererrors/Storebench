@@ -30,7 +30,7 @@ struct BuildEncryptionAnswerCard: View {
             VStack(alignment: .leading, spacing: 20) {
                 card.storebenchWorking(preparing || publishing || ownReview?.state == "running")
                 ReviewPanel(account: account, app: app, session: session, review: $ownReview, done: { done(ownReview) }, busyChanged: { publishing = $0; busyChanged(preparing || $0) },
-                            fix: { _ in pageScroll?("encryption-questions-\(build.id)", .top) }, syncConfirmation: true)
+                            fix: { _ in pageScroll?("encryption-questions-\(build.id)", .top) }, syncConfirmation: true, localDraft: draft)
                     .storebenchWorking(preparing)
             }
         }

@@ -45,17 +45,13 @@ Use **Release** for a new app, a new platform or a release that needs the full s
 
 App information, age rating, availability, accessibility and other required declarations are surfaced before submission. Available actions depend on your account and Apple's current state; App Privacy and Tax Category use a separate Apple ID sign-in. Each change at Apple still has its own review and approval.
 
-Use **Save Draft** to keep your work on this Mac and continue in another view. Release settings, listing text, screenshot removals and order, build choices, compliance answers and editable TestFlight forms keep local drafts. Incomplete answers can be saved locally. **Sync to Apple** saves the current draft automatically and opens a confirmation showing the exact changes. Confirm with **Sync to Apple** to send them; a separate local save is optional. Conflicting local saves require comparison before another save.
-
-Closing a window, quitting or signing out offers **Save**, **Discard** and **Cancel** when there are unsaved changes. Save keeps drafts on this Mac. Background reads do not block a clean window from closing. Quitting stops background readers and waits for already admitted writes to finish safely; it never publishes a draft as part of closing.
-
 For an existing app's next version, **Quick Release** keeps the essentials together: choose the version, create it in App Store Connect, update the text, select the build and its export compliance answer, then Add for Review. It uses the same version plan and drafts as Release. If Apple needs something outside those steps, continue in the full guide without starting over.
 
 [See Release and Quick Release](#release-and-quick-release).
 
 ## Prepare screenshots without moving between tools
 
-Add several screenshots at once from files or Asset Library in **Release → Text and Screenshots**. Remove individual screenshots, clear a display size or all screenshots in a language, and restore removed images without losing their originals. When adding replacement files, Storebench saves the screenshot layout locally first to free the selected slots. Check the language and display size, drag screenshots into the order you want, and choose **Save Draft**. **Sync to Apple** prepares a review of what will change at Apple. After approval, independent uploads, removals and additions run in bounded parallel groups. Up to ten media processing checks wait on Apple together, and progress updates as each job finishes. Each file's steps stay in order, each display group's removals finish before its additions, and its final order is sent together in one request.
+Add screenshots from files or Asset Library in **Release → Text and Screenshots**. Check the language and display size, drag screenshots into the order you want, and save the layout. Upload prepares a review of what will change at Apple.
 
 Use **Create Media** to turn your app screenshots into App Store cards with titles, text, backgrounds and reusable styles. Choose the Mac's system fonts, any installed font or a font file of your own, and edit the settings beside a preview that stays in view. A finished card set can be translated into another language on the Mac with Apple's translation, keeping the same look and screenshots. Save the finished PNGs to **Asset Library**, choose them for a release, and arrange them with your other screenshots. Asset Library keeps encrypted local originals and their history so you can reuse earlier material.
 
@@ -180,7 +176,6 @@ The runner uses synthetic data in a fresh owned workspace. Its macOS sandbox blo
 
 Storebench is source-available. Personal and other non-commercial use is free. Business use requires an active subscription for each person who uses Storebench, available through the Mac App Store, or another commercial license from the licensor. Business use ends with the subscription. See [LICENSE](LICENSE).
 
-## Screenshots
 
 ### Pricing models
 
@@ -188,9 +183,7 @@ Storebench is source-available. Personal and other non-commercial use is free. B
 
 ### ASO history
 
-![ASO timeline with indexed report measures, listing-change markers and a chart note](docs/images/aso-progress.png)
-
-![Report comparisons before and after each saved listing change](docs/images/storebench.png)
+![ASO timeline with listing-change markers colored by field, a note of your own, overlaid measures and reported values before and after an update](docs/images/aso-progress.png)
 
 ### Release and Quick Release
 
@@ -200,17 +193,17 @@ Storebench is source-available. Personal and other non-commercial use is free. B
 
 ### TestFlight builds and groups
 
-![TestFlight builds with processing and export compliance status](docs/images/testflight.png)
+![TestFlight builds with tester groups and export compliance status](docs/images/testflight.png)
 
 ### Screenshots and card creation
 
-![Screenshots grouped by display size, with ordering and inclusion controls](docs/images/screenshots.png)
+![Screenshots arranged by language and display size, with ordering and upload controls](docs/images/screenshots.png)
 
-![Create Media with an App Store card preview and layout settings](docs/images/create-media.png)
+![Create Media with an App Store card preview, editable title and local Asset Library save](docs/images/create-media.png)
 
 ### Asset Library
 
-![Screenshot originals in Asset Library](docs/images/asset-library.png)
+![Encrypted local screenshot originals and saved versions in Asset Library](docs/images/asset-library.png)
 
 ### Review before sending
 

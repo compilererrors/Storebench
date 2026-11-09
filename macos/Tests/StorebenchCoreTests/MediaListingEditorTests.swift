@@ -38,6 +38,9 @@ import UniformTypeIdentifiers
         let layout = try #require(reopened.screenshots.first?.editor), first = try #require(layout.inputs.order.first)
         #expect(layout.restoreScreenshot(first))
         #expect(reopened.needsSync)
+        for id in layout.inputs.order { _ = layout.restoreScreenshot(id) }
+        _ = await reopened.run()
+        #expect(!reopened.dirty && reopened.needsSync)
         await reopened.acknowledgeSync(signature: signature, review: review)
         #expect(reopened.needsSync)
     }
@@ -308,4 +311,21 @@ import UniformTypeIdentifiers
         model.fileDialogOpen = false; #expect(policy.decision == .ready)
         model.didChange = {}
     }
+    @Test func replacingAPreviewSavesExclusionsBeforeCheckingCapacity() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let model = try await editor(session)
+        for index in 0..<3 {
+            let file = root.appendingPathComponent("synthetic-video-\(index).mp4")
+            try syntheticMovie(seed: UInt8(index)).write(to: file)
+            let added = try #require(await model.addPreview(file, type: "IPHONE_67"))
+            #expect(!added.pending)
+        }
+        let layout = try #require(model.previews.first { $0.type == "IPHONE_67" }?.editor)
+        layout.inputs.hidden.insert(try #require(layout.inputs.order.first))
+        let replacement = root.appendingPathComponent("synthetic-replacement.mp4")
+        try syntheticMovie(seed: 9).write(to: replacement)
+        let added = try #require(await model.addPreview(replacement, type: "IPHONE_67"))
+        #expect(!added.pending && !layout.dirty && layout.included == 3 && layout.inputs.order.count == 4)
+    }
+
 }

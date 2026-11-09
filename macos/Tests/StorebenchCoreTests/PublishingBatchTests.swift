@@ -80,4 +80,18 @@ struct PublishingBatchTests {
         review.steps[2] = media("remove", method: "DELETE", path: [.string("appAssetLibraryPlacements"), .string("synthetic-old")], guardKind: "release-media-delete")
         #expect(PublishingReviewPresentation.removals(review).map(\.key) == [review.steps[2].key])
     }
+    @Test func aFinishedFileAdvancesWhileItsSlowerSiblingsKeepRunning() {
+        var steps = (0..<6).flatMap(pipeline)
+        for index in [0, 3, 6, 9] { steps[index].state = "running" }
+        steps[0].state = "done"
+        let active: Set<Int> = [3, 6, 9], ids = ["reserve-0": "synthetic-reservation"]
+        #expect(WorkspaceSession.stepsReadyTogether(steps, from: 1, ids: ids, active: active, rolling: true) == [1])
+        steps[1].state = "done"
+        #expect(WorkspaceSession.stepsReadyTogether(steps, from: 2, ids: ids, active: active, rolling: true) == [2])
+        steps[2].state = "done"
+        #expect(WorkspaceSession.stepsReadyTogether(steps, from: 3, ids: ids, active: active, rolling: true) == [12])
+        let removal = media("remove", method: "DELETE", path: [.string("appAssetLibraryPlacements"), .string("old")], guardKind: "release-media-delete")
+        #expect(WorkspaceSession.stepsReadyTogether(Array(steps.prefix(12)) + [removal], from: 3, ids: ids, active: active, rolling: true).isEmpty)
+    }
+
 }

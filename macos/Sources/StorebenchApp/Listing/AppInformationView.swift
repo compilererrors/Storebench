@@ -79,7 +79,7 @@ struct AppInformationView: View {
         if reviewPart == part, review != nil {
             ReviewPanel(account: account, app: app, session: session, review: $review, done: {
                 if review?.state == "complete" { changed(); Task { await load(fresh: true) } }
-            }, busyChanged: { publishing = $0 }, syncConfirmation: true).storebenchWorking(working)
+            }, busyChanged: { publishing = $0 }, syncConfirmation: true, localDraft: draft, draftPaths: part == .categories ? [["rights"], ["categories"]] : part == .ageRating ? [["ages"]] : [["accessibility", review?.request.accessibilityFamily ?? ""]]).storebenchWorking(working)
         }
     }
 
