@@ -95,6 +95,7 @@ struct StorebenchCollection<Item: Identifiable, Content: View>: View {
                     let visible = current.ids.contains(item.id)
                     if let activate {
                         StorebenchCollectionLink(title: title(item), subtitle: subtitle(item), action: action, icon: icon?(item), visible: visible, surface: cardSurface) { activate(item) }
+                            .storebenchControlID("collection.open." + String(describing: item.id))
                             .layoutValue(key: CollectionVisible.self, value: visible)
                     } else {
                     StorebenchCollectionCard(title: title(item), subtitle: subtitle(item), icon: icon?(item), visible: visible, surface: cardSurface,
@@ -222,7 +223,7 @@ struct StorebenchCollectionControls: View {
     }
     private var leading: some View {
         HStack(alignment: .center, spacing: StorebenchTheme.space(3)) {
-            StorebenchDisclosureButton(isExpanded: $options, compact: true) {
+            StorebenchDisclosureButton(isExpanded: $options) {
                 Text("View Options").font(.sbCallout.weight(.semibold)).foregroundStyle(StorebenchTheme.color("color-accent-muted"))
             }.fixedSize()
             Text(summary + " · \(pageSize) per page").font(.sbCaption).foregroundStyle(StorebenchTheme.muted).lineLimit(1).fixedSize()

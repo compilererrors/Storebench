@@ -4,32 +4,73 @@ import SwiftUI
 struct Card: View {
     let title: String, subtitle: String
     private let help: String
+    private let icon: String
     private let content: AnyView
     private let actions: AnyView?
+    @Environment(\.gridCardRows) private var gridCardRows
 
     /// `help` names a public help topic; its (?) sits beside the title.
-    init<Content: View>(title: String, subtitle: String, help: String = "", actions: AnyView? = nil, @ViewBuilder content: () -> Content) {
-        self.title = title; self.subtitle = subtitle; self.help = help; self.actions = actions; self.content = AnyView(content())
+    init<Content: View>(title: String, subtitle: String, help: String = "", icon: String = "", actions: AnyView? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title; self.subtitle = subtitle; self.help = help; self.icon = icon; self.actions = actions; self.content = AnyView(content())
     }
 
     /// Settings panes use the same cards as the workspace, so the whole app shares one look.
     var body: some View {
-        VStack(alignment: .leading, spacing: StorebenchTheme.measure("sectionSpacing")) {
-            if let actions { StorebenchHeader { CardHeading(title: title, subtitle: subtitle, help: help) } actions: { actions } }
-            else { CardHeading(title: title, subtitle: subtitle, help: help) }
-            VStack(alignment: .leading, spacing: StorebenchTheme.gap) { content }
+        StorebenchCardLayout(fillsRow: gridCardRows) {
+            if let actions { StorebenchHeader { CardHeading(title: title, subtitle: subtitle, help: help, icon: icon) } actions: { actions } }
+            else { CardHeading(title: title, subtitle: subtitle, help: help, icon: icon) }
+            StorebenchCardBodyLayout { content.environment(\.gridCardRows, false) }
                 .transformEnvironment(\.navigationPresentation) { $0 = $0?.scoped(title) }
         }
         .modifier(CardSurface())
     }
 }
 
+/// Grid rows offer their shared height to the body, keeping card headings at the top and commands at the bottom.
+private struct StorebenchCardLayout: StorebenchTrackLayout {
+    var fillsRow: Bool
+    func tracks(width: CGFloat, minimumHeight: CGFloat, subviews: Subviews) -> StorebenchTracks {
+        let heading = subviews.size(0, ProposedViewSize(width: width, height: nil)).height
+        let top = heading + StorebenchTheme.measure("sectionSpacing")
+        let body = subviews.size(1, ProposedViewSize(width: width, height: nil)).height
+        let height = max(top + body, minimumHeight)
+        return StorebenchTracks(frames: [CGRect(x: 0, y: 0, width: width, height: heading),
+                                         CGRect(x: 0, y: top, width: width, height: height - top)], height: height)
+    }
+}
+
+struct StorebenchCardFooterKey: LayoutValueKey { static let defaultValue = false }
+
+private struct StorebenchCardBodyLayout: StorebenchTrackLayout {
+    var fillsRow: Bool { true }
+    func tracks(width: CGFloat, minimumHeight: CGFloat, subviews: Subviews) -> StorebenchTracks {
+        let heights = subviews.map { $0.sizeThatFits(ProposedViewSize(width: width, height: nil)).height }
+        let natural = heights.reduce(0, +) + CGFloat(max(0, subviews.count - 1)) * StorebenchTheme.gap
+        let height = max(natural, minimumHeight)
+        var y: CGFloat = 0, frames: [CGRect] = []
+        var placedSpace = false
+        for (index, view) in subviews.enumerated() {
+            if view[StorebenchCardFooterKey.self], !placedSpace { y += height - natural; placedSpace = true }
+            frames.append(CGRect(x: 0, y: y, width: width, height: heights[index]))
+            y += heights[index] + StorebenchTheme.gap
+        }
+        return StorebenchTracks(frames: frames, height: height)
+    }
+}
+
 private struct CardHeading: View {
     let title: String, subtitle: String
     var help = ""
+    var icon = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .center, spacing: StorebenchTheme.space(2)) {
+                if !icon.isEmpty {
+                    StorebenchIcon(name: icon, size: 18).foregroundStyle(StorebenchTheme.color("color-accent-muted"))
+                        .frame(width: StorebenchTheme.controlHeight, height: StorebenchTheme.controlHeight)
+                        .background(StorebenchTheme.color("color-surface-accent"), in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
+                        .accessibilityHidden(true)
+                }
                 StorebenchHugWidth {
                     StorebenchTextSlot(text: title, height: StorebenchTheme.measure("sectionTitle"), font: .sbTitle3)
                 }.layoutPriority(1)

@@ -27,6 +27,7 @@ struct StorebenchDialog<Content: View, Actions: View>: View {
                 }
                 if let close {
                     Button(role: .cancel, action: close) { StorebenchIcon(name: "close") }
+                        .storebenchControlID("dialog.close")
                         .buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).storebenchWorking(busy).help("Close dialog").accessibilityLabel("Close dialog")
                 }
             }.padding(.vertical, media ? 12 : 18).padding(.horizontal, media ? 16 : 22)

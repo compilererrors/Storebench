@@ -3,10 +3,11 @@ import Foundation
 import StorebenchCore
 import SwiftUI
 
-/// macOS draws command menus and their single-arrow indicator at the shared command width.
+/// Native command menus use the same surface and geometry as the app's other commands.
 struct StorebenchMenu<Content: View>: View {
     let title, icon: String
     var stretch = false
+    @State private var hovering = false
     @ViewBuilder let content: () -> Content
 
     init(_ title: String, icon: String, stretch: Bool = false, @ViewBuilder content: @escaping () -> Content) {
@@ -14,10 +15,11 @@ struct StorebenchMenu<Content: View>: View {
     }
     var body: some View {
         Menu { content().nativeMenuContent() } label: {
-            StorebenchLabel(title, icon: icon, size: 16).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
-        }.menuStyle(.button).menuIndicator(.visible).buttonStyle(.bordered).controlSize(.large)
+            StorebenchMenuFace(title: title, icon: icon, command: true, emphasized: hovering)
+        }.menuStyle(.button).menuIndicator(.hidden).buttonStyle(StorebenchPressStyle())
             .frame(maxWidth: stretch ? StorebenchTheme.actionMaxWidth : StorebenchTheme.actionWidth)
             .frame(width: stretch ? nil : StorebenchTheme.actionWidth, height: StorebenchTheme.controlHeight)
+            .onHover { hovering = $0 }
             .help(title).accessibilityLabel(title)
     }
 }
@@ -55,16 +57,23 @@ struct StorebenchExternalMenuItem: View {
     var body: some View { Button(title) { openURL(destination) }.help(destination.host ?? title) }
 }
 
-/// The entire field is one native pop-up control. macOS owns menu text, selection and keyboard tracking.
+/// AppKit owns selection and keyboard tracking; the shared face owns the field's appearance.
 struct StorebenchNativePicker<Value: Hashable>: View {
     let title: String
     @Binding var selection: Value
     let options: [SelectionOption<Value>]
+    @State private var focused = false
+    @State private var hovered = false
     private var available: Bool { options.contains(where: \.isEnabled) && Set(options.map(\.value)).count == options.count }
+    private var selected: String { SelectionOption.title(for: selection, in: options) ?? (options.isEmpty ? "No options available" : "Choose…") }
     var body: some View {
-        NativeSelectionControl(title: title, selection: $selection, options: options)
+        ZStack {
+            StorebenchMenuFace(title: selected, focused: focused, emphasized: hovered)
+                .allowsHitTesting(false).accessibilityHidden(true)
+            NativeSelectionControl(title: title, selection: $selection, options: options, focused: $focused)
+        }
             .frame(minWidth: 0, maxWidth: .infinity).frame(height: StorebenchTheme.controlHeight)
-            .disabled(!available)
+            .disabled(!available).onHover { hovered = $0 }
     }
 }
 
@@ -72,17 +81,23 @@ private struct NativeSelectionControl<Value: Hashable>: NSViewRepresentable {
     let title: String
     @Binding var selection: Value
     let options: [SelectionOption<Value>]
+    @Binding var focused: Bool
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> SelectionPopUpButton {
         let view = SelectionPopUpButton(frame: .zero, pullsDown: false)
+        view.cell = SelectionPopUpCell(textCell: "", pullsDown: false)
         view.isTransparent = false; view.isBordered = true; view.bezelStyle = .rounded
-        view.focusRingType = .default; view.controlSize = .large
+        view.focusRingType = .none; view.controlSize = .large
         view.font = .systemFont(ofSize: StorebenchTheme.measure("inputFont"))
         view.cell?.lineBreakMode = .byTruncatingMiddle
         view.setContentHuggingPriority(.defaultLow, for: .horizontal)
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         view.target = context.coordinator; view.action = #selector(Coordinator.choose(_:))
         view.prepareForOpening = { [weak coordinator = context.coordinator] in coordinator?.refresh() }
+        view.focusChanged = { [weak coordinator = context.coordinator] value in
+            guard let coordinator, coordinator.active else { return }
+            coordinator.parent.focused = value
+        }
         context.coordinator.view = view
         return view
     }
@@ -92,7 +107,7 @@ private struct NativeSelectionControl<Value: Hashable>: NSViewRepresentable {
         context.coordinator.refresh()
     }
     static func dismantleNSView(_ view: SelectionPopUpButton, coordinator: Coordinator) {
-        coordinator.active = false; view.target = nil; view.action = nil; view.prepareForOpening = nil; view.menu?.delegate = nil
+        coordinator.active = false; view.target = nil; view.action = nil; view.prepareForOpening = nil; view.focusChanged = nil; view.menu?.delegate = nil
     }
     final class CapturedChoice: NSObject {
         let option: SelectionOption<Value>
@@ -148,9 +163,17 @@ private struct NativeSelectionControl<Value: Hashable>: NSViewRepresentable {
     }
 }
 
+/// The SwiftUI face draws the control; the native cell retains menu positioning, checked choices and tracking.
+private final class SelectionPopUpCell: NSPopUpButtonCell {
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {}
+}
+
 private final class SelectionPopUpButton: NSPopUpButton {
     var prepareForOpening: (() -> Void)?
+    var focusChanged: ((Bool) -> Void)?
     override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: StorebenchTheme.controlHeight) }
+    override func becomeFirstResponder() -> Bool { let accepted = super.becomeFirstResponder(); if accepted { focusChanged?(true) }; return accepted }
+    override func resignFirstResponder() -> Bool { let accepted = super.resignFirstResponder(); if accepted { focusChanged?(false) }; return accepted }
     override func mouseDown(with event: NSEvent) { prepareForOpening?(); super.mouseDown(with: event) }
     override func keyDown(with event: NSEvent) { prepareForOpening?(); super.keyDown(with: event) }
 }
@@ -203,16 +226,9 @@ struct StorebenchFormField<Content: View>: View {
             if settingsPresentation && !hideLabel {
                 // Settings rows: the label column takes the remaining width and the control keeps one shared column,
                 // so every control in a pane starts on the same edge. Narrow sheets stack the control below its label.
-                ViewThatFits(in: .horizontal) {
-                    HStack(alignment: .top, spacing: StorebenchTheme.space(4)) {
-                        settingsCopy.frame(minWidth: StorebenchTheme.settingsLabelWidth, idealWidth: StorebenchTheme.settingsLabelWidth, maxWidth: .infinity, alignment: .leading)
-                        input.frame(width: StorebenchTheme.settingsControlWidth, alignment: .leading).frame(minHeight: StorebenchTheme.controlHeight)
-                    }
-                    VStack(alignment: .leading, spacing: StorebenchTheme.measure("fieldGap")) {
-                        fieldLabel
-                        input.frame(maxWidth: .infinity, alignment: .leading)
-                        fieldHint
-                    }
+                StorebenchSettingsFieldLayout {
+                    settingsCopy
+                    input.frame(maxWidth: .infinity, alignment: .leading).frame(minHeight: StorebenchTheme.controlHeight)
                 }
             } else {
                 VStack(alignment: .leading, spacing: StorebenchTheme.measure("fieldGap")) {
@@ -251,7 +267,7 @@ struct StorebenchFormField<Content: View>: View {
     }
 }
 
-/// The shared Boolean choice follows its form presentation and keeps a name when the visible label is hidden.
+/// An independent Boolean option has the same native checkbox in workspace forms and Settings.
 struct StorebenchToggle: View {
     let title: String
     @Binding var isOn: Bool
@@ -259,6 +275,14 @@ struct StorebenchToggle: View {
     var body: some View {
         Toggle(title, isOn: $isOn).toggleStyle(StorebenchToggleStyle())
     }
+}
+
+/// A switch emphasizes a setting that controls a whole feature or group of settings.
+struct StorebenchSettingToggle: View {
+    let title: String
+    @Binding var isOn: Bool
+    init(_ title: String, isOn: Binding<Bool>) { self.title = title; _isOn = isOn }
+    var body: some View { Toggle(title, isOn: $isOn).toggleStyle(StorebenchToggleStyle(prominent: true)) }
 }
 
 struct StorebenchTextField: View {
@@ -328,8 +352,8 @@ struct StorebenchSearchPicker<Value: Hashable>: View {
     private var selected: String { SelectionOption.title(for: selection, in: options) ?? (options.isEmpty ? "No options available" : "Choose…") }
     var body: some View {
         StorebenchFormField(label: title, hint: hint, hideLabel: hideLabel, hideHint: hideLabel) {
-            Button { if enabled { open = true } } label: { StorebenchSearchSelectionLabel(text: selected).foregroundStyle(SelectionOption.title(for: selection, in: options) == nil ? StorebenchTheme.muted : StorebenchTheme.ink) }
-                .buttonStyle(StorebenchButtonStyle(.field, stretch: true))
+            Button { if enabled { open = true } } label: { StorebenchMenuFace(title: selected, searchable: true, emphasized: hovered) }
+                .buttonStyle(StorebenchPressStyle()).onHover { hovered = $0 }
                 .popover(isPresented: $open, arrowEdge: .bottom) {
                     StorebenchSearchList(title: title, selection: $selection, options: options) { open = false }
                 }
@@ -460,6 +484,7 @@ struct StorebenchChoicePicker<Selection: Hashable>: View {
                         .overlay(StorebenchControlOutline(border: StorebenchTheme.color(chosen ? "color-border-accent" : "color-border-control")))
                 }
             }.buttonStyle(StorebenchPressStyle()).focused($focusedIndex, equals: index)
+                .storebenchControlID("choice." + title + "." + String(index))
                 .help(title + ": " + option.1 + (hint.isEmpty ? "" : "\n" + hint) + (info.isEmpty ? "" : "\n" + info))
                 .accessibilityLabel(option.1).accessibilityAddTraits(chosen ? [.isSelected] : [])
                 .onKeyPress { press in
@@ -528,17 +553,14 @@ struct StorebenchDisclosureStyle: DisclosureGroupStyle {
 /// A disclosure header keeps its whole target usable and leaves modified arrow shortcuts to macOS.
 struct StorebenchDisclosureButton<Label: View>: View {
     @Binding var isExpanded: Bool
-    var section = false
     var card = false
-    var compact = false
     @ViewBuilder let label: () -> Label
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isEnabled) private var enabled
     @State private var hovering = false
     var body: some View {
         Group {
-            if section || card || compact { control.buttonStyle(StorebenchPressStyle()) }
-            else { control.buttonStyle(StorebenchButtonStyle(.quiet, stretch: true)) }
+            control.buttonStyle(StorebenchPressStyle())
         }
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
         .accessibilityHint(isExpanded ? "Hide details" : "Show details")
@@ -559,37 +581,26 @@ struct StorebenchDisclosureButton<Label: View>: View {
     }
     private var control: some View {
         Button { change(!isExpanded) } label: {
-            if compact {
-                HStack(spacing: 8) {
-                    StorebenchIcon(name: "next", size: 14).rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    label().font(.sbCallout.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
-                }.padding(.vertical, 4).frame(minHeight: 28, alignment: .leading)
-                    .foregroundStyle(enabled ? StorebenchTheme.ink : StorebenchTheme.subtle)
-                    .contentShape(Rectangle()).overlay(StorebenchControlOutline(border: .clear))
-            } else if card {
+            if card {
                 HStack(alignment: .top, spacing: StorebenchTheme.space(3)) {
-                    StorebenchIcon(name: "next", size: 16).rotationEffect(.degrees(isExpanded ? 90 : 0)).padding(.top, 4)
+                    StorebenchIcon(name: "disclosure", size: StorebenchTheme.measure("disclosureIcon"), filled: true).rotationEffect(.degrees(isExpanded ? 90 : 0)).padding(.top, 6)
                     label().frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 }.padding(StorebenchTheme.space(2)).frame(maxWidth: .infinity, minHeight: StorebenchTheme.controlHeight, alignment: .leading)
                     .foregroundStyle(enabled ? StorebenchTheme.ink : StorebenchTheme.subtle).contentShape(Rectangle())
                     .background(enabled && hovering ? StorebenchTheme.color("color-surface-subtle") : .clear, in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
                     .overlay(StorebenchControlOutline(border: .clear))
-            } else if section {
-                HStack(spacing: StorebenchTheme.measure("disclosureGap")) {
-                    StorebenchIcon(name: "next", size: StorebenchTheme.measure("disclosureIcon"))
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    StorebenchTextTrack(height: StorebenchTheme.measure("disclosureLabel"), centered: true) {
-                        label().font(.sbCallout.weight(.semibold))
-                    }
-                }.padding(.vertical, StorebenchTheme.measure("disclosurePaddingY")).padding(.horizontal, StorebenchTheme.measure("disclosurePaddingX"))
-                    .frame(maxWidth: .infinity, minHeight: StorebenchTheme.measure("disclosureControl"), alignment: .leading)
-                    .foregroundStyle(enabled ? StorebenchTheme.color("color-accent-muted") : StorebenchTheme.subtle).contentShape(Rectangle())
-                    .background(enabled && hovering ? StorebenchTheme.color("color-surface-subtle") : .clear, in: RoundedRectangle(cornerRadius: StorebenchTheme.measure("disclosureRadius")))
-                    .overlay(StorebenchControlOutline(border: .clear, radius: StorebenchTheme.measure("disclosureRadius")))
             } else {
-                HStack(spacing: StorebenchTheme.space(2)) {
-                    StorebenchIcon(name: "next", size: 16).rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    label().frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                StorebenchHugWidth {
+                HStack(alignment: .center, spacing: StorebenchTheme.measure("disclosureGap")) {
+                    StorebenchIcon(name: "disclosure", size: StorebenchTheme.measure("disclosureIcon"), filled: true)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    label().font(.sbCallout.weight(.medium)).fixedSize(horizontal: false, vertical: true)
+                }.padding(.vertical, StorebenchTheme.measure("disclosurePaddingY"))
+                    .padding(.trailing, StorebenchTheme.space(2))
+                    .frame(minHeight: StorebenchTheme.controlHeight, alignment: .leading)
+                    .foregroundStyle(enabled ? StorebenchTheme.ink : StorebenchTheme.subtle).contentShape(Rectangle())
+                    .background(enabled && hovering ? StorebenchTheme.color("color-surface-subtle") : .clear, in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
+                    .overlay(StorebenchControlOutline(border: .clear))
                 }
             }
         }.onHover { hovering = $0 }
@@ -603,20 +614,20 @@ private struct StorebenchDisclosureBody: View {
         surface.frame(maxWidth: .infinity, alignment: .leading)
             .onChange(of: configuration.isExpanded, initial: true) { if configuration.isExpanded { mounted = true } }
     }
-    /// Every disclosure takes the complete row, open or closed, so stacked disclosures line up.
+    /// Only the label is a disclosure target. Expanded content keeps its parent's grid and leading edge.
     private var surface: some View {
         VStack(alignment: .leading, spacing: 0) {
-            StorebenchDisclosureButton(isExpanded: Binding(get: { configuration.isExpanded }, set: { configuration.isExpanded = $0 }), section: true) { configuration.label }
+            StorebenchDisclosureButton(isExpanded: Binding(get: { configuration.isExpanded }, set: { configuration.isExpanded = $0 })) { configuration.label }
             if mounted || configuration.isExpanded {
                 VStack(alignment: .leading, spacing: StorebenchTheme.gap) { configuration.content }
+                    .disclosureGroupStyle(StorebenchDisclosureStyle())
                     .font(.sbCallout).foregroundStyle(StorebenchTheme.color("color-text-secondary"))
-                    .padding(.top, StorebenchTheme.measure("disclosurePaddingY")).padding(.horizontal, StorebenchTheme.measure("disclosurePaddingX")).padding(.bottom, StorebenchTheme.space(4))
+                    .padding(.top, StorebenchTheme.space(1)).padding(.bottom, StorebenchTheme.space(2))
+                    .padding(.leading, StorebenchTheme.measure("disclosureIcon") + StorebenchTheme.measure("disclosureGap"))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .collectionVisibility(configuration.isExpanded)
             }
-        }.padding(1).frame(maxWidth: .infinity, alignment: .leading)
-            .background(StorebenchTheme.surface, in: RoundedRectangle(cornerRadius: StorebenchTheme.measure("disclosureRadius")))
-            .overlay(RoundedRectangle(cornerRadius: StorebenchTheme.measure("disclosureRadius")).strokeBorder(StorebenchTheme.color("color-border-control")))
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -653,16 +664,14 @@ extension View {
 struct StorebenchFormSection<Content: View>: View {
     let title: String
     let help: String
+    let icon: String
+    let description: String
     @ViewBuilder let content: () -> Content
-    @Environment(\.settingsPresentation) private var settingsPresentation
-    init(_ title: String, help: String = "", @ViewBuilder content: @escaping () -> Content) { self.title = title; self.help = help; self.content = content }
+    init(_ title: String, help: String = "", icon: String = "", description: String = "", @ViewBuilder content: @escaping () -> Content) {
+        self.title = title; self.help = help; self.icon = icon; self.description = description; self.content = content
+    }
     var body: some View {
-        if settingsPresentation {
-            StorebenchCardSection(title: title, help: help) { content() }
-                .transformEnvironment(\.navigationPresentation) { $0 = $0?.scoped(title) }
-        } else {
-            Card(title: title, subtitle: "", help: help) { content() }
-        }
+        Card(title: title, subtitle: description, help: help, icon: icon) { content() }
     }
 }
 

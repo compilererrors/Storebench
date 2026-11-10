@@ -66,6 +66,7 @@ struct StorebenchReadOnlyText: View {
     let title, text: String
     var field = ""
     var height: Double? = nil
+    @Environment(\.collectionVisible) private var visible
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if !title.isEmpty { Text(title).font(.sbCaption.weight(.semibold)) }
@@ -74,6 +75,8 @@ struct StorebenchReadOnlyText: View {
                     Text(text.isEmpty ? "Empty" : text).font(.sbCallout).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true).padding(12)
                 }.scrollIndicators(.visible).accessibilityLabel(title.isEmpty ? "Saved text" : title)
+                    // Recreate the native selection layer after its zero-height hidden presentation.
+                    .id(visible)
             }
         }.frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
     }

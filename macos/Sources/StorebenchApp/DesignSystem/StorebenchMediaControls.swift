@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct StorebenchSlider: View {
@@ -50,6 +51,16 @@ struct StorebenchColorField: View {
     let supportsOpacity: Bool
     @Environment(\.isEnabled) private var enabled
     init(_ title: String, selection: Binding<Color>, supportsOpacity: Bool = false) { self.title = title; _selection = selection; self.supportsOpacity = supportsOpacity }
+    init(_ title: String, hex: Binding<String>) {
+        self.title = title; supportsOpacity = false
+        _selection = Binding(get: {
+            let rgb = UInt32(hex.wrappedValue.dropFirst(), radix: 16) ?? 0
+            return Color(.sRGB, red: Double((rgb >> 16) & 255) / 255, green: Double((rgb >> 8) & 255) / 255, blue: Double(rgb & 255) / 255, opacity: 1)
+        }, set: { value in
+            guard let rgb = NSColor(value).usingColorSpace(.sRGB) else { return }
+            hex.wrappedValue = String(format: "#%02X%02X%02X", Int((rgb.redComponent * 255).rounded()), Int((rgb.greenComponent * 255).rounded()), Int((rgb.blueComponent * 255).rounded()))
+        })
+    }
     var body: some View {
         StorebenchFormField(label: title) {
             ColorPicker(title, selection: $selection, supportsOpacity: supportsOpacity).labelsHidden()

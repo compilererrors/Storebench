@@ -21,7 +21,7 @@ struct PeriodSettings: View {
                     StorebenchLoadState(state: model.session == nil ? .failed("Open a workspace to change period preferences.", retry: { await load() })
                         : working || status.isEmpty ? .loading("Reading period preferences…") : .failed(status, retry: { await load() })) { EmptyView() }
                 } else {
-                StorebenchToggle("Remember my last period choice in each view", isOn: $remember)
+                StorebenchSettingToggle("Remember my last period choice in each view", isOn: $remember)
                 Text("Sales, Analytics, Finance and ASO views open with their remembered choices or these defaults.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
                 PeriodRangeField(choice: $range, latest: PeriodDates.text(Date()), title: "Default dates shown")
                 PeriodDaysField(title: "Default comparison window", value: $compare)

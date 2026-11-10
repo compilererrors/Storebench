@@ -1,7 +1,32 @@
 import StorebenchCore
 import SwiftUI
 
-struct StorebenchMetricGrid: Layout {
+/// Every grid owns row equalization; cards elsewhere keep their natural height.
+struct StorebenchMetricGrid<Content: View>: View {
+    var maximumColumns = 4
+    var balanced = false
+    var minimumWidth: CGFloat = 190
+    var workflow = false
+    var evenRows = false
+    var spacing: CGFloat = StorebenchTheme.gap
+    var rowSpacing: CGFloat? = nil
+    var bottomPadding: CGFloat = 0
+    var keepColumns = false
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        StorebenchGridLayout(maximumColumns: maximumColumns, balanced: balanced, minimumWidth: minimumWidth, workflow: workflow,
+                             evenRows: evenRows, spacing: spacing, rowSpacing: rowSpacing, bottomPadding: bottomPadding, keepColumns: keepColumns) {
+            content().environment(\.gridCardRows, true)
+        }
+    }
+}
+
+private struct GridCardRowsKey: EnvironmentKey { static let defaultValue = false }
+extension EnvironmentValues {
+    var gridCardRows: Bool { get { self[GridCardRowsKey.self] } set { self[GridCardRowsKey.self] = newValue } }
+}
+
+private struct StorebenchGridLayout: Layout {
     var maximumColumns = 4
     var balanced = false
     var minimumWidth: CGFloat = 190
@@ -34,17 +59,33 @@ struct StorebenchMetricGrid: Layout {
 }
 
 /// Fields in the page's shared columns. `keepColumns` keeps both columns with a single field, so it lines up with every other grid.
-struct StorebenchFormGrid: Layout {
+struct StorebenchFormGrid<Content: View>: View {
     var maximumColumns = 2
     var minimumWidth: CGFloat = StorebenchTheme.measure("formMinimumWidth")
-    var keepColumns = false
-    private var grid: StorebenchMetricGrid {
-        StorebenchMetricGrid(maximumColumns: maximumColumns, minimumWidth: minimumWidth, rowSpacing: StorebenchTheme.measure("formRowGap"), bottomPadding: StorebenchTheme.measure("formBottomPadding"), keepColumns: keepColumns)
+    var keepColumns = true
+    @ViewBuilder let content: () -> Content
+    @Environment(\.settingsPresentation) private var settingsPresentation
+    var body: some View {
+        StorebenchMetricGrid(maximumColumns: settingsPresentation ? 1 : maximumColumns, minimumWidth: minimumWidth,
+                             rowSpacing: settingsPresentation ? StorebenchTheme.gap : StorebenchTheme.measure("formRowGap"),
+                             bottomPadding: settingsPresentation ? 0 : StorebenchTheme.measure("formBottomPadding"), keepColumns: keepColumns) { content() }
     }
-    func makeCache(subviews: Subviews) -> StorebenchMetricGrid.Cache { grid.makeCache(subviews: subviews) }
-    func updateCache(_ cache: inout StorebenchMetricGrid.Cache, subviews: Subviews) { grid.updateCache(&cache, subviews: subviews) }
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout StorebenchMetricGrid.Cache) -> CGSize { grid.sizeThatFits(proposal: proposal, subviews: subviews, cache: &cache) }
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout StorebenchMetricGrid.Cache) { grid.placeSubviews(in: bounds, proposal: proposal, subviews: subviews, cache: &cache) }
+}
+
+/// Settings share one label track and one control track. Narrow panes stack both without compressing either.
+struct StorebenchSettingsFieldLayout: StorebenchTrackLayout {
+    func tracks(width: CGFloat, minimumHeight: CGFloat, subviews: Subviews) -> StorebenchTracks {
+        let gap = StorebenchTheme.gap
+        let stacked = width < StorebenchTheme.settingsLabelWidth + gap + StorebenchTheme.settingsControlWidth
+        let controlWidth = stacked ? width : StorebenchTheme.settingsControlWidth
+        let labelWidth = stacked ? width : max(0, width - gap - controlWidth)
+        let copy = subviews.size(0, ProposedViewSize(width: labelWidth, height: nil))
+        let input = subviews.size(1, ProposedViewSize(width: controlWidth, height: nil))
+        let controlHeight = max(StorebenchTheme.controlHeight, input.height)
+        return StorebenchTracks(frames: [CGRect(x: 0, y: 0, width: labelWidth, height: copy.height),
+                                         CGRect(x: stacked ? 0 : width - controlWidth, y: stacked ? copy.height + gap : 0, width: controlWidth, height: controlHeight)],
+                                height: stacked ? copy.height + gap + controlHeight : max(copy.height, controlHeight))
+    }
 }
 
 /// Commands that belong to the field beside them in a grid, such as Preview Prices next to a guide price. They keep the field's

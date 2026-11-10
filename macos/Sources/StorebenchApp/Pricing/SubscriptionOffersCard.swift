@@ -108,12 +108,9 @@ struct SubscriptionOffersCard: View {
 
     private var offerCodeFields: some View {
         StorebenchCardSection(title: "Customer Eligibility") {
-            StorebenchFlow(spacing: 16) {
+            StorebenchOptionGrid {
                 ForEach(PricingSetupChange.eligibilities, id: \.0) { code, label in
-                    HStack(spacing: 4) {
-                        StorebenchCheckbox(label, isOn: Binding(get: { eligible.contains(code) }, set: { if $0 { eligible.insert(code) } else { eligible.remove(code) } }))
-                        Text(label).font(.sbCallout)
-                    }
+                    StorebenchToggle(label, isOn: Binding(get: { eligible.contains(code) }, set: { if $0 { eligible.insert(code) } else { eligible.remove(code) } }))
                 }
             }
             StorebenchPicker("Introductory Offer Eligibility", selection: $stacking) { selectionOptions(PricingSetupChange.stackings) { SelectionOption($0.1, value: $0.0) } }

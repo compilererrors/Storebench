@@ -60,3 +60,50 @@ private struct StorebenchTabButton: View {
             .help(help).accessibilityLabel(title).accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 }
+
+struct StorebenchSidebarRow: View {
+    let title, icon: String
+    let selected, focused: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: StorebenchTheme.space(2)) {
+                StorebenchIcon(name: icon, size: 16).frame(width: 20)
+                    .foregroundStyle(selected ? StorebenchTheme.color("color-accent-muted") : StorebenchTheme.muted)
+                Text(title).font(.sbBody.weight(selected ? .semibold : .regular))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }.padding(.horizontal, StorebenchTheme.space(2)).padding(.vertical, StorebenchTheme.space(1))
+                .frame(maxWidth: .infinity, minHeight: StorebenchTheme.controlHeight, alignment: .leading)
+                .foregroundStyle(StorebenchTheme.ink)
+                .background(StorebenchTheme.color(selected ? "color-surface-accent-strong" : "color-surface-sunken").opacity(selected || hovering ? 1 : 0), in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
+                .overlay(StorebenchControlOutline(border: .clear, focusedOverride: focused))
+                .contentShape(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
+        }.buttonStyle(StorebenchPressStyle()).onHover { hovering = $0 }
+            .help("Open " + title).accessibilityLabel(title).accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+}
+
+struct StorebenchSidebarHeading: View {
+    let title: String
+    let expanded, focused: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: StorebenchTheme.space(2)) {
+                Text(title).font(.sbCaption.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                StorebenchIcon(name: "next", size: 11).rotationEffect(.degrees(expanded ? 90 : 0))
+            }.foregroundStyle(StorebenchTheme.muted)
+                .padding(.horizontal, StorebenchTheme.space(2)).padding(.vertical, StorebenchTheme.space(1))
+                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                .overlay(StorebenchControlOutline(border: .clear, focusedOverride: focused))
+                .contentShape(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
+        }.buttonStyle(StorebenchPressStyle())
+            .help((expanded ? "Collapse " : "Expand ") + title).accessibilityLabel(title)
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed").accessibilityAddTraits(.isHeader)
+    }
+}

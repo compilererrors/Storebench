@@ -32,17 +32,12 @@ struct StorebenchSidebar: View {
         return hasApp ? all : all.filter { LibraryChooser.sections.contains($0) || $0 == .sales || $0 == .history }
     }
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
+            brandHeader
             if scrolls { ScrollView { items } } else { items.frame(maxHeight: .infinity, alignment: .top) }
+            footer
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                Rectangle().fill(StorebenchTheme.color("color-nav-raised")).frame(height: 1)
-                Text("App Store Connect").font(.sbCallout).foregroundStyle(StorebenchTheme.color("color-nav-text"))
-                Text("Prepare, review and publish.").font(.sbCallout).foregroundStyle(StorebenchTheme.color("color-nav-muted"))
-            }.padding(.horizontal, 26).padding(.vertical, 20).frame(maxWidth: .infinity, alignment: .leading).background(StorebenchTheme.nav)
-        }
-        .frame(width: 248).background(StorebenchTheme.nav).accessibilityLabel("Main navigation")
+        .frame(width: 248).background(StorebenchTheme.color("color-surface-subtle")).accessibilityLabel("Main navigation")
         .onKeyPress { press in
             guard press.modifiers.isEmpty, let focused else { return .ignored }
             let workspace = [("Overview", selection == LibraryOverview.Section.overview.selection), ("Apps", selection == "library:apps")].filter { shows("workspace", active: $0.1) }.map(\.0)
@@ -53,12 +48,28 @@ struct StorebenchSidebar: View {
             self.focused = KeyboardNavigation.adjacent(ids, current: focused, direction: direction); return .handled
         }
     }
+    private var brandHeader: some View {
+        Button { selectLibrary(LibraryOverview.Section.overview.selection) } label: {
+            HStack(spacing: StorebenchTheme.space(2)) {
+                StorebenchAppIcon(size: 26)
+                Text("Storebench").font(.sbHeadline).foregroundStyle(StorebenchTheme.ink)
+                Spacer(minLength: 0)
+            }.padding(.horizontal, StorebenchTheme.space(5)).padding(.vertical, StorebenchTheme.space(3))
+                .contentShape(Rectangle())
+        }.buttonStyle(StorebenchPressStyle()).help("Open Overview").accessibilityLabel("Storebench Overview")
+            .storebenchControlID("sidebar.header")
+    }
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: StorebenchTheme.space(3)) {
+            StorebenchDivider()
+            Text("App Store Connect").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
+                .help("Changes are prepared locally and sent to App Store Connect only after you approve a Publish review.")
+        }.padding(.horizontal, StorebenchTheme.space(5)).padding(.bottom, StorebenchTheme.space(3))
+            .frame(maxWidth: .infinity, alignment: .leading).storebenchControlID("sidebar.footer")
+    }
     private var items: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button { selectLibrary(LibraryOverview.Section.overview.selection) } label: {
-                StorebenchBrand(onDark: true).padding(.horizontal, 10).padding(.bottom, 18).frame(maxWidth: .infinity, alignment: .leading)
-            }.buttonStyle(StorebenchPressStyle()).accessibilityLabel("Storebench overview")
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: StorebenchTheme.space(3)) {
             group("Workspace", key: "workspace") {
                 let overview = selection == LibraryOverview.Section.overview.selection, apps = selection == "library:apps"
                 if shows("workspace", active: overview) { item("Overview", icon: "overview", active: overview) { selectLibrary(LibraryOverview.Section.overview.selection) } }
@@ -80,7 +91,7 @@ struct StorebenchSidebar: View {
                 }
             }
             }
-        }.padding(.top, StorebenchTheme.space(4)).padding(.horizontal, 16)
+        }.padding(.vertical, StorebenchTheme.space(2)).padding(.horizontal, StorebenchTheme.space(3))
     }
     private func librarySelection(_ section: AppNavigation.Section) -> String {
         if section == .sales { return "library:sales" }
@@ -91,16 +102,8 @@ struct StorebenchSidebar: View {
     private func group<Content: View>(_ title: String, key: String, @ViewBuilder content: () -> Content) -> some View {
         let open = !collapsed.contains(key), id = "group:" + key
         return VStack(alignment: .leading, spacing: 0) {
-            Button { toggle(key) } label: {
-                HStack(spacing: 6) {
-                    Text(title.uppercased()).font(.sbCaption2.bold()).tracking(1.1)
-                    Spacer(minLength: 0)
-                    StorebenchIcon(name: "next", size: 12).rotationEffect(.degrees(open ? 90 : 0))
-                }.foregroundStyle(StorebenchTheme.color("color-nav-muted"))
-                    .padding(.horizontal, 13).padding(.vertical, 4).frame(minHeight: 24).frame(maxWidth: .infinity, alignment: .leading)
-                    .overlay(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius).strokeBorder(focused == id ? StorebenchTheme.color("color-nav-focus") : .clear, lineWidth: 2))
-                    .contentShape(Rectangle())
-            }.buttonStyle(StorebenchPressStyle()).focusable(interactions: .activate).focusEffectDisabled().focused($focused, equals: id)
+            StorebenchSidebarHeading(title: title, expanded: open, focused: focused == id) { toggle(key) }
+                .focusable(interactions: .activate).focusEffectDisabled().focused($focused, equals: id)
                 .onKeyPress { press in
                     guard focused == id, press.modifiers.isEmpty else { return .ignored }
                     switch press.key {
@@ -111,30 +114,17 @@ struct StorebenchSidebar: View {
                     }
                     return .handled
                 }
-                .help(open ? "Collapse \(title)" : "Expand \(title)").accessibilityLabel(title)
-                .accessibilityValue(open ? "Expanded" : "Collapsed").accessibilityAddTraits(.isHeader)
-                .padding(.bottom, 4)
-            VStack(alignment: .leading, spacing: 3) { content() }
+                .padding(.bottom, StorebenchTheme.space(1))
+            VStack(alignment: .leading, spacing: 2) { content() }
         }
     }
     private func item(_ title: String, icon: String, active: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                StorebenchIcon(name: icon)
-                Text(title).font(.sbBody.weight(active ? .semibold : .regular)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
-            }.padding(.horizontal, 13).padding(.vertical, 6).frame(minHeight: 44).frame(maxWidth: .infinity, alignment: .leading)
-                .foregroundStyle(StorebenchTheme.color(active ? "color-nav-selected-text" : "color-nav-text"))
-                .background(active ? StorebenchTheme.color("color-nav-active") : .clear, in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
-                .overlay(alignment: .leading) { if active { Capsule().fill(StorebenchTheme.color("color-nav-focus")).frame(width: 3, height: 20).padding(.leading, 4) } }
-                .overlay(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius).strokeBorder(focused == title ? StorebenchTheme.color("color-nav-focus") : .clear, lineWidth: 2))
-                .contentShape(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
-        }.buttonStyle(StorebenchPressStyle()).focusable(interactions: .activate).focusEffectDisabled().focused($focused, equals: title)
+        StorebenchSidebarRow(title: title, icon: icon, selected: active, focused: focused == title, action: action)
+            .focusable(interactions: .activate).focusEffectDisabled().focused($focused, equals: title)
             .onKeyPress { press in
                 guard focused == title, press.modifiers.isEmpty, press.key == .return || press.key == .space else { return .ignored }
                 action(); return .handled
             }
-            .help(title).accessibilityLabel(title).accessibilityAddTraits(active ? [.isSelected] : [])
     }
 }
 

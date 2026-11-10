@@ -147,6 +147,10 @@ import Testing
 
     @Test func cardsAndCollections() {
         capture("card", Card(title: "Reports", subtitle: "Synthetic", help: "sales") { Text("Content") })
+        capture("settings service section", StorebenchFormSection("Synthetic Service", icon: "sparkles", description: "Synthetic explanation of the service and when it is used.") {
+            StorebenchTextField("Synthetic Model", text: .constant("Synthetic Choice"))
+            StorebenchFormFooter { Button("Save Selection") {} }
+        }.environment(\.settingsPresentation, true))
         struct Item: Identifiable { let id: Int }
         capture("empty collection", StorebenchCollection(items: [Item](), title: { "Item \($0.id)" }, maximumColumns: 4, empty: "No synthetic items yet. Add one to see it here.") { _ in EmptyView() }, empty: true)
         capture("collection", StorebenchCollection(items: (0..<9).map(Item.init), title: { "Item \($0.id)" }, maximumColumns: 4, minimumWidth: 120, empty: "No synthetic items yet.") { Text("Item \($0.id)") })

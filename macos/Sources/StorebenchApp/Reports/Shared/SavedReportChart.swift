@@ -56,14 +56,14 @@ struct SavedReportChart: View {
             // Bars keep every report period; lines and areas may thin a long series to its drawing envelope.
             let drawn = style == .bars ? layout.runs : prepared.drawing
             StorebenchChoicePicker("Chart type", selection: $styleName, options: SavedTimeSeries.Style.allCases.map { ($0.rawValue, $0.title) }).storebenchFormColumn()
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180))], alignment: .leading) {
+            StorebenchMetricGrid(maximumColumns: 4, minimumWidth: 180) {
                 ForEach(Array(layout.series.enumerated()), id: \.element.key) { index, item in
                     HStack(spacing: 7) { Circle().fill(colors[index]).frame(width: 8, height: 8).accessibilityHidden(true); Text(item.label).foregroundStyle(StorebenchTheme.ink) }.font(.sbCaption)
                 }
             }
             let shownKinds = markerKinds.filter { kind in layout.markers.contains { $0.kind == kind.kind } }
             if !shownKinds.isEmpty {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 180))], alignment: .leading) {
+                StorebenchMetricGrid(maximumColumns: 4, minimumWidth: 180) {
                     ForEach(shownKinds, id: \.kind) { kind in
                         HStack(spacing: 7) { Rectangle().fill(kind.color).frame(width: 3, height: 12).accessibilityHidden(true); Text(kind.title).foregroundStyle(StorebenchTheme.ink) }.font(.sbCaption)
                     }

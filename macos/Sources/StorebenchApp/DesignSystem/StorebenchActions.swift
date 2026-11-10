@@ -27,6 +27,7 @@ struct StorebenchFormFooter<Content: View>: View {
             StorebenchDivider()
             StorebenchActionGroup(alignment: .trailing) { content() }
         }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+            .layoutValue(key: StorebenchCardFooterKey.self, value: true)
     }
 }
 

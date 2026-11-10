@@ -75,7 +75,7 @@ struct AsoProgressView: View {
         ScrollViewReader { reader in
             VStack(alignment: .leading, spacing: 20) {
                 Card(title: "Version comparison", subtitle: "Only released versions are included. Dates mark when Storebench observed the released listing, not its creation or exact release. Each listing change compared with the \(days) days before it. Full windows compare totals; gaps compare the average per reported day. Missing reports are not zero.", help: "aso-progress") {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 230))], alignment: .leading, spacing: 12) {
+                    StorebenchFormGrid(maximumColumns: 3) {
                         StorebenchPicker("Language", selection: $locale) { SelectionOption("All languages", value: ""); selectionOptions(locales) { SelectionOption(StoreLocales.name($0), value: $0) } }
                         StorebenchPicker("Listing fields", selection: $fieldFilter) { selectionOptions(AsoProgress.FieldFilter.allCases) { SelectionOption($0.title, value: $0) } }
                         PeriodDaysField(title: "Compare days before and after", value: choices.daysBinding(.asoCompare, session: session))
@@ -95,7 +95,7 @@ struct AsoProgressView: View {
                 }
                 Card(title: indexed ? "Measures indexed to their average (100)" : "Measures per \(granularity.rawValue)", subtitle: indexed ? "Each line is scaled so its average is 100. Dashed lines mark listing changes." : "Weeks and months show the average per reported day. Dashed lines mark listing changes. Use Indexed to compare measures of different size.") {
                     ChartMeasureToggles(options: AsoProgress.metrics.filter { available.contains($0.key) }.map { (key: $0.key, title: $0.title) }, selection: $measures)
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 230))], alignment: .leading) {
+                    StorebenchFormGrid {
                         StorebenchPicker("Group by", selection: $granularity) { selectionOptions(AsoProgress.Granularity.allCases) { SelectionOption($0.rawValue.capitalized, value: $0) } }
                         ChartScalePicker(indexed: $indexed)
                     }
@@ -170,7 +170,7 @@ struct AsoProgressView: View {
                     if !metrics.isEmpty {
                         Text(group.title).font(.sbSubheadline.bold())
                         Text(group.description).font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 190))], alignment: .leading, spacing: 12) {
+                        StorebenchMetricGrid {
                             ForEach(metrics, id: \.self) { metric in if let value = impact(metric, row) { delta(value, title: title(metric)) } }
                             ForEach(AsoProgress.rates.filter { AsoProgress.rateGroup($0.key) == group.key && available.contains($0.numerator) && available.contains($0.denominator) }, id: \.key) { rate in
                                 let value = reports.rate(rate.numerator, rate.denominator, date: row.date, days: days)

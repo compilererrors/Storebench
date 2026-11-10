@@ -35,18 +35,24 @@ struct TextReuseView: View {
                         StorebenchPicker("Copy saved text from", selection: $source) { selectionOptions(version.localizations) { SelectionOption(StoreLocales.name($0.locale), value: $0.locale) } }
                         StorebenchPicker("Copy mode", selection: $mode) { SelectionOption("Fill empty fields only", value: TextReuse.Mode.empty); SelectionOption("Replace selected fields", value: TextReuse.Mode.replace) }
                     }
-                    Text("Destination languages").font(.sbHeadline)
-                    StorebenchActionGroup {
-                        Button("Select All") { targets = Set(version.localizations.map(\.locale).filter { $0 != source }) }
-                        if !targets.isEmpty { Button("Clear") { targets = [] } }
-                    }
-                    ScrollView { VStack(alignment: .leading) {
-                        StorebenchCollection(items: version.localizations.filter { $0.locale != source }, title: { StoreLocales.name($0.locale) }, subtitle: { $0.locale }, empty: "No other languages in this version. Add a language in Localizations first.") { locale in
-                            StorebenchToggle(StoreLocales.name(locale.locale), isOn: choice(locale.locale, in: $targets))
+                    StorebenchOptionGroup(title: "Destination Languages", description: "Choose the languages that receive the saved text.") {
+                        StorebenchActionGroup {
+                            Button("Select All") { targets = Set(version.localizations.map(\.locale).filter { $0 != source }) }
+                            if !targets.isEmpty { Button("Clear") { targets = [] } }
                         }
-                    }.frame(maxWidth: .infinity, alignment: .leading) }.frame(height: min(160, CGFloat(max(1, version.localizations.count - 1)) * 28))
-                    Text("Text fields").font(.sbHeadline)
-                    ForEach(TextDrafts.versionFields, id: \.self) { field in StorebenchToggle(TextDrafts.labels[field] ?? field, isOn: choice(field, in: $fields)) }
+                        ScrollView {
+                            StorebenchOptionGrid(maximumColumns: 1) {
+                                ForEach(version.localizations.filter { $0.locale != source }) { locale in
+                                    StorebenchToggle(StoreLocales.name(locale.locale), isOn: choice(locale.locale, in: $targets))
+                                }
+                            }
+                        }.frame(height: min(160, CGFloat(max(1, version.localizations.count - 1)) * 28 - 4))
+                    }
+                    StorebenchOptionGroup(title: "Text Fields", description: "Choose the fields to copy into the selected languages.") {
+                        StorebenchOptionGrid {
+                            ForEach(TextDrafts.versionFields, id: \.self) { field in StorebenchToggle(TextDrafts.labels[field] ?? field, isOn: choice(field, in: $fields)) }
+                        }
+                    }
                     if !targets.isEmpty && !fields.isEmpty { Button(working ? "Checking…" : "Preview Text Reuse") { operation = Task { await run(apply: false) } } }
                 }.storebenchWorking(working)
                 }

@@ -3104,11 +3104,17 @@
     "metricValueFont": 28,
     "disclosureControl": 32,
     "disclosureLabel": 24,
-    "disclosureIcon": 16,
+    "disclosureIcon": 10,
     "disclosureRadius": 8,
     "disclosurePaddingY": 4,
     "disclosurePaddingX": 16,
-    "disclosureGap": 8,
+    "disclosureGap": 6,
+    "optionHeight": 24,
+    "optionRowGap": 4,
+    "optionColumnGap": 16,
+    "optionMinimumWidth": 240,
+    "optionGroupWidth": 720,
+    "optionGroupPadding": 12,
     "tableLine": 18,
     "tablePadding": 4,
     "tableRow": 53,
@@ -3883,6 +3889,12 @@
         "attributes": {
           "d": "m15 18-6-6 6-6"
         }
+      }
+    ],
+    "disclosure": [
+      {
+        "tag": "polygon",
+        "attributes": { "points": "5 2 21 12 5 22" }
       }
     ],
     "next": [

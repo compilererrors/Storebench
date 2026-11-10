@@ -10,6 +10,7 @@ public enum AIProvider: String, CaseIterable, Codable, Sendable {
 public enum AIFailure: String, Error, Codable, Sendable {
     case configuration, credentials, changed, quota, unavailable, response, tooLarge, localUnavailable, languageUnsupported, cancelled
     case signIn, identity, subscriptionLimit, subscriptionUnavailable, subscriptionPermission
+    case localBusy, localRejected, localFormatUnsupported, localFailed, localImageText
     public var message: String {
         switch self {
         case .configuration: "Choose an AI service and model in Settings → AI."
@@ -21,6 +22,11 @@ public enum AIFailure: String, Error, Codable, Sendable {
         case .tooLarge: "This AI request is too large. Choose fewer screenshots or shorter text."
         case .languageUnsupported: "The selected local model does not support this language. Choose another AI service."
         case .localUnavailable: "Apple Intelligence is unavailable. Enable it in System Settings on a compatible Mac, or choose an API connection."
+        case .localBusy: "Apple Intelligence is busy or temporarily limited. Wait a moment, then try again. Your saved material is unchanged."
+        case .localRejected: "Apple Intelligence declined this request. Adjust the brief or selected screenshots, then try again. Your saved material is unchanged."
+        case .localFormatUnsupported: "Apple Intelligence could not use the requested format on this Mac. Check for macOS updates or choose another AI service. Your saved material is unchanged."
+        case .localFailed: "Apple Intelligence could not finish this request. Try again or choose another AI service. Your saved material is unchanged."
+        case .localImageText: "Text could not be read from a selected screenshot for Apple Intelligence. Try another screenshot or AI service. Your originals and saved draft are unchanged."
         case .cancelled: "The AI job was paused. Saved results are kept."
         case .signIn: "Sign in with ChatGPT in Settings → AI to continue. Saved results are kept."
         case .identity: "The ChatGPT sign-in could not be verified. Start a new sign-in; the previous connection was kept."
@@ -56,11 +62,18 @@ public struct AIRequest: Codable, Sendable, Equatable {
     public let images: [AIImage]
     public let translationFields: [String]?
     public let language: String?
-    public init(purpose: String, instructions: String, input: String, schema: JSONText, images: [AIImage] = [], translationFields: [String]? = nil, language: String? = nil) {
+    public let cardDraft: JSONText?, variationID: String?
+    public init(purpose: String, instructions: String, input: String, schema: JSONText, images: [AIImage] = [], translationFields: [String]? = nil, language: String? = nil, cardDraft: JSONText? = nil, variationID: String? = nil) {
         self.purpose = purpose; self.instructions = instructions; self.input = input; self.schema = schema; self.images = images; self.translationFields = translationFields; self.language = language
+        self.cardDraft = cardDraft; self.variationID = variationID
     }
     func validate() throws {
-        guard instructions.utf8.count + input.utf8.count <= 200_000, images.count <= 10,
+        if purpose == "cards" {
+            _ = try AICards.customInstructions(in: cardDraft ?? .null)
+            _ = try AICards.generationGuidance(in: cardDraft ?? .null, count: images.count)
+        }
+        guard (cardDraft?.data.count ?? 0) <= 1_000_000, variationID == nil || UUID(uuidString: variationID!) != nil,
+              instructions.utf8.count + input.utf8.count <= 200_000, images.count <= 10,
               images.allSatisfy({ ["image/jpeg", "image/png"].contains($0.mime) && !$0.data.isEmpty && $0.data.count <= 2_000_000 }),
               images.reduce(0, { $0 + $1.data.count }) <= 10_000_000 else { throw AIFailure.tooLarge }
     }
@@ -97,7 +110,14 @@ public struct AIRequest: Codable, Sendable, Equatable {
 }
 
 public struct AIJob: Codable, Sendable, Identifiable {
-    public enum State: String, Codable, Sendable { case queued, running, complete, paused, failed }
+    public enum State: String, Codable, Sendable {
+        case queued, running, complete, paused, failed
+        public var title: String { switch self { case .queued: "Queued"; case .running: "Running"; case .complete: "Completed"; case .paused: "Paused"; case .failed: "Failed" } }
+    }
     public let id: String, accountId: String, appId: String, connection: AIConnection, request: AIRequest, createdAt: Date
     public var state: State, result: JSONText?, failure: AIFailure?
+    public var attemptID: String? = nil
+    public var execution: AIExecutionSnapshot? = nil
+    public var startedAt: Date? = nil
+    public var finishedAt: Date? = nil
 }

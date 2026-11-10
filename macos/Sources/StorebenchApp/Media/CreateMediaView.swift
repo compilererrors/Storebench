@@ -11,6 +11,7 @@ struct CreateMediaView: View {
     var availableTranslationTargets: @MainActor (String, [String]) async -> [String] = ListingTranslation.translatableTargets
     @State private var creationMode: String?
     @State private var aiComposerId = UUID()
+    @State private var aiInitialSource: JSONText?
     @State private var saved: [WorkspaceSession.SavedMediaCardSet] = []
     @State private var history: MediaCardHistory?
     @State private var savedSet: MediaCardSet?
@@ -53,34 +54,36 @@ struct CreateMediaView: View {
     private var busy: Bool { working || loading }
 
     var body: some View {
+        ScrollViewReader { scroll in
         VStack(alignment: .leading, spacing: 20) {
             Card(title: "Create Media", subtitle: "Choose how to start your App Store cards.") {
                 StorebenchActionGroup {
                     Button("Create Cards") { chooseMode("manual") }
-                    Button("AI Generate…") { chooseMode("ai") }
+                    Button("Create AI Cards") { chooseMode("ai") }
                         .storebenchControlID("media.ai")
                         .help("Let AI propose editable cards from screenshots and a short brief")
                 }
             }
             if creationMode == "ai" {
                 let composerId = aiComposerId
-                AICardsCreator(account: account, app: app, session: session, selectScreenshots: selectAIScreenshots) { value in
+                AICardsCreator(account: account, app: app, session: session, selectScreenshots: selectAIScreenshots, initialSource: aiInitialSource) { value in
                     saved.removeAll { $0.set.id == value.set.id }; saved.insert(value, at: 0)
                     guard creationMode == "ai", aiComposerId == composerId else { return }
                     show(value); creationMode = "manual"
-                }
+                }.id("ai-composer")
             }
             if creationMode == "manual" {
             if !loading { stepsCard }
             setsCard
             if let set = opened, let current, let index {
                 cardsCard(set)
-                editorCard(set, card: current, index: index)
+                editorCard(set, card: current, index: index).id("card-editor")
                 saveCard(set)
                 translateCard(set)
             }
             }
         }
+        .onChange(of: creationMode) { scroll.scrollTo(creationMode == "ai" ? "ai-composer" : "card-editor", anchor: .top) }
         .task { await load() }
         .task(id: textLanguage) {
             let source = textLanguage, found = await availableTranslationTargets(source, StoreLocales.codes)
@@ -102,11 +105,12 @@ struct CreateMediaView: View {
                                         fontLoaded: current.map { font($0) != nil } ?? false)) { await renderPreview() }
         .onDisappear { mediaRead?.cancel(); mediaReadId = UUID() }
         .trackUnsavedChanges(dirty, busy: busy || saving, onSave: { await save() })
+        }
     }
 
-    private func chooseMode(_ mode: String) {
+    private func chooseMode(_ mode: String, source: JSONText? = nil) {
         guard creationMode != mode else { return }
-        let choose: @MainActor @Sendable () -> Void = { creationMode = mode; if mode == "ai" { aiComposerId = UUID() } }
+        let choose: @MainActor @Sendable () -> Void = { creationMode = mode; if mode == "ai" { aiInitialSource = source; aiComposerId = UUID() } }
         if let protection { protection.requestLeaving(choose) }
         else { Task { if dirty { guard await save() else { return } }; choose() } }
     }
@@ -217,13 +221,30 @@ struct CreateMediaView: View {
         return Card(title: "Card \(index + 1)", subtitle: "Changes appear in the preview and are saved on this Mac. Undo and Redo cover every change in this set. Scroll the settings to keep the preview in view.") {
             StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 320) {
                 VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
-                    canvas(set, card: card).padding(16).frame(height: height - 96 - StorebenchTheme.gap * 2)
+                    canvas(set, card: card).aspectRatio(Double(set.width) / Double(set.height), contentMode: .fit).frame(maxHeight: height - 220).padding(8)
                         .background(StorebenchTheme.nav, in: RoundedRectangle(cornerRadius: 12))
+                    StorebenchActionGroup {
+                        Button("Re-create Card") { recreate(set, card: card) }.storebenchControlID("media.recreate-card")
+                            .help("Open this card's brief and screenshot in Create AI Cards. Adjust the directions, then generate a new variant; the current card stays saved.")
+                        Button("Create AI Cards") { chooseMode("ai") }.storebenchControlID("media.return-ai")
+                            .help("Return to the saved AI composer to create another card set")
+                    }.storebenchWorking(busy || saving)
                     StorebenchTextSlot(text: previewIssue, height: 48, font: .sbCallout, color: StorebenchTheme.color("color-danger"), live: true)
                     StorebenchTextSlot(text: "Drag the screenshot to move the crop after zooming in. Arrow keys move it, + and − zoom, Delete removes the card.", height: 48, font: .sbCaption, color: StorebenchTheme.muted)
                 }
                 ScrollView(.vertical) { controls(card).padding(.trailing, StorebenchTheme.space(3)) }.frame(height: height)
             }
+        }
+    }
+
+    private func recreate(_ set: MediaCardSet, card: MediaCard) {
+        guard !busy, !saving, let session else { return }
+        Task {
+            do {
+                let source = try await session.aiCardSource(accountId: account.id, appId: app.id, set: set, cardID: card.id)
+                guard opened == set else { return }
+                chooseMode("ai", source: source)
+            } catch { status = AIFailure.message(error); statusError = true }
         }
     }
 
@@ -301,7 +322,7 @@ struct CreateMediaView: View {
     }
 
     private func textControls(_ card: MediaCard) -> some View {
-        DisclosureGroup("Text") {
+        DisclosureGroup("Text and Text Colors") {
             VStack(alignment: .leading, spacing: 10) {
                 StorebenchTextField("Title · \(card.title.utf16.count)/\(MediaCards.titleLimit)", text: text(\.title, MediaCards.titleLimit, lines: false), placeholder: "Plan your week in seconds")
                 StorebenchTextField("Subtitle · \(card.subtitle.utf16.count)/\(MediaCards.subtitleLimit)", text: text(\.subtitle, MediaCards.subtitleLimit, lines: false))
@@ -351,7 +372,7 @@ struct CreateMediaView: View {
     }
 
     private func backgroundControls(_ card: MediaCard) -> some View {
-        DisclosureGroup("Background") {
+        DisclosureGroup("Background and Colors") {
             VStack(alignment: .leading, spacing: 10) {
                 StorebenchChoicePicker("Fill", selection: style(\.fill, "fill"), options: MediaCardStyle.Fill.allCases.map { ($0, $0.label) })
                 StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 140) {

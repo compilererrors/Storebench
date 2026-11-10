@@ -2,10 +2,11 @@ import AppKit
 import StorebenchCore
 import SwiftUI
 
-/// Draws the registered 24-unit SVG geometry with a 1.8-unit round stroke.
+/// Draws registered 24-unit SVG geometry, with a round stroke or a filled closed shape.
 struct StorebenchIcon: View {
     let name: String
     var size: CGFloat = 18
+    var filled = false
     private var paths: [Path] {
         guard let primitives = StorebenchDesign.shared.icons[name] else { preconditionFailure("Shared icon is missing.") }
         return primitives.map { primitive in
@@ -16,8 +17,9 @@ struct StorebenchIcon: View {
     var body: some View {
         ZStack {
             ForEach(Array(paths.enumerated()), id: \.offset) { _, path in
-                path.applying(CGAffineTransform(scaleX: size / 24, y: size / 24))
-                    .stroke(style: StrokeStyle(lineWidth: 1.8 * size / 24, lineCap: .round, lineJoin: .round))
+                let shape = path.applying(CGAffineTransform(scaleX: size / 24, y: size / 24))
+                if filled { shape.fill() }
+                else { shape.stroke(style: StrokeStyle(lineWidth: 1.8 * size / 24, lineCap: .round, lineJoin: .round)) }
             }
         }.frame(width: size, height: size).fixedSize().accessibilityHidden(true)
     }

@@ -69,6 +69,24 @@ import Testing
         #expect(squeezed < 1 && roomy == 1)
     }
 
+    @Test func aboveAndBelowTextAlignWithTheScreenshotAndStayCloseToIt() throws {
+        for layout in [MediaCard.Layout.textAbove, .textBelow] {
+            var value = card(layout, shot: (3200, 2014)); value.style.alignment = .leading
+            value.style.screenshotWidth = 0.6; value.style.textSpace = 0.4
+            let placement = MediaCards.placement(value, width: 2880, height: 1800)
+            let text = try #require(placement.text), screen = try #require(placement.screen)
+            let lines = try MediaCards.lines(value, area: text, shortSide: 1800, measure: MediaCardRenderer.measure(value.style))
+            let first = try #require(lines.first), last = try #require(lines.last)
+            #expect(abs(first.left - screen.left) < 0.5 && abs(text.width - screen.width) < 0.5)
+            if layout == .textAbove {
+                let bottom = last.top + last.size * 1.28
+                #expect(screen.top - bottom >= 50 && screen.top - bottom <= 60)
+            } else {
+                #expect(first.top - (screen.top + screen.height) >= 50 && first.top - (screen.top + screen.height) <= 60)
+            }
+        }
+    }
+
     @Test func typefacesUseTheMacsDesignsAnInstalledFamilyOrAFontFile() throws {
         func name(_ style: MediaCardStyle, file: Data? = nil) -> String { CTFontCopyPostScriptName(MediaCardRenderer.font(style, .body, 40, file: file)) as String }
         var style = MediaCardStyle()

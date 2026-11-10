@@ -58,12 +58,20 @@ extension WorkspaceSession {
     private func executeAIJob(id: String, accountId: String, appId: String, connection: AIConnection, selected: AIConnection, request: AIRequest) async throws -> JSONText {
         if connection.provider != .apple { guard try aiConnection(connection.provider) == connection else { throw AIFailure.changed } }
         let directory = try storeAccess { $0.directory }, name = "ai_job_" + JSONText.string(id).sha256
-        guard let release = try JobLock.acquire(directory: directory, name: name, id: UUID().uuidString.lowercased()) else { throw AIFailure.unavailable }
+        guard let release = try JobLock.acquire(directory: directory, name: name, id: UUID().uuidString.lowercased()) else { throw connection.provider == .apple ? AIFailure.localBusy : .unavailable }
         defer { release() }
         if let saved = try storeAccess({ try $0.document(namespace: "ai_jobs", key: id) }),
            let job = try? JSONDecoder().decode(AIJob.self, from: saved.payload), job.state == .complete, let result = job.result { return result }
         var job = AIJob(id: id, accountId: accountId, appId: appId, connection: selected, request: request, createdAt: Date(), state: .queued, result: nil, failure: nil)
-        func save() throws { try storeAccess { try $0.transaction { _ in [.put(namespace: "ai_jobs", key: id, json: try JSONEncoder().encode(job))] } } }
+        job.attemptID = accountId + ":" + appId + ":" + UUID().uuidString.lowercased()
+        job.execution = connection.provider == .apple ? AppleLocalAI.executionSnapshot(request) : .init(instructions: request.instructions, input: request.input, format: request.schema.stringify())
+        func save() throws { try saveAIJob(job) }
+        func finish() throws {
+            job.startedAt = try storeAccess { store in
+                try store.document(namespace: "ai_jobs", key: id).map { try JSONDecoder().decode(AIJob.self, from: $0.payload).startedAt } ?? nil
+            }
+            job.finishedAt = Date()
+        }
         try save()
         do {
             let configuration = aiTestConfiguration
@@ -78,19 +86,33 @@ extension WorkspaceSession {
             try Task.checkCancellation()
             if request.purpose == "translation", case .array(let source) = try JSONText.parse(Data(request.input.utf8)) { try request.validateTranslations(value, count: source.count) }
             if request.purpose == "cards" { _ = try AICards.checked(value, count: request.images.count) }
-            job.state = .complete; job.result = value; try save(); return value
+            try finish(); job.state = .complete; job.result = value; try save(); return value
         } catch {
             if connection.provider == .chatgpt, let failure = error as? AIFailure, [.subscriptionLimit, .signIn, .subscriptionPermission].contains(failure) { chatGPTBlocks[connection.credentialId] = failure }
             let cancelled = Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled
-            job.state = cancelled ? .paused : .failed
+            try finish(); job.state = cancelled ? .paused : .failed
             job.failure = cancelled ? .cancelled : error as? AIFailure ?? .unavailable
             try save(); throw error
         }
     }
     private func markAIJobRunning(_ id: String) throws {
         guard let saved = try storeAccess({ try $0.document(namespace: "ai_jobs", key: id) }) else { throw AIFailure.changed }
-        var job = try JSONDecoder().decode(AIJob.self, from: saved.payload); job.state = .running
-        try storeAccess { try $0.transaction { _ in [.put(namespace: "ai_jobs", key: id, json: try JSONEncoder().encode(job))] } }
+        var job = try JSONDecoder().decode(AIJob.self, from: saved.payload); job.state = .running; job.startedAt = Date()
+        try saveAIJob(job)
+    }
+    private func saveAIJob(_ job: AIJob) throws {
+        try storeAccess { store in
+            try store.transaction { current in
+                var writes: [EncryptedDocumentStore.Write] = []
+                if let previous = try current("ai_jobs", job.id) {
+                    let old = try JSONDecoder().decode(AIJob.self, from: previous.payload)
+                    if old.attemptID == nil, old.createdAt != job.createdAt,
+                       try current("ai_history", AIHistoryEntry(old).id) == nil { writes += try AIHistoryEntry.writes(old) }
+                }
+                writes.append(.put(namespace: "ai_jobs", key: job.id, json: try JSONEncoder().encode(job)))
+                return writes + (try AIHistoryEntry.writes(job))
+            }
+        }
     }
     public func translateWithAI(accountId: String, appId: String, provider: AIProvider, texts: [String], source: String, target: String, fields: [String]? = nil, model: String? = nil) async throws -> [String] {
         let request = try AIRequest.translation(texts, source: source, target: target, fields: fields)

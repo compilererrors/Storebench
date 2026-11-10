@@ -183,12 +183,3 @@ private struct CopyLabel: View {
         }.animation(.easeOut(duration: 0.15), value: copied)
     }
 }
-
-private struct StorebenchInlineDisclosureStyle: DisclosureGroupStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            StorebenchDisclosureButton(isExpanded: Binding(get: { configuration.isExpanded }, set: { configuration.isExpanded = $0 }), compact: true) { configuration.label }
-            if configuration.isExpanded { configuration.content.padding(.leading, 22) }
-        }.frame(maxWidth: .infinity, alignment: .leading)
-    }
-}

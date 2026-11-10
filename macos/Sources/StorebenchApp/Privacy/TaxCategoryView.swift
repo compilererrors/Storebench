@@ -49,12 +49,11 @@ struct TaxCategoryView: View {
                 if allowed.isEmpty {
                     Text("No conditions apply to this category.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
                 }
-                ForEach(allowed, id: \.self) { id in
-                    HStack(spacing: 8) {
-                        StorebenchCheckbox(catalog?.conditionNames[id] ?? id, isOn: Binding(get: { conditions.contains(id) }, set: { on in
+                StorebenchOptionGrid(maximumColumns: 1) {
+                    ForEach(allowed, id: \.self) { id in
+                        StorebenchToggle(catalog?.conditionNames[id] ?? id, isOn: Binding(get: { conditions.contains(id) }, set: { on in
                             conditions.removeAll { $0 == id }; if on { conditions.append(id) }
                         }))
-                        Text(catalog?.conditionNames[id] ?? id).font(.sbCallout).fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }.storebenchWorking(reading || draft?.loaded != true)

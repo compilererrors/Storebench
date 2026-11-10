@@ -18,7 +18,7 @@ struct LatestSaveReview: View {
     let onUse: (() -> Void)?
 
     var body: some View {
-        DisclosureGroup("Compare with latest saved values") {
+        DisclosureGroup("Compare Saved Values") {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Read the latest save without changing your inputs. Compare it with your edits, then choose which values to keep. Nothing is saved by this comparison.")
                     .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)

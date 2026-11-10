@@ -27,11 +27,19 @@ struct ChatGPTSettings: View {
     private var dirty: Bool { profile != nil && modelID != profile?.model }
     private var modelAvailable: Bool { models.contains { $0.id == modelID } || (models.isEmpty && !modelID.isEmpty && modelID == profile?.model) }
     private var active: Bool { profile?.credentialID != nil && profile?.credentialID == connection?.credentialId }
+    private var connectionStatus: String {
+        guard loaded else { return problem ? "Saved Connection Unavailable" : "Reading Saved Connection…" }
+        if active { return "Connected" }
+        guard profile?.credentialID != nil else { return "Not Connected" }
+        guard profile?.planEnabled == true else { return "Plan Access Required · Sign In Again" }
+        return "Signed In · Choose Use Account"
+    }
     var body: some View {
-        StorebenchFormSection("ChatGPT Plan") {
+        StorebenchFormSection("ChatGPT Plan", icon: "users", description: "Use your ChatGPT plan for cards and translations. Your plan's usage limits apply.") {
             VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
-                Text("Use your ChatGPT plan for cards and translations. Your plan's usage limits apply.")
-                    .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
+                StorebenchFormField(label: "Connection", hideHint: true) {
+                    StorebenchTextSlot(text: connectionStatus, height: StorebenchTheme.controlHeight, font: .sbCallout, color: active ? StorebenchTheme.color("color-success") : StorebenchTheme.muted, live: true)
+                }.help("Connection status for the selected ChatGPT account")
                 if !profiles.isEmpty {
                     StorebenchPicker("Account", selection: Binding(get: { selected }, set: choose), hint: active ? "Connected · Used for ChatGPT tasks" : "Choose a saved account or add another below.") {
                         if selected.isEmpty { SelectionOption("New Account", value: "") }

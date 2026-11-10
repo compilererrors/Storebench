@@ -173,8 +173,9 @@ public enum MediaCards {
         case .focus: frameHeight = regionHeight; top = margin + space + gap
         case .textOnly: top = 0
         }
-        let text = Area(left: margin, top: textTop, width: innerWidth, height: textHeight)
         let screen = Area(left: (w - frameWidth) / 2, top: top, width: frameWidth, height: frameHeight)
+        let aligned = card.layout == .textAbove || card.layout == .textBelow
+        let text = Area(left: aligned ? screen.left : margin, top: textTop, width: aligned ? screen.width : innerWidth, height: textHeight)
         return Placement(text: text, screen: screen, radius: frameWidth * clamp(style.cornerRadius, 0, 20) / 100, border: frameWidth * clamp(style.borderWidth, 0, 6) / 100, limited: limited)
     }
 
@@ -220,7 +221,12 @@ public enum MediaCards {
             let gap = shortSide * 0.02 * scale
             let total = blocks.reduce(0) { $0 + Double($1.lines.count) * $1.size * $1.leading } + Double(max(0, blocks.count - 1)) * gap
             guard total <= area.height, blocks.allSatisfy({ block in block.lines.allSatisfy { measure($0, block.size, block.weight) <= area.width + 0.5 } }) else { continue }
-            var top = area.top + (area.height - total) / 2, result: [Line] = []
+            let offset: Double = switch card.layout {
+            case .textAbove: area.height - total
+            case .textBelow: 0
+            default: (area.height - total) / 2
+            }
+            var top = area.top + offset, result: [Line] = []
             for block in blocks {
                 for text in block.lines {
                     let width = measure(text, block.size, block.weight)

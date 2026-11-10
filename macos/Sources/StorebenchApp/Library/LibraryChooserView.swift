@@ -33,7 +33,7 @@ struct LibraryChooserView: View {
                             StorebenchCardListSection {
                                 if shots.isEmpty { StorebenchAdaptiveText(text: "No screenshots archived yet. Import the app to see its assets.", color: StorebenchTheme.muted) }
                                 else {
-                                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 160))], spacing: StorebenchTheme.gap) {
+                                    StorebenchMetricGrid(maximumColumns: 5, minimumWidth: 160) {
                                         ForEach(Array(shots.prefix(5))) { shot in
                                             Button { showGallery(entry, initial: shot) } label: { ArchivedScreenshotThumbnail(shot: shot, session: unavailable ? nil : model.session, row: entry.row) }
                                                 .buttonStyle(StorebenchPressStyle()).accessibilityLabel("Enlarge " + shot.fileName)

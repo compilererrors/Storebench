@@ -13,7 +13,7 @@ struct EditingSettings: View {
     var body: some View {
         StorebenchForm {
             StorebenchFormSection("Local drafts") {
-                if baseline != nil { StorebenchToggle("Automatically save local drafts", isOn: Binding(get: { enabled }, set: { enabled = $0; Task { await save() } })) }
+                if baseline != nil { StorebenchSettingToggle("Automatically save local drafts", isOn: Binding(get: { enabled }, set: { enabled = $0; Task { await save() } })) }
                 Text("Saves language text and screenshot/app preview layouts after a short pause in the encrypted local database. With it off, each editor shows a Save button while it has changes. Apple changes still require a Publish review and explicit approval. This choice is saved right away.")
                     .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
                 StorebenchFeedback(text: status, height: 40, error: problem)
@@ -26,9 +26,11 @@ struct EditingSettings: View {
             StorebenchFormSection("Confirmations") {
                 Text("Removing or discarding work on this Mac asks first. Turn a question off here, or choose Don't ask again when it appears. Changes at App Store Connect always show a review you approve.")
                     .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
+                StorebenchOptionGrid(maximumColumns: 1) {
                 ForEach(DestructiveConfirmation.allCases, id: \.self) { kind in
                     StorebenchToggle("Ask before " + kind.title.prefix(1).lowercased() + kind.title.dropFirst(), isOn: Binding(get: { model.editingPreferences?.asks(kind) ?? true }, set: { asks in setConfirmation(kind, asks: asks) }))
                         .storebenchWorking(model.session == nil || model.editingPreferences == nil)
+                }
                 }
                 StorebenchFeedback(text: confirmationStatus, height: 40, error: !confirmationStatus.isEmpty)
             }

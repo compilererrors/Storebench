@@ -16,7 +16,7 @@ struct BackupSettingsView: View {
             StorebenchFormSection("Automatic backups") {
                 if editor.ready {
                 VStack(alignment: .leading, spacing: StorebenchTheme.space(3)) {
-                    StorebenchToggle("Back up automatically", isOn: $editor.inputs.enabled)
+                    StorebenchSettingToggle("Back up automatically", isOn: $editor.inputs.enabled)
                     StorebenchFormField(label: "Backup folder", hint: editor.inputs.destination.isEmpty ? "No backup folder chosen." : editor.inputs.destination) {
                         Button("Choose Folder…", action: chooseFolder).help(editor.inputs.destination.isEmpty ? "Choose Backup Folder" : editor.inputs.destination)
                     }

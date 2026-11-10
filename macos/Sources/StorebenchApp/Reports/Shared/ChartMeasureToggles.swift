@@ -15,8 +15,8 @@ struct ChartMeasureToggles: View {
         }
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: StorebenchTheme.space(2)) {
-            StorebenchMetricGrid(maximumColumns: 4, minimumWidth: 180) {
+        StorebenchOptionGroup(title: "Chart Measures", description: options.isEmpty ? "No measures with saved reports. Download or import reports to choose what to show." : "Choose up to four measures to show together.") {
+            StorebenchOptionGrid {
                 ForEach(options, id: \.key) { option in
                     let full = !chosen.contains(option.key) && chosen.count >= ChartMeasures.limit
                     StorebenchToggle(option.title, isOn: Binding(get: { chosen.contains(option.key) }, set: { change(ChartMeasures.toggled(option.key, on: $0, in: chosen)) }))
@@ -24,7 +24,6 @@ struct ChartMeasureToggles: View {
                         .help(full ? "Deselect a measure before adding another. A chart shows up to four measures." : "Show or hide " + option.title.lowercased())
                 }
             }
-            Text(options.isEmpty ? "No measures with saved reports. Download or import reports to choose what to show." : "Choose up to four measures to show together.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
         }
     }
 }

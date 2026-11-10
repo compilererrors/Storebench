@@ -41,7 +41,7 @@ struct SampleDataSettings: View {
     let model: LibraryModel
     var body: some View {
         StorebenchFormSection("Sample data") {
-            StorebenchToggle("Show sample data", isOn: Binding(get: { model.showingSampleData }, set: { $0 ? SampleData.open(model) : SampleData.close(model) }))
+            StorebenchSettingToggle("Show sample data", isOn: Binding(get: { model.showingSampleData }, set: { $0 ? SampleData.open(model) : SampleData.close(model) }))
                 .disabled(model.state == .unlocking || model.state == .closing)
             Text(SampleData.description + " Turning it on signs out of your own data; turning it off returns to it.")
                 .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)

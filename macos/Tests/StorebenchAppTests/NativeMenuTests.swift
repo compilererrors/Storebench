@@ -25,9 +25,9 @@ import Testing
         try await Task.sleep(for: .milliseconds(80))
         window.contentView?.layoutSubtreeIfNeeded(); window.displayIfNeeded()
     }
-    private func window<V: View>(_ content: V, width: CGFloat = 540) -> NSWindow {
+    private func window<V: View>(_ content: V, width: CGFloat = 540, height: CGFloat = 180) -> NSWindow {
         _ = NSApplication.shared
-        let window = NSWindow(contentRect: .init(x: 0, y: 0, width: width, height: 180), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: .init(x: 0, y: 0, width: width, height: height), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: content.transaction { $0.animation = nil; $0.disablesAnimations = true })
         window.orderBack(nil)
@@ -38,7 +38,8 @@ import Testing
         let choices = Choices(), window = self.window(PickerExample(choices: choices)); defer { window.orderOut(nil); window.close() }
         try await settle(window)
         let root = try #require(window.contentView), popup = try #require(descendants(root).compactMap { $0 as? NSPopUpButton }.first)
-        #expect(!popup.isTransparent && popup.isBordered && popup.focusRingType == .default && !popup.pullsDown)
+        #expect(!popup.isTransparent && popup.isBordered && popup.focusRingType == .none && !popup.pullsDown)
+        #expect(window.makeFirstResponder(popup) && window.firstResponder === popup, "The shared face retains the native keyboard focus target")
         #expect(popup.titleOfSelectedItem == "Synthetic First" && popup.toolTip?.contains("Synthetic First") == true)
         let long = String(repeating: "Synthetic model detail ", count: 12)
         choices.options = [SelectionOption(long, value: "first")]
@@ -86,5 +87,27 @@ import Testing
         #expect(abs(last.maxX - root.bounds.maxX) < 1 && last.minX > first.maxX)
         #expect(abs(first.midY - last.midY) < 1 && abs(first.width - last.width) < 1)
         #expect(abs(last.width - StorebenchTheme.actionWidth) < 1)
+    }
+
+    @Test func sidebarScrollViewportStaysBetweenItsHeaderAndFooter() async throws {
+        for height: CGFloat in [260, 700] {
+            let window = self.window(StorebenchSidebar(selection: LibraryOverview.Section.overview.selection, section: .overview, hasApp: false,
+                selectLibrary: { _ in }, selectSection: { _ in }, settings: {}, help: {}), width: 248, height: height)
+            defer { window.orderOut(nil); window.close() }
+            try await settle(window)
+            let root = try #require(window.contentView), views = descendants(root)
+            let markers = views.compactMap { $0 as? StorebenchControlMarker }
+            let header = try #require(markers.first { $0.identifier?.rawValue == "sidebar.header" })
+            let footer = try #require(markers.first { $0.identifier?.rawValue == "sidebar.footer" })
+            let scroll = try #require(views.compactMap { $0 as? NSScrollView }.first)
+            let top = root.convert(header.bounds, from: header), bottom = root.convert(footer.bounds, from: footer)
+            let viewport = root.convert(scroll.contentView.bounds, from: scroll.contentView)
+            if root.isFlipped {
+                #expect(viewport.minY >= top.maxY - 1 && viewport.maxY <= bottom.minY + 1)
+            } else {
+                #expect(viewport.maxY <= top.minY + 1 && viewport.minY >= bottom.maxY - 1)
+            }
+            #expect(viewport.height > 0 && viewport.width > 0)
+        }
     }
 }

@@ -118,24 +118,18 @@ struct AppPrivacyView: View {
     @ViewBuilder private func dataType(_ code: String, _ label: String) -> some View {
         let index = answers.items.firstIndex { $0.category == code }
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                StorebenchCheckbox(label, isOn: Binding(get: { index != nil }, set: { on in
-                    if on, index == nil { answers.items.append(.init(category: code)) } else if !on { answers.items.removeAll { $0.category == code } }
-                }))
-                Text(label).font(.sbCallout)
-            }
+            StorebenchToggle(label, isOn: Binding(get: { index != nil }, set: { on in
+                if on, index == nil { answers.items.append(.init(category: code)) } else if !on { answers.items.removeAll { $0.category == code } }
+            }))
             if let index {
                 let name = label.lowercased()
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Indicate how \(name) collected from this app is being used by you or your third-party partners.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
-                    StorebenchFlow(spacing: 12) {
+                    StorebenchOptionGrid {
                         ForEach(AppPrivacyAnswers.purposes, id: \.0) { purpose, title in
-                            HStack(spacing: 4) {
-                                StorebenchCheckbox(title, isOn: Binding(get: { answers.items[index].purposes.contains(purpose) }, set: { on in
-                                    answers.items[index].purposes.removeAll { $0 == purpose }; if on { answers.items[index].purposes.append(purpose) }
-                                }))
-                                Text(title).font(.sbCallout)
-                            }
+                            StorebenchToggle(title, isOn: Binding(get: { answers.items[index].purposes.contains(purpose) }, set: { on in
+                                answers.items[index].purposes.removeAll { $0 == purpose }; if on { answers.items[index].purposes.append(purpose) }
+                            }))
                         }
                     }
                     StorebenchChoicePicker("Is the \(name) collected from this app linked to the user's identity?", selection: $answers.items[index].linked,
@@ -224,10 +218,7 @@ struct AppleIDSignInCard: View {
                     StorebenchTextField("Apple ID", text: $appleId, hint: "The email address of your Apple Account.", contentType: .username).disabled(apple != nil || challenge != nil)
                     StorebenchSecureField("Password", text: $password, hint: storage.passwordHint(saving: savePassword), contentType: .password).disabled(apple != nil || challenge != nil)
                 }
-                HStack(spacing: 8) {
-                    StorebenchCheckbox("Save Password", isOn: $savePassword)
-                    Text("Save Password").font(.sbCallout)
-                }.help(storage.saveHelp)
+                StorebenchToggle("Save Password", isOn: $savePassword).help(storage.saveHelp)
                 StorebenchActionGroup {
                     StorebenchCommand(title: "Sign In", running: "Signing In…", busy: working == "sign-in", unavailable: apple != nil ? "Already signed in. Sign out to use another Apple ID." : challenge != nil ? "Enter the verification code in step 2." : appleId.isEmpty || password.isEmpty ? "Enter the Apple ID and password." : session == nil ? "Connect the workspace first." : nil) { Task { await start() } }
                 }

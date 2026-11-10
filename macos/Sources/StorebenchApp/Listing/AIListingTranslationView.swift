@@ -22,13 +22,16 @@ struct AIListingTranslationView: View {
             StorebenchPicker("Source Language", selection: $source) { SelectionOption("Choose a Language", value: ""); selectionOptions(locales) { SelectionOption(StoreLocales.name($0), value: $0) } }
                 .onChange(of: source) { targets.remove(source) }
             AIServicePicker(session: session, selection: $provider, modelID: $modelID, loaded: { connections = $0 })
-            DisclosureGroup("Target Languages · \(targets.count) Selected") {
+            DisclosureGroup {
+                StorebenchOptionGrid {
                 ForEach(StoreLocales.codes.filter { $0 != source }, id: \.self) { locale in
                     StorebenchToggle(StoreLocales.name(locale), isOn: Binding(get: { targets.contains(locale) }, set: { if $0 { targets.insert(locale) } else { targets.remove(locale) } }))
                         .storebenchControlID("ai-languages.target." + locale)
                 }
+                }
+            } label: {
+                Text("Target Languages · \(targets.count) Selected").storebenchControlID("ai-languages.targets")
             }
-            .storebenchControlID("ai-languages.targets")
             StorebenchToggle("Replace Existing Text", isOn: $replace)
             Text(replace ? "Selected languages' translated text fields will be replaced. Names and links are preserved." : "Only empty text fields are filled. Existing text, names and links are preserved.")
                 .font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)

@@ -4,6 +4,7 @@ import SwiftUI
 struct AISettings: View {
     let model: LibraryModel
     @Environment(\.editorProtection) private var protection
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var connections: [AIConnection] = []
     @State private var defaultServices: [AIConnection] = []
     @State private var provider = AIProvider.openai
@@ -27,8 +28,19 @@ struct AISettings: View {
     private var current: AIConnection? { connections.first { $0.provider == provider } }
     private var dirty: Bool { !apiKey.isEmpty || modelId != (current?.model ?? "") }
     var body: some View {
+        ScrollViewReader { scroll in
         StorebenchForm {
-            StorebenchFormSection("Default AI Service") {
+            StorebenchActionGroup {
+                Button("AI History") { withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) { scroll.scrollTo("ai-history", anchor: .top) } }
+                    .buttonStyle(StorebenchButtonStyle(.quiet)).help("View saved AI requests, briefs, screenshots and results")
+                Button("ChatGPT Settings") { withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) { scroll.scrollTo("ai-chatgpt", anchor: .top) } }
+                    .buttonStyle(StorebenchButtonStyle(.quiet)).help("Show ChatGPT accounts, connection status and model choices")
+                Button("Apple Intelligence") { withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) { scroll.scrollTo("ai-apple", anchor: .top) } }
+                    .buttonStyle(StorebenchButtonStyle(.quiet)).help("Show local AI availability and requirements")
+                Button("API Services") { withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) { apiExpanded = true; scroll.scrollTo("ai-api", anchor: .top) } }
+                    .buttonStyle(StorebenchButtonStyle(.quiet)).help("Show API connections, keys and model choices")
+            }.accessibilityElement(children: .contain).accessibilityLabel("AI Settings Sections")
+            StorebenchFormSection("Default AI Service", icon: "settings", description: "The starting service for new cards and translations. Each task can choose its own service and model.") {
                 StorebenchPicker("Use for New AI Tasks", selection: $defaultProvider) {
                     if let connection = defaultServices.first(where: { $0.provider == .chatgpt }) { SelectionOption(connection.title, value: connection.id) }
                     else { SelectionOption("ChatGPT Plan · Sign In Required", value: AIProvider.chatgpt.rawValue) }
@@ -38,8 +50,6 @@ struct AISettings: View {
                     }
                     selectionOptions(defaultServices.filter { $0.provider != .chatgpt }) { SelectionOption($0.title, value: $0.id) }
                 }
-                Text("The starting service for new cards and translations. Each task can choose its own service and model.")
-                    .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
                 StorebenchTextSlot(text: defaultStatus, height: 44, font: .sbCallout, color: StorebenchTheme.muted, live: true)
                 if preferences != nil {
                     LatestSaveReview(busy: working, hasEdits: defaultStale || preferences?.defaultProvider.rawValue != defaultProvider,
@@ -50,19 +60,21 @@ struct AISettings: View {
                         onUse: latestDefault == nil ? nil : { chooseDefault(keepEdits: false) })
                 }
                 StorebenchFormFooter {
-                    Button("Use As Default") { Task { _ = await saveDefault() } }.buttonStyle(StorebenchButtonStyle(.primary))
+                    Button("Use As Default") { Task { _ = await saveDefault() } }
                         .storebenchWorking(defaultStale || preferences == nil || defaultProvider == preferences?.defaultProvider.rawValue)
                 }
             }
-            ChatGPTSettings(model: model)
-            StorebenchFormSection("Apple Intelligence") {
-                Text(AppleLocalAI.available ? "Ready on this Mac. Local AI uses no API credits." : "Unavailable on this Mac. Apple Intelligence needs a compatible Mac, macOS 26 or later and an enabled, downloaded model.")
-                    .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
+            AIHistorySection(session: model.session).id("ai-history")
+            ChatGPTSettings(model: model).id("ai-chatgpt")
+            StorebenchFormSection("Apple Intelligence", icon: "display", description: "Apple models run on this Mac. Local AI uses no API credits.") {
+                StorebenchFormField(label: "Availability", hint: AppleLocalAI.available ? "Ready for local AI tasks." : "Requires a compatible Mac, macOS 26 or later and an enabled, downloaded model.") {
+                    StorebenchTextSlot(text: AppleLocalAI.available ? "Available on This Mac" : "Unavailable on This Mac", height: StorebenchTheme.controlHeight, font: .sbCallout, color: StorebenchTheme.muted, live: true)
+                }
                 Text("Apple Translation remains available for supported languages. Local card generation uses your brief and text extracted from screenshots.")
                     .font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
-            }
-            DisclosureGroup("API Services", isExpanded: $apiExpanded) {
-                StorebenchFormSection("API Connections") {
+            }.id("ai-apple")
+            StorebenchFormSection("API Services", icon: "security", description: "Use a provider's API key and choose the model for new API tasks.") {
+                DisclosureGroup("Connection Settings", isExpanded: $apiExpanded) {
                     StorebenchPicker("AI Service", selection: Binding(get: { provider }, set: { value in
                         if let protection { protection.requestLeaving { provider = value } } else { provider = value }
                     })) {
@@ -103,7 +115,7 @@ struct AISettings: View {
                         Button("Save Connection") { Task { _ = await save() } }.buttonStyle(StorebenchButtonStyle(.primary)).storebenchWorking(!loaded || !dirty || stale || modelId.isEmpty || model.session == nil)
                     }
                 }
-            }
+            }.id("ai-api")
         }.storebenchWorking(working || model.session == nil || model.showingSampleData)
             .trackUnsavedChanges(dirty, busy: working, onSave: { await save() })
             .trackUnsavedChanges(defaultStale || preferences.map { $0.defaultProvider.rawValue != defaultProvider } == true, busy: working, id: "ai-default-service", onSave: { await saveDefault() })
@@ -120,6 +132,7 @@ struct AISettings: View {
             .onReceive(NotificationCenter.default.publisher(for: .storebenchAIConnectionsChanged)) { _ in
                 Task { await refreshChoices() }
             }
+        }
     }
     private var differences: [SavedValueChange]? {
         guard let latest else { return nil }
