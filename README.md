@@ -2,7 +2,7 @@
 
 ![Storebench with a saved ASO timeline and listing changes overlaid on reports](docs/images/aso-progress.png)
 
-Storebench is a native Mac app for developers managing several apps in App Store Connect. Set country prices from one guide price, keep the listings and reports you import, and see how your numbers changed around each listing update. Prepare releases, manage TestFlight and make screenshot cards in the same encrypted local workspace.
+Storebench is a native Mac app for developers managing several apps in App Store Connect. Set country prices from one guide price, keep your listing history and see what changed after each update. Release apps step by step, bump an existing version, translate your listings and create screenshot cards by hand or with AI, all in one encrypted local workspace.
 
 Edits stay on your Mac until you prepare a review and approve sending them to Apple. A local save, an upload and a public release are separate steps.
 
@@ -10,20 +10,13 @@ Edits stay on your Mac until you prepare a review and approve sending them to Ap
 
 ## Set country prices without working through them one by one
 
-A currency conversion does not tell you what a price means to someone in another country. Start with a guide country and price, then compare different ways to price the other countries before choosing one:
+Set one guide price and choose how the other countries follow it: **World Bank purchasing power (PPP)**, **Big Mac Index**, **currency conversion** or **Same for all**, such as 4.99 in every currency.
 
-- **World Bank purchasing power:** adjust the guide price for differences in local price levels.
-- **Big Mac Index:** scale prices using the local price of a Big Mac.
-- **Currency conversion:** keep approximately the same value in your guide currency.
-- **Same for all:** use the same number in each currency, such as 4.99, without converting it.
-- **Your country percentages:** adjust converted prices by your own percentage for each country.
-- **Your own index:** import the values you want to price against from a CSV file.
+Want your own rules? Save **country percentages**, **your own index** or a mix of models as a reusable profile. You can also choose **Apple's comparable prices** or **enter country prices yourself**, including from CSV.
 
-Build a recipe when one model is not enough. For example, mix 70% purchasing power with 30% currency conversion, adjust particular countries, and set a lowest and highest share of the guide price. Save the recipe as a profile to reuse across your apps. You can also use Apple's comparable prices or type country prices, including importing them from CSV.
+Compare country prices side by side before choosing. Storebench rounds to Apple's price points and shows the changes before you approve sending them.
 
-Compare the resulting country prices side by side. Storebench matches them to the product's available Apple price points, identifies missing data, and shows the proposed changes before you approve anything being sent.
-
-[See the pricing comparison](#pricing-models).
+[See the pricing choices and country preview](#pricing-models).
 
 ## Keep your listing history and see what happened after a change
 
@@ -41,11 +34,9 @@ The comparison shows observed changes, not proof that an ASO edit caused them. O
 
 ## Follow a full release from setup to App Review
 
-Use **Release** for a new app, a new platform or a release that needs the full setup. Work through the version, text and screenshots, build, export compliance, App Review Information and submission in order. The guide shows what Apple still needs, with the relevant editor or action beside the problem, instead of leaving you to find it across separate pages.
+From the questions about your app to releasing it, **Release** keeps the work in one flow. App details, age rating and required declarations, text, screenshots, build, export compliance and App Review: go step by step, with the checks and editors together. See what's missing, fix it there and continue, without hunting through views and tabs.
 
-App information, age rating, availability, accessibility and other required declarations are surfaced before submission. Available actions depend on your account and Apple's current state; App Privacy and Tax Category use a separate Apple ID sign-in. Each change at Apple still has its own review and approval.
-
-For an existing app's next version, **Quick Release** keeps the essentials together: choose the version, create it in App Store Connect, update the text, select the build and its export compliance answer, then Add for Review. It uses the same version plan and drafts as Release. If Apple needs something outside those steps, continue in the full guide without starting over.
+App already out and you just need to bump the version? **Quick Release** shows the essentials: version, build and Add for Review, carrying over your existing listing. Finished steps stay collapsed. Expand **Text** to change **Description, Subtitle, Keywords and What's New**, then continue in the same flow. If the update needs more, open the full Release guide with the same work.
 
 [See Release and Quick Release](#release-and-quick-release).
 
@@ -53,7 +44,9 @@ For an existing app's next version, **Quick Release** keeps the essentials toget
 
 Add screenshots from files or Asset Library in **Release → Text and Screenshots**. Check the language and display size, drag screenshots into the order you want, and save the layout. Upload prepares a review of what will change at Apple.
 
-Use **Create Media** to turn your app screenshots into App Store cards with titles, text, backgrounds and reusable styles. Choose the Mac's system fonts, any installed font or a font file of your own, and edit the settings beside a preview that stays in view. A finished card set can be translated into another language on the Mac with Apple's translation, keeping the same look and screenshots. Save the finished PNGs to **Asset Library**, choose them for a release, and arrange them with your other screenshots. Asset Library keeps encrypted local originals and their history so you can reuse earlier material.
+Use **Create Media** to make your own App Store cards with layouts, headlines, fonts and colors, beside a live preview. Or add your screenshots to **Create AI Cards**, describe the look and message, and choose a service and model. Re-create a card with a new prompt until it feels right; earlier versions stay saved.
+
+Translate the finished card set into more languages while keeping its layout and screenshots. Save the PNGs to **Asset Library**, ready to use in a release.
 
 [See screenshot ordering and card creation](#screenshots-and-card-creation), or [see Asset Library](#asset-library).
 
@@ -73,7 +66,9 @@ Use **Overview** or **Apps** to download app material and reports. The sidebar o
 
 Prepare a version from existing app material, copy an earlier version or start with an empty local plan. Edit listing text across languages, select a build and check what is still needed before submitting the version.
 
-**Localizations** keeps each language's text, character budgets and comparison with imported values together. Text reuse previews changes before applying them locally. Copied wording retains its source so a later source change can be reviewed without overwriting the destination. A new language can start empty, as a copy of a saved language or as a translation of it made on the Mac with Apple's translation; the name and links stay unchanged and every translated field shows its source for review.
+**Localizations** keeps each language's text and character limits together. Pick one source language, select the languages you want and populate them in one go with **Apple Intelligence**, your **ChatGPT plan** or your own **OpenAI, Claude or Gemini model**. Review the drafts and sync when ready. Existing wording stays unless you choose to replace it; names and links are preserved.
+
+You can also write the text yourself, reuse saved wording or start a language with Apple's on-device translation. Source comparisons stay beside the edits.
 
 Local drafts and release plans remain separate from what Apple currently has. **History** preserves imported material and saved revisions; **Change journal** records before-and-after values and lets you add local notes. A detected change does not establish when it became public on the App Store.
 
@@ -85,17 +80,13 @@ Add screenshots and app previews to a version and language, change their order a
 
 **Asset Library** keeps encrypted local originals and reads assets already at Apple. Processed assets can be reused across compatible placements. Uploads, placement changes and asset deletion each require an approved review.
 
-**Create Media** builds screenshot cards with text, backgrounds and reusable styles. Save rendered cards to Asset Library or export PNG files, then select them for a release.
+**Create Cards** is the visual editor: add your screenshots, pick a layout and style the text beside the preview. Use system fonts, installed fonts or a font file of your own. Save finished cards to Asset Library or export PNGs.
 
-Choose **Create Cards** for the visual editor, or **Create AI Cards** to start with screenshots and a short brief. Optional creative directions add guidance for a modern style, stronger headlines, visible features and a consistent set. Open **Prompt Instructions** and use the Edit button above the text to customize your instructions. The draft keeps your changes, and **Reset Instructions** restores the default. Selected creative directions are added automatically. Each screenshot has optional instructions for its own feature or message. Choose **Card Colors** to set an exact background and text palette, or let AI choose. These choices stay with the draft, request history and recreated card. AI proposes the order, titles, layouts and colors; the original screenshots and all text remain editable. Whole screenshots stay visible unless you allow cropping. Local generation uses Apple Intelligence and text extracted from the screenshots. It requires a compatible Mac with Apple Intelligence enabled on macOS 26 or later.
+**Create AI Cards** starts with your screenshots and a short brief. Choose the service and model, generate a set, then adjust any text, layout or color yourself. **Re-create Card** opens the brief and screenshot for another iteration, keeping earlier card sets. Translate the finished set for more languages while retaining the layout and originals.
 
-In **Settings → AI**, choose **Continue with ChatGPT** to connect your ChatGPT plan, or configure your own OpenAI, Claude or Gemini API key. ChatGPT accounts have separate registrations and model choices; you can switch accounts or sign out. ChatGPT tasks use the selected plan's permissions and limits, with no automatic switch to API billing. API connections use the provider's API billing. Cards and translations show the service, model and usage mode together. Choose a model for one task without changing saved defaults; the card draft keeps that selection. Model choices load in the background using the saved connection and are cached separately from generation results. Apple Intelligence uses the on-device model managed by macOS. Selected text and screenshots are sent only to the service you choose. Credentials use the workspace's protected storage and are excluded from backups.
+Add creative directions, your own **Prompt Instructions**, notes for individual cards or an exact **Card Colors** palette. The original screenshot stays visible unless you allow cropping. **AI History** in Settings keeps the saved requests and responses so you can return to earlier work.
 
-On first opening a workspace, Storebench offers to set up AI. Choose **Not Now** for a reminder in seven days, or select **Don't Ask Again** before choosing **Not Now** to stop future reminders. AI settings remain available either way. ChatGPT is the initial service for new workspaces: sign in, choose **Default Model** under **ChatGPT Plan** and **Save Model**. **Account Options** manages accounts and plan usage. Choose the starting service in **Default AI Service**; Apple Intelligence and API connections remain optional choices. Existing card drafts keep their selected service, and the editor explains what is needed before generating. **Save Draft** works without an available AI service.
-
-**Re-create Card** opens the selected card's saved brief and screenshot for another iteration. Each generation creates a separate variant and keeps earlier card sets. Return to **Create AI Cards** from the preview to continue your draft. In **Settings → AI → AI History**, open previous requests to see their brief, service, model, submitted content, status and saved response. Requests and results stay in the encrypted local workspace; older native requests show the content that was retained without inventing missing instructions.
-
-**Translate Languages with AI** lets you choose a saved source language and several target languages in Localizations or Release. Empty fields are filled by default; replacing existing wording is explicit. Completed AI results stay encrypted on this Mac and are reused for matching inputs and connections. Failed jobs can be retried. These operations save local drafts; syncing changes to Apple still requires a Publish review.
+In **Settings → AI**, use Apple Intelligence on this Mac, connect your ChatGPT plan or add your own OpenAI, Claude or Gemini API key. Choose a model for each job without changing saved defaults. Apple Intelligence requires a compatible Mac with macOS 26 or later. ChatGPT uses your plan's permissions and limits; API connections use the provider's API billing. Selected text and screenshots go only to the service you choose. Credentials stay in protected storage and are excluded from backups.
 
 ## Pricing
 
@@ -188,11 +179,15 @@ Storebench is source-available. Personal and other non-commercial use is free. B
 
 ## Screenshots
 
-These screenshots show Storebench's native Mac interface with synthetic sample data.
+These screenshots show Storebench's native Mac interface with synthetic app data and example model names.
 
 ### Pricing models
 
-Start with one guide price, choose a pricing strategy and preview the resulting country prices at Apple's available price points.
+One guide price, several ways to price the world. Choose PPP, Big Mac Index, currency conversion, Same for all, your own profiles, Apple's comparable prices or manual prices.
+
+![The open Price Strategy menu showing built-in models, manual pricing and profiles for country percentages and an own index](docs/images/pricing-models.png)
+
+Preview the countries together, rounded to Apple's available price points.
 
 ![Country-pricing editor with a guide price, selected pricing method and rounded country prices](docs/images/pricing.png)
 
@@ -206,9 +201,17 @@ Follow listing changes on the report timeline, then compare the same number of d
 
 ### Release and Quick Release
 
+**Release** takes you from the questions about your app to App Review and release. Checks and editors stay together: fix what's missing and move to the next step.
+
 ![The Release guide showing the saved version, starting material and numbered release steps](docs/images/release-guide.png)
 
+**Quick Release** keeps a version bump small. Carry over your listing, choose the version and build, then Add for Review. Completed steps stay out of the way.
+
 ![The Quick Release page with numbered steps for a saved version](docs/images/quick-release.png)
+
+Need an ASO tweak? Expand Text for Description, Subtitle, Keywords and What's New, without leaving the flow.
+
+![Quick Release with Text expanded to edit the existing listing for the next version](docs/images/quick-release-text.png)
 
 ### TestFlight builds and groups
 
@@ -218,7 +221,17 @@ Follow listing changes on the report timeline, then compare the same number of d
 
 ![A release's screenshot order for one language and display size, with thumbnails and reorder controls](docs/images/screenshots.png)
 
+**Create Cards:** pick a layout, write the headline and style your card beside the preview.
+
 ![Create Media with an App Store card preview, editable title and card styling controls](docs/images/create-media.png)
+
+**Create AI Cards:** describe the look and message, then iterate with Re-create Card. Your screenshots and earlier versions stay saved.
+
+![Create AI Cards with an editable brief, creative directions and the previous card kept for another iteration](docs/images/create-ai-cards.png)
+
+Choose a service and model for the job. Translate the finished set for more languages while keeping its design and screenshots.
+
+![AI card creation with a model choice, a selected original screenshot and the Generate Cards action](docs/images/create-ai-models.png)
 
 ### Asset Library
 
@@ -229,6 +242,10 @@ Follow listing changes on the report timeline, then compare the same number of d
 ![The exact App Store Connect changes and before/after values before Send to Apple](docs/images/review-changes.png)
 
 ### Localizations
+
+One source, several languages. Choose Apple Intelligence, your ChatGPT plan or a connected OpenAI, Claude or Gemini model, then populate the selected languages together. Review the drafts before syncing.
+
+![Translate Languages with AI with one source, three target languages and the open AI Service menu](docs/images/localizations-ai.png)
 
 ![Localizations with listing fields and character limits for each language](docs/images/localizations.png)
 
