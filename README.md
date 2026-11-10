@@ -186,14 +186,23 @@ The runner uses synthetic data in a fresh owned workspace. Its macOS sandbox blo
 
 Storebench is source-available. Personal and other non-commercial use is free. Business use requires an active subscription for each person who uses Storebench, available through the Mac App Store, or another commercial license from the licensor. Business use ends with the subscription. See [LICENSE](LICENSE).
 
+## Screenshots
+
+These screenshots show Storebench's native Mac interface with synthetic sample data.
 
 ### Pricing models
+
+Start with one guide price, choose a pricing strategy and preview the resulting country prices at Apple's available price points.
 
 ![Country-pricing editor with a guide price, selected pricing method and rounded country prices](docs/images/pricing.png)
 
 ### ASO history
 
-![ASO timeline with listing-change markers colored by field, a note of your own, overlaid measures and reported values before and after an update](docs/images/aso-progress.png)
+Follow listing changes on the report timeline, then compare the same number of days before and after an update.
+
+![ASO timeline with listing-change markers, a campaign note and four report measures on an indexed scale](docs/images/aso-progress.png)
+
+![Saved listing revisions with changes in report measures over equal periods before and after each update](docs/images/storebench.png)
 
 ### Release and Quick Release
 
@@ -203,17 +212,17 @@ Storebench is source-available. Personal and other non-commercial use is free. B
 
 ### TestFlight builds and groups
 
-![TestFlight builds with tester groups and export compliance status](docs/images/testflight.png)
+![Uploaded TestFlight build with testing status and export compliance actions](docs/images/testflight.png)
 
 ### Screenshots and card creation
 
-![Screenshots arranged by language and display size, with ordering and upload controls](docs/images/screenshots.png)
+![A release's screenshot order for one language and display size, with thumbnails and reorder controls](docs/images/screenshots.png)
 
-![Create Media with an App Store card preview, editable title and local Asset Library save](docs/images/create-media.png)
+![Create Media with an App Store card preview, editable title and card styling controls](docs/images/create-media.png)
 
 ### Asset Library
 
-![Encrypted local screenshot originals and saved versions in Asset Library](docs/images/asset-library.png)
+![A saved local screenshot original with its preview, dimensions and upload review action in Asset Library](docs/images/asset-library.png)
 
 ### Review before sending
 
@@ -222,3 +231,7 @@ Storebench is source-available. Personal and other non-commercial use is free. B
 ### Localizations
 
 ![Localizations with listing fields and character limits for each language](docs/images/localizations.png)
+
+### Sales and Trends
+
+![Paid app purchase totals, countries and report coverage for saved Sales reports](docs/images/sales.png)

@@ -111,7 +111,9 @@ private extension WorkspaceSession {
     }
     func close() { window.makeFirstResponder(nil); window.orderOut(nil); window.close() }
     func settle() async throws {
-        host.layoutSubtreeIfNeeded(); window.displayIfNeeded()
+        for root in roots {
+            root.layoutSubtreeIfNeeded(); root.window?.displayIfNeeded()
+        }
         try await Task.sleep(for: .milliseconds(40))
     }
     func wait(file: StaticString = #fileID, line: UInt = #line, _ predicate: @MainActor () async throws -> Bool) async throws {
@@ -172,15 +174,13 @@ private extension WorkspaceSession {
             try await reveal(marker)
             let x = label.hasPrefix("ai-languages.target.") ? marker.bounds.minX + 8 : marker.bounds.midX
             let point = marker.convert(.init(x: x, y: marker.bounds.midY), to: nil)
-            if label == "ai-history.response" {
-                print("Synthetic history response target: \(point); visible: \(marker.visibleRect); sheet: \(targetWindow.contentLayoutRect)")
-            }
             if label.hasPrefix("ai-languages.target.") {
                 let local = host.convert(point, from: nil)
                 print("Synthetic target click: \(label), window point: \(point), visible: \(host.bounds.contains(local)), hit: \(String(describing: host.hitTest(local).map { type(of: $0) }))")
             }
             let row = marker.convert(marker.bounds, to: nil)
-            if !label.hasPrefix("ai-languages.target."), let native = descendants(targetWindow.contentView ?? host).compactMap({ $0 as? NSControl }).first(where: {
+            let disclosure = ["ai-history.instructions", "ai-history.response"].contains(label)
+            if !disclosure, !label.hasPrefix("ai-languages.target."), let native = descendants(targetWindow.contentView ?? host).compactMap({ $0 as? NSControl }).first(where: {
                 let bounds = $0.convert($0.bounds, to: nil)
                 return $0.window === targetWindow && $0.cell is NSButtonCell && !$0.isHiddenOrHasHiddenAncestor && (bounds.contains(point) || (bounds.intersects(row) && abs(bounds.midY - row.midY) < max(2, row.height / 2)))
             }) {
