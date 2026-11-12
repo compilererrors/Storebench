@@ -6,6 +6,15 @@ public typealias TextTranslator = @MainActor (_ texts: [String]) async throws ->
 /// Translated starting text for a new language. Each value keeps the exact saved source text it was made from,
 /// so the draft write refuses a translation whose source changed while it was being translated.
 public struct LanguageTranslation: Sendable, Equatable {
+    public enum Completion: Sendable, Equatable { case saved, skipped, failed }
+    public static func summary(_ results: [Completion]) -> String {
+        let saved = results.filter { $0 == .saved }.count, failed = results.filter { $0 == .failed }.count, skipped = results.filter { $0 == .skipped }.count
+        if saved == 0, failed > 0 { return "No languages were translated. \(failed) failed. Your saved text is unchanged." }
+        if saved == 0 { return "No text needed translation. Existing text was preserved in \(skipped) \(skipped == 1 ? "language" : "languages")." }
+        let completed = saved == 1 ? "1 language saved as a local draft." : "\(saved) languages saved as local drafts."
+        if failed > 0 { return completed + " \(failed) failed; retry those languages. Completed results are kept." }
+        return completed + (skipped > 0 ? " \(skipped) skipped because their text was already filled." : "") + " View Changes before syncing to Apple."
+    }
     public struct Value: Sendable, Equatable {
         public let source, text: String
         public init(source: String, text: String) { self.source = source; self.text = text }

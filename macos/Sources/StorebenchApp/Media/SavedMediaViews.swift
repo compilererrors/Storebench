@@ -49,40 +49,36 @@ struct SavedScreenshotGallery: View {
                     }.scrollIndicators(.visible).defaultScrollAnchor(.center).id(selected?.id)
                         .onChange(of: scale, initial: true) { if zoom == nil { fittedScale = scale } }
 
-                } else if loading { ProgressView("Reading saved image…").frame(maxWidth: .infinity, maxHeight: .infinity) }
+                } else if loading { StorebenchMediaStatus(message: "Reading saved image…") }
             }.frame(maxWidth: .infinity, maxHeight: .infinity).background(StorebenchTheme.color("color-surface-subtle"))
         } actions: {
-            StorebenchFlow(spacing: StorebenchTheme.space(2), alignment: .leading) {
-                if request.items.count >= 2 {
-                    Button { move(-1) } label: { StorebenchIcon(name: "previous") }
-                        .buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).help("Previous screenshot").accessibilityLabel("Previous screenshot").storebenchWorking(saving)
-                }
-                Text("\(index + 1) / \(request.items.count)").font(.sbCaption).monospacedDigit().frame(minWidth: 52)
-                if request.items.count >= 2 {
-                    Button { move(1) } label: { StorebenchIcon(name: "next") }
-                        .buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).help("Next screenshot").accessibilityLabel("Next screenshot").storebenchWorking(saving)
-                }
-                if image != nil {
-                    Button("Fit") { zoom = nil }.help("Fit the entire image in the viewer")
-                    Button("100%") { zoom = 1 }.help("View original pixel size")
-                    Button { adjustZoom(1 / 1.25) } label: { StorebenchIcon(name: "down") }.buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).help("Zoom out").accessibilityLabel("Zoom out")
-                    Text("\(Int((zoom ?? fittedScale) * 100))%").font(.sbCaption).monospacedDigit().frame(minWidth: 48).accessibilityLabel("Zoom percentage")
-                    Button { adjustZoom(1.25) } label: { StorebenchIcon(name: "plus") }.buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).help("Zoom in").accessibilityLabel("Zoom in")
-                }
-                if reader != nil && !loading {
-                    Button { Task { await download() } } label: { StorebenchBusyLabel("Download Original…", loading: "Downloading…", busy: saving) }
-                        .storebenchWorking(saving)
-                }
+            StorebenchMediaToolbar {
+                HStack(spacing: StorebenchTheme.space(1)) {
+                    StorebenchIconButton(title: "Previous Screenshot", icon: "previous") { move(-1) }
+                    StorebenchIconButton(title: "Next Screenshot", icon: "next") { move(1) }
+                    Text("\(index + 1) / \(request.items.count)").font(.sbCaption).monospacedDigit().frame(minWidth: 52)
+                        .accessibilityLabel("Screenshot \(index + 1) of \(request.items.count)")
+                }.storebenchWorking(saving || request.items.count < 2)
+            } zoom: {
+                StorebenchZoomControl(value: Binding(get: { zoom ?? fittedScale }, set: { zoom = $0 }), range: min(0.05, fittedScale)...8, fitted: zoom == nil, fit: { zoom = nil })
+                    .storebenchWorking(image == nil || saving)
+            } actions: {
+                Button { Task { await download() } } label: { StorebenchBusyLabel("Download Original…", loading: "Downloading…", busy: saving) }
+                    .storebenchWorking(saving || reader == nil || loading)
             }
             StorebenchFeedback(text: status.isEmpty ? "Double-click to switch between Fit and 100%. Scroll to inspect an enlarged image." : status, height: 26)
 
         }
         .focusable().focused($focused)
         .onKeyPress { press in
-            guard !saving, press.modifiers.isEmpty else { return .ignored }
+            guard !saving, press.modifiers.subtracting(.shift).isEmpty else { return .ignored }
             switch press.key {
-            case .leftArrow: move(-1)
-            case .rightArrow: move(1)
+            case .leftArrow: guard request.items.count > 1 else { return .ignored }; move(-1)
+            case .rightArrow: guard request.items.count > 1 else { return .ignored }; move(1)
+            case "-": adjustZoom(1 / 1.25)
+            case "+", "=": adjustZoom(1.25)
+            case "0": zoom = nil
+            case "1": zoom = 1
             default: return .ignored
             }
             return .handled
@@ -94,10 +90,10 @@ struct SavedScreenshotGallery: View {
         .onDisappear { reader?.close() }
     }
     private func adjustZoom(_ factor: Double) {
-        zoom = min(8, max(0.05, (zoom ?? fittedScale) * factor))
+        zoom = min(8, max(min(0.05, fittedScale), (zoom ?? fittedScale) * factor))
     }
     private func move(_ amount: Int) {
-        guard !saving, !request.items.isEmpty else { return }
+        guard !saving, request.items.count > 1 else { return }
         reader?.close(); reader = nil; image = nil; zoom = nil
         index = (index + amount + request.items.count) % request.items.count
     }
@@ -143,7 +139,7 @@ struct ArchivedScreenshotThumbnail: View {
             ZStack {
                 RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius).fill(StorebenchTheme.color("color-surface-sunken"))
                 if let image { Image(decorative: image.image, scale: 1).resizable().aspectRatio(contentMode: .fit) }
-                else if failed { Text("Not saved").font(.sbCaption) } else { ProgressView().controlSize(.small).accessibilityLabel("Reading Saved Screenshot") }
+                else { StorebenchMediaStatus(message: failed ? "Not saved" : "", loading: !failed).accessibilityLabel(failed ? "Not saved" : "Reading Saved Screenshot") }
             }.padding(8).frame(height: imageHeight).background(StorebenchTheme.color("color-surface-sunken"))
             StorebenchDivider()
             VStack(alignment: .leading, spacing: 4) {

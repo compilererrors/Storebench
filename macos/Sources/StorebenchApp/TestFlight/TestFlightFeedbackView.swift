@@ -34,17 +34,14 @@ private struct FeedbackSection: View {
     var body: some View {
         Card(title: kind.title, subtitle: kind == .screenshot ? "Written feedback submitted with tester screenshots." : "Tester comments submitted with crash reports.") {
             StorebenchFeedback(text: error, height: 40)
-            if loading && page == nil { ProgressView("Reading feedback…") }
+            if loading && page == nil { StorebenchLoadingStatus(message: "Reading feedback…", surface: false) }
             else if let page {
                 StorebenchCollection(items: page.submissions, title: { $0.device }, subtitle: { $0.createdDate }, empty: cursor == nil ? "Apple has no recent \(kind.rawValue) feedback for this app." : "No \(kind.rawValue) feedback on this page. Return to the first page to check newer submissions.") { submission in
                     FeedbackSubmissionView(account: account, app: app, session: session, submission: submission, build: builds.first { $0.id == submission.buildId }).id("\(submission.id):\(cursor ?? "first")")
                     StorebenchDivider()
                 }
             }
-            ViewThatFits {
-                HStack(spacing: 12) { pageActions }
-                VStack(alignment: .leading, spacing: 12) { pageActions }
-            }
+            StorebenchActionGroup { pageActions }
         }
         .task(id: cursor) {
             // Back returns to the same feedback page; the page last read shows while it is read again.
@@ -110,15 +107,13 @@ private struct FeedbackSubmissionView: View {
             if submission.kind == .screenshot {
                 if submission.images.isEmpty { Text("No screenshot image is available for this submission.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted) }
                 else {
-                    ScrollView(.horizontal) {
-                        HStack { ForEach(submission.images.indices, id: \.self) { index in
-                            Button("View Screenshot \(index + 1)") { Task { await loadImage(index) } }.storebenchWorking(working)
-                        } }
-                    }.frame(height: 36)
+                    StorebenchActionGroup { ForEach(submission.images.indices, id: \.self) { index in
+                        Button("View Screenshot \(index + 1)") { Task { await loadImage(index) } }.storebenchWorking(working)
+                    } }
                 }
-            } else { Button("Download Crash Log") { Task { await loadLog() } }.storebenchWorking(working) }
+            } else { StorebenchActionGroup { Button("Download Crash Log") { Task { await loadLog() } }.storebenchWorking(working) } }
             VStack(alignment: .leading) {
-                if working { ProgressView("Reading attachment…") }
+                if working { StorebenchProgressStatus(message: "Reading attachment…", height: 18) }
                 StorebenchFeedback(text: status, height: 34)
             }.frame(maxWidth: .infinity, minHeight: 40, alignment: .topLeading)
         }

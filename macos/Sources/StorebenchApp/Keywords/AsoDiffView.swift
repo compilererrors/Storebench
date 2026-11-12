@@ -40,7 +40,7 @@ struct AsoDiffView: View {
 
     var body: some View {
         let left = snapshots.first { $0.id == leftId }, right = snapshots.first { $0.id == rightId }
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             StorebenchNavigationTabs(items: [.init(id: "compare", title: "Compare", icon: "history"), .init(id: "graph", title: "Graph", icon: "sales"), .init(id: "outcome", title: "Outcome", icon: "check")], selected: tab, label: "ASO Diff views", minimumWidth: StorebenchTheme.design.number("navigation-compact-minimum-width")) { value in
                 if value != tab, protection?.allowLeaving() != false { tab = value }
             }
@@ -118,7 +118,7 @@ struct AsoDiffView: View {
         }
         let most = reported.map(\.points.count).max() ?? 0
         let visible = visibleSnapshots, selected = visible.first { $0.id == timelineId } ?? visible.last
-        return VStack(alignment: .leading, spacing: 20) {
+        return VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             Card(title: "ASO changes and activity over time", subtitle: "Saved daily reports with observations of released versions. Observation dates do not establish the exact publication date or an ASO effect.") {
                 ChartMeasureToggles(options: metrics.map { (key: $0.key, title: "\($0.title) · \(AsoComparison.points($0.key, analytics: analytics, sales: outcomeSales).count) daily dates") }, chosen: chosen) { timelineMetric = $0 }
                 ChartScalePicker(indexed: $timelineIndexed)
@@ -134,7 +134,7 @@ struct AsoDiffView: View {
                     StorebenchPicker("Inspect version on timeline", selection: Binding(get: { selected?.id ?? "" }, set: { timelineId = $0 })) {
                         selectionOptions(Array(visible.enumerated())) { SelectionOption(label($0.element, $0.offset), value: $0.element.id) }
                     }
-                } else if !snapshots.isEmpty { Button("Show All Dates") { choices.choose(.asoDiffRange, .range(.all), session: session) }.help("Show All Version Dates").accessibilityLabel("Show All Version Dates") }
+                } else if !snapshots.isEmpty { StorebenchActionGroup { Button("Show All Dates") { choices.choose(.asoDiffRange, .range(.all), session: session) }.help("Show All Version Dates").accessibilityLabel("Show All Version Dates") } }
             }
             if let selected, let index = snapshots.firstIndex(where: { $0.id == selected.id }),
                let previous = snapshots[..<index].last(where: { platform($0) == platform(selected) }) {

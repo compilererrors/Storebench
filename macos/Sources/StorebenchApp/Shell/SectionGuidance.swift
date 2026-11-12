@@ -8,7 +8,7 @@ extension AppNavigation.Section {
         case .history: "What every version said on the App Store, with name and subtitle changes. Compare saved imports to see exactly what changed."
         case .journal: "Changes to this app's listing over time, with your notes on why you made them and what happened next."
         case .transfer: "Import or export language text, screenshot layouts, prices and Fastlane metadata. Every import shows its changes before anything is saved."
-        case .quickRelease: "The next version of a published app in five steps: version number, creating it in App Store Connect, Description, Subtitle, Keywords and What's New, the build, and Add for Review. Each change at App Store Connect waits for your approval."
+        case .quickRelease: "Prepare the release, add What's New in This Version, choose the build and Add for Review. Other text and release settings stay in collapsed sections on this page. Each change at App Store Connect waits for your approval."
         case .release: "Create a new version step by step, in App Store Connect's order. Next saves your work on this Mac; nothing reaches Apple until you approve it."
         case .localizations: "Edit each language's name, subtitle, description, keywords and What's New. Counters show Apple's limits as you type."
         case .keywords: "Collect keyword ideas with their sources, review them and use them in a language's Keywords field."

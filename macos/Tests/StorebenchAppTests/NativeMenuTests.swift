@@ -29,17 +29,108 @@ import Testing
         _ = NSApplication.shared
         let window = NSWindow(contentRect: .init(x: 0, y: 0, width: width, height: height), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        window.contentView = NSHostingView(rootView: content.transaction { $0.animation = nil; $0.disablesAnimations = true })
+        window.contentView = NSHostingView(rootView: content.frame(width: width, height: height, alignment: .topLeading)
+            .transaction { $0.animation = nil; $0.disablesAnimations = true })
         window.orderBack(nil)
         return window
+    }
+
+    private func marker(_ id: String, in root: NSView) throws -> StorebenchControlMarker {
+        try #require(descendants(root).compactMap { $0 as? StorebenchControlMarker }.first { $0.identifier?.rawValue == id })
+    }
+    private func click(_ marker: StorebenchControlMarker, in window: NSWindow) throws {
+        window.makeKeyAndOrderFront(nil)
+        let point = marker.convert(.init(x: marker.bounds.midX, y: marker.bounds.midY), to: nil)
+        for kind in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = try #require(NSEvent.mouseEvent(with: kind, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+            window.sendEvent(event)
+        }
+    }
+
+    @MainActor @Observable final class ContextState {
+        var selection = "saved"
+        var refreshes = 0
+    }
+    private struct FieldWithAction: View {
+        let state: ContextState
+        var body: some View {
+            StorebenchFormField(label: "AI Model", hint: "Refresh the model list for this service.", accessory: AnyView(
+                StorebenchIconButton(title: "Refresh Models", icon: "refresh") { state.refreshes += 1 }.storebenchControlID("model.refresh")
+            )) {
+                StorebenchNativePicker(title: "AI Model", selection: Binding(get: { state.selection }, set: { state.selection = $0 }), options: [SelectionOption("Synthetic Saved Model", value: "saved")])
+                    .storebenchControlID("model.input")
+            }.environment(\.settingsPresentation, true).padding(20)
+        }
+    }
+
+    @Test func aFieldCommandStaysBesideItsInputAndDoesNotChangeTheSelection() async throws {
+        for width: CGFloat in [360, 720] {
+            let state = ContextState(), window = self.window(FieldWithAction(state: state).modifier(StorebenchAppearance()), width: width, height: 180)
+            defer { window.orderOut(nil); window.close() }
+            try await settle(window)
+            let root = try #require(window.contentView), input = try marker("model.input", in: root), refresh = try marker("model.refresh", in: root)
+            let field = root.convert(input.bounds, from: input), command = root.convert(refresh.bounds, from: refresh)
+            #expect(command.minX >= field.maxX && command.minX - field.maxX <= 9)
+            #expect(abs(field.midY - command.midY) < 1 && abs(command.width - StorebenchTheme.controlHeight) < 1)
+            #expect(command.maxX <= root.bounds.maxX && field.minX >= 0)
+            try click(refresh, in: window); try await settle(window)
+            #expect(state.refreshes == 1 && state.selection == "saved")
+        }
+    }
+
+    @Test func aRecordMenuStaysOutsideItsDisclosureAndAvailableWhenClosed() async throws {
+        for width: CGFloat in [360, 720] {
+            let editor = LanguageLayoutEditor(); editor.loaded(LanguageEditorLayout())
+            let content = StorebenchCollection(items: [StorebenchCollectionEntry(id: "synthetic-language", value: "en-US")], title: { _ in "Synthetic Language With a Longer Name" },
+                subtitle: { _ in "Saved Text · 2 Changed Fields" }, headerActions: { item in AnyView(
+                    LanguageLayoutControls(editor: editor, accountId: "synthetic-account", appId: "synthetic-app", session: nil, locale: item.value)
+                ) }, empty: "No Languages") { _ in Text("Synthetic language editor").storebenchControlID("synthetic-editor") }
+                .padding(20).frame(maxHeight: .infinity, alignment: .top).modifier(StorebenchAppearance())
+            let window = self.window(content, width: width, height: 280); defer { window.orderOut(nil); window.close() }
+            try await settle(window)
+            let root = try #require(window.contentView), disclosure = try marker("collection.disclosure.synthetic-language", in: root), menu = try marker("language.sections.en-US", in: root)
+            let heading = root.convert(disclosure.bounds, from: disclosure), action = root.convert(menu.bounds, from: menu)
+            #expect(menu.available && action.minX >= heading.maxX && action.minX - heading.maxX <= 9)
+            #expect(action.width == StorebenchTheme.controlHeight && action.maxX <= root.bounds.maxX - 20)
+            #expect(heading.minY <= action.midY && heading.maxY >= action.midY)
+            #expect(!descendants(root).contains { ($0 as? StorebenchControlMarker)?.identifier?.rawValue == "synthetic-editor" })
+            try click(disclosure, in: window); try await settle(window)
+            #expect(try marker("synthetic-editor", in: root).available)
+            #expect(root.convert(menu.bounds, from: menu) == action, "Opening a card must keep its context menu anchored to the header")
+            if width == 720 {
+                let bitmap = try #require(root.bitmapImageRepForCachingDisplay(in: root.bounds))
+                root.cacheDisplay(in: root.bounds, to: bitmap)
+                let scaleX = CGFloat(bitmap.pixelsWide) / root.bounds.width, scaleY = CGFloat(bitmap.pixelsHigh) / root.bounds.height
+                func ink(at y: CGFloat) -> Int {
+                    let rect = CGRect(x: action.minX * scaleX, y: y * scaleY, width: action.width * scaleX, height: action.height * scaleY).integral
+                    guard let base = bitmap.colorAt(x: Int(rect.minX + 1), y: Int(rect.minY + 1))?.usingColorSpace(.deviceRGB) else { return 0 }
+                    var count = 0
+                    for x in Int(rect.minX + 3)..<Int(rect.maxX - 3) {
+                        for y in Int(rect.minY + 3)..<Int(rect.maxY - 3) {
+                            guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                            if abs(color.redComponent - base.redComponent) + abs(color.greenComponent - base.greenComponent) + abs(color.blueComponent - base.blueComponent) > 0.3 { count += 1 }
+                        }
+                    }
+                    return count
+                }
+                #expect(max(ink(at: action.minY), ink(at: root.bounds.height - action.maxY)) > 4, "The menu target must draw its visible ellipsis")
+                let png = try #require(bitmap.representation(using: .png, properties: [:]))
+                try png.write(to: TestIsolation.require().appendingPathComponent("contextual-language-controls.png"))
+            }
+            editor.change([.privacy: false])
+            await editor.flush { _ in throw LanguageEditorLayout.Failure.invalid }
+            try await settle(window)
+            #expect(editor.failed && root.convert(menu.bounds, from: menu) == action, "Save feedback must not move the menu or resize the record header")
+        }
     }
 
     @Test func nativeSelectionUsesTheFullTitleAndDoesNotSubstituteMissingValues() async throws {
         let choices = Choices(), window = self.window(PickerExample(choices: choices)); defer { window.orderOut(nil); window.close() }
         try await settle(window)
         let root = try #require(window.contentView), popup = try #require(descendants(root).compactMap { $0 as? NSPopUpButton }.first)
-        #expect(!popup.isTransparent && popup.isBordered && popup.focusRingType == .none && !popup.pullsDown)
-        #expect(window.makeFirstResponder(popup) && window.firstResponder === popup, "The shared face retains the native keyboard focus target")
+        #expect(!popup.isTransparent && popup.isBordered && popup.focusRingType == .default && !popup.pullsDown)
+        #expect(window.makeFirstResponder(popup) && window.firstResponder === popup, "The native popup retains its system focus ring and keyboard focus target")
         #expect(popup.titleOfSelectedItem == "Synthetic First" && popup.toolTip?.contains("Synthetic First") == true)
         let long = String(repeating: "Synthetic model detail ", count: 12)
         choices.options = [SelectionOption(long, value: "first")]

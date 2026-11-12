@@ -22,8 +22,12 @@ extension WorkspaceSession {
         let review: PublishReview
         do { review = try await preparePublishing(account: account, request: source, client: client) }
         catch PublishFailure.versionRequired where source.targetMode == "release-plan" {
-            let setup = try await preparePublishing(account: account, request: .init(accountId: source.accountId, appId: source.appId, scope: .release), client: client)
-            review = setup.steps.isEmpty ? try await preparePublishing(account: account, request: source, client: client) : setup
+            let setup: PublishReview?
+            do { setup = try await preparePublishing(account: account, request: .init(accountId: source.accountId, appId: source.appId, scope: .release), client: client) }
+            catch PublishFailure.noChanges { setup = nil }
+            // Another client may have created the version since the first read. Its existence alone says nothing about its text.
+            if let setup, !setup.steps.isEmpty { review = setup }
+            else { review = try await preparePublishing(account: account, request: source, client: client) }
         }
         try Task.checkCancellation()
         let result = LanguageListingReview(source: source, review: review)

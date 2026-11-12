@@ -49,7 +49,7 @@ struct TestFlightBuildsView: View {
         locale = value["locale"]?.text ?? locale; whatToTest = draftNotes[locale] ?? notes[locale] ?? ""; review = nil
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             StorebenchMetricGrid(maximumColumns: 3) {
                     Fact(title: "Builds", value: state == "ready" ? "\(builds.count)" : "—")
                     Fact(title: "Missing Compliance", value: state == "ready" ? "\(builds.filter(\.missingCompliance).count)" : "—", info: "Builds that need an answer about encryption before testers can install them.")

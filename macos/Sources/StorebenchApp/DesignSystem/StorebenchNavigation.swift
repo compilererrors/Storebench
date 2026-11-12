@@ -2,6 +2,17 @@ import AppKit
 import StorebenchCore
 import SwiftUI
 
+/// Short links to sections of the same page. They wrap as text-sized targets instead of forming a command grid.
+struct StorebenchSectionLinks<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        StorebenchFlow(spacing: StorebenchTheme.space(1)) { content() }
+            .environment(\.naturalActions, true)
+            .buttonStyle(StorebenchButtonStyle(.quiet))
+            .accessibilityElement(children: .contain)
+    }
+}
+
 struct StorebenchNavigationTab<ID: Hashable>: Identifiable {
     let id: ID
     let title, icon: String
@@ -20,7 +31,7 @@ struct StorebenchNavigationTabs<ID: Hashable>: View {
     var body: some View {
         // All tabs share one row when it fits; when they wrap, the rows hold equal numbers of tabs.
         StorebenchMetricGrid(maximumColumns: max(1, items.count), minimumWidth: minimumWidth, evenRows: true, spacing: StorebenchTheme.design.number("navigation-gap")) { buttons }
-            .padding(StorebenchTheme.space(2) + 1)
+            .padding(StorebenchTheme.space(1) + 1)
             .background(StorebenchTheme.color("color-surface-sunken"), in: RoundedRectangle(cornerRadius: StorebenchTheme.radius))
             .overlay(RoundedRectangle(cornerRadius: StorebenchTheme.radius).strokeBorder(StorebenchTheme.border))
             .accessibilityElement(children: .contain).accessibilityLabel(label)
@@ -51,9 +62,8 @@ private struct StorebenchTabButton: View {
             StorebenchLabel(title, icon: icon, size: 16).font(.sbCallout.weight(selected ? .semibold : .medium)).lineLimit(2).multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity).padding(.horizontal, StorebenchTheme.space(3)).frame(height: StorebenchTheme.controlHeight)
                 .foregroundStyle(StorebenchTheme.color(selected ? "color-accent-muted" : "color-text-tertiary"))
-                .background(selected || hovering ? StorebenchTheme.color("color-surface-accent") : StorebenchTheme.surface, in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
-                .overlay(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius).strokeBorder(StorebenchTheme.color(selected ? "color-border-accent" : "color-border-control")))
-                .overlay(alignment: .bottom) { Rectangle().fill(selected ? StorebenchTheme.accent : .clear).frame(height: 3).padding(.horizontal, 7) }
+                .background(selected ? StorebenchTheme.surface : hovering ? StorebenchTheme.color("color-surface-subtle") : .clear, in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
+                .overlay(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius).strokeBorder(selected ? StorebenchTheme.border : .clear))
                 .overlay(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius).strokeBorder(focused ? StorebenchTheme.accent : .clear, lineWidth: 2))
                 .contentShape(Rectangle())
         }.buttonStyle(StorebenchPressStyle()).onHover { hovering = $0 }
@@ -90,9 +100,10 @@ struct StorebenchSidebarHeading: View {
     let title: String
     let expanded, focused: Bool
     let action: () -> Void
+    @State private var scrollFocus = StorebenchScrollFocus()
 
     var body: some View {
-        Button(action: action) {
+        Button { scrollFocus.preserving(action) } label: {
             HStack(spacing: StorebenchTheme.space(2)) {
                 Text(title).font(.sbCaption.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
@@ -102,7 +113,8 @@ struct StorebenchSidebarHeading: View {
                 .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
                 .overlay(StorebenchControlOutline(border: .clear, focusedOverride: focused))
                 .contentShape(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
-        }.buttonStyle(StorebenchPressStyle())
+        }.buttonStyle(StorebenchDisclosurePressStyle())
+            .background(StorebenchScrollFocusAnchor(focus: scrollFocus))
             .help((expanded ? "Collapse " : "Expand ") + title).accessibilityLabel(title)
             .accessibilityValue(expanded ? "Expanded" : "Collapsed").accessibilityAddTraits(.isHeader)
     }

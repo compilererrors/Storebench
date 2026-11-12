@@ -240,15 +240,22 @@ extension WorkspaceSession {
     public func approvePublishing(account: Account, appId: String, id: String, fingerprint: String, client: AppStoreConnectClient, now: @Sendable () -> Date = Date.init) async throws -> PublishReview {
         try requireSessionAccess()
         let lease = try lifetime.admit(.publishing); defer { lease.finish() }
+        let startingReview = try? publishReview(accountId: account.id, appId: appId, id: id)
         await invalidateAppleReads()
         do {
             let result = try await SessionContext.$lease.withValue(lease) {
                 try await approvePublishingAdmitted(account: account, appId: appId, id: id, fingerprint: fingerprint, client: client, now: now)
             }
-            await invalidateAppleReads(); discardReviewsAhead(accountId: account.id, appId: appId); return result
+            await invalidateAppleReads(); discardReviewsAhead(accountId: account.id, appId: appId)
+            if result.request.changesCountryPrices { await readPricingAfterPublishing(account: account, appId: appId, client: client) }
+            return result
         } catch {
             // A failed run can have completed earlier writes. No screen may reuse the pre-write observations.
-            await invalidateAppleReads(); discardReviewsAhead(accountId: account.id, appId: appId); throw error
+            await invalidateAppleReads(); discardReviewsAhead(accountId: account.id, appId: appId)
+            if startingReview?.state == "prepared", let review = try? publishReview(accountId: account.id, appId: appId, id: id), review.approvedAt != nil, review.request.changesCountryPrices {
+                await readPricingAfterPublishing(account: account, appId: appId, client: client)
+            }
+            throw error
         }
     }
     private func approvePublishingAdmitted(account: Account, appId: String, id: String, fingerprint: String, client: AppStoreConnectClient, now: @Sendable () -> Date) async throws -> PublishReview {
@@ -263,9 +270,20 @@ extension WorkspaceSession {
         guard review.state == "prepared" else { throw PublishFailure.used }
         guard review.fingerprint == fingerprint, let expires = ISO8601DateFormatter.storebench.date(from: review.expiresAt), expires > now() else { throw PublishFailure.expired }
         guard !review.steps.isEmpty else { throw PublishFailure.noChanges }
-        let fresh = try await publishPlan(account: account, request: review.request, client: client)
+        let fresh: PublishPlan
+        do { fresh = try await publishPlan(account: account, request: review.request, client: client) }
+        catch let failure as PublishFailure {
+            // A known refusal during revalidation is not an uncertain approval or a sendable review.
+            if case .refused(_, let problems) = failure {
+                review.state = "conflict"; review.error = failure.message; review.errorCode = failure.recoveryCode
+                review.problems = problems; review.updatedAt = CustomerReview.isoString(now())
+                _ = try savePublishReview(review, expected: revision)
+            }
+            throw failure
+        }
         guard fresh.fingerprint == review.fingerprint else {
             review.state = "conflict"; review.updatedAt = CustomerReview.isoString(now()); review.error = PublishFailure.conflict.message
+            review.errorCode = PublishFailure.conflict.recoveryCode
             _ = try savePublishReview(review, expected: revision)
             throw PublishFailure.conflict
         }
@@ -273,6 +291,7 @@ extension WorkspaceSession {
         try requirePublishingAccount(account, appId: appId, client: client)
         review.state = "running"; review.pid = getpid(); review.approvedAt = CustomerReview.isoString(now()); review.updatedAt = review.approvedAt!
         revision = try savePublishReview(review, expected: revision)
+        if review.request.changesCountryPrices { try invalidatePricing(accountId: account.id, appId: appId) }
         let grant = PublishGrant(accountId: account.id, appId: appId, reviewId: id)
         do {
             let startingReview = review, startingRevision = revision
@@ -325,6 +344,7 @@ extension WorkspaceSession {
             if let active = review.steps.firstIndex(where: { $0.state == "running" }) { review.steps[active].state = "failed" }
             review.state = "failed"
             review.error = Self.publishingError(error)
+            review.errorCode = (error as? PublishFailure)?.recoveryCode
             if case .refused(_, let problems)? = error as? PublishFailure { review.problems = problems }
         }
         review.pid = nil; review.updatedAt = CustomerReview.isoString(now())
@@ -423,26 +443,27 @@ extension WorkspaceSession {
         guard !id.isEmpty, id.count <= 512 else { throw PublishFailure.write("Invalid Apple publishing resource.") }
         if let cached = checked.items["\(type)\u{0}\(id)"] { return cached }
         var allowed = CharacterSet.alphanumerics; allowed.insert(charactersIn: "-_.")
-        // Apple sends a version's or app information's app link only when it is included.
-        let include = type == "appStoreVersions" || type == "appInfos" ? "?include=app" : ""
+        // Request the parent explicitly; a scoped forward read below also handles links-only replies.
+        let include = type == "appStoreVersions" || type == "appInfos" ? "?include=app" : type == "appStoreReviewDetails" ? "?include=appStoreVersion" : ""
         guard let item = try await client.get("/v1/\(type)/\(id.addingPercentEncoding(withAllowedCharacters: allowed) ?? id)\(include)").first, item.type == type, item.id == id else { throw PublishFailure.write("Apple publishing resource changed after review.") }
         if type == "appStoreVersions" || type == "appInfos" {
-            guard Apple.owned(item, "app", "apps", appId) else { throw PublishFailure.write("Apple publishing resource no longer belongs to the approved app.") }
+            guard Apple.owned(item, "app", "apps", appId) else { throw PublishFailure.ownership }
         } else {
-            guard let link = Self.parents[type] else { throw PublishFailure.write("Apple publishing resource has no approved app owner.") }
+            guard let link = Self.parents[type] else { throw PublishFailure.ownership }
             if let owner = Apple.owner(item, link.relation) {
-                guard owner.type == link.type else { throw PublishFailure.write("Apple publishing resource has no approved app owner.") }
+                guard owner.type == link.type else { throw PublishFailure.ownership }
                 _ = try await ownedResource(link.type, owner.id, appId: appId, client: client, checked: checked)
             } else {
-                guard try await listedOwner(type, id, appId: appId, client: client, checked: checked) else { throw PublishFailure.write("Apple publishing resource has no approved app owner.") }
+                // Missing linkage can be proved through the parent's path; malformed explicit linkage cannot.
+                if case .object(let relationship)? = item.relationships?[link.relation], let data = relationship["data"], data != .null { throw PublishFailure.ownership }
+                guard try await listedOwner(type, id, appId: appId, client: client, checked: checked) else { throw PublishFailure.ownership }
             }
         }
         checked.items["\(type)\u{0}\(id)"] = item
         return item
     }
 
-    /// Apple can leave a language's owner link out of a read of that language alone. The language is then owned when it is listed
-    /// under one of the approved app's own versions or app information, read through the app's paths.
+    /// Missing reverse links are proved by finding the exact resource through the approved app's own parent paths.
     private func listedOwner(_ type: String, _ id: String, appId: String, client: AppStoreConnectClient, checked: OwnershipCache) async throws -> Bool {
         let parents: [AppStoreConnectClient.Resource], children: (String) -> String, relation: String
         switch type {
@@ -453,10 +474,32 @@ extension WorkspaceSession {
         case "appInfoLocalizations":
             parents = try await client.list("/v1/apps/\(appId)/appInfos?include=app&limit=200").filter { $0.type == "appInfos" && Apple.owned($0, "app", "apps", appId) }
             children = { "/v1/appInfos/\($0)/appInfoLocalizations?limit=200" }; relation = "appInfo"
+        case "appStoreReviewDetails", "appStoreReviewAttachments":
+            return try await listedReviewOwner(type, id, appId: appId, client: client, checked: checked)
         default: return false
         }
         for parent in parents where try await client.list(children(parent.id)).contains(where: { $0.type == type && $0.id == id && Apple.within($0, relation, parent.type, parent.id) }) {
             checked.items["\(parent.type)\u{0}\(parent.id)"] = parent; checked.owners["\(type)\u{0}\(id)"] = (parent.type, parent.id)
+            return true
+        }
+        return false
+    }
+
+    private func listedReviewOwner(_ type: String, _ id: String, appId: String, client: AppStoreConnectClient, checked: OwnershipCache) async throws -> Bool {
+        let versions = try await client.list("/v1/apps/\(appId)/appStoreVersions?include=app&limit=200")
+        guard versions.allSatisfy({ $0.type == "appStoreVersions" && Apple.owned($0, "app", "apps", appId) }) else { throw PublishFailure.ownership }
+        for version in versions {
+            guard let detail = try await reviewDetail(versionId: version.id, client: client) else { continue }
+            if type == "appStoreReviewDetails" {
+                guard detail.id == id else { continue }
+            } else {
+                let attachments = try ReviewInformation.scopedAttachments(await client.list("/v1/appStoreReviewDetails/\(detail.id)/appStoreReviewAttachments?limit=200"), detailId: detail.id)
+                guard attachments.contains(where: { $0.id == id }) else { continue }
+                checked.owners["\(type)\u{0}\(id)"] = (detail.type, detail.id)
+            }
+            checked.items["\(version.type)\u{0}\(version.id)"] = version
+            checked.items["\(detail.type)\u{0}\(detail.id)"] = detail
+            checked.owners["\(detail.type)\u{0}\(detail.id)"] = (version.type, version.id)
             return true
         }
         return false

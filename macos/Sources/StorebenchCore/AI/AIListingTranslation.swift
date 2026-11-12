@@ -15,15 +15,24 @@ extension WorkspaceSession {
     }
 
     public func aiTranslationTarget(accountId: String, appId: String, revisionId: String, versionId: String, locale: String) throws -> [LanguageDrafts.Section] {
+        guard let result = try aiTranslationTargets(accountId: accountId, appId: appId, revisionId: revisionId, versionId: versionId, locales: [locale])[locale] else { throw DraftFailure.invalid }
+        return result
+    }
+    /// Target existence comes from the current saved version, including languages added by the previous batch.
+    public func aiTranslationTargets(accountId: String, appId: String, revisionId: String, versionId: String, locales: [String]) throws -> [String: [LanguageDrafts.Section]] {
         try requireHistoryScope(accountId: accountId, appId: appId)
+        guard Set(locales).count == locales.count, locales.allSatisfy({ StoreLocales.codes.contains($0) }) else { throw DraftFailure.invalid }
         let key = try TextDrafts.key(accountId: accountId, appId: appId, revisionId: revisionId)
         return try storeAccess { store in
             guard let document = try store.document(namespace: "revisions", key: key) else { throw DraftFailure.sourceMissing }
             let source = try JSONText.parse(document.payload)
             let draft = try store.document(namespace: "drafts", key: key).map { try JSONText.parse($0.payload) } ?? TextDrafts.empty(revisionId)
             let revision = Self.overlay(try JSONDecoder().decode(Revision.self, from: source.data), draft: draft)
-            let selections = try LanguageEditorState.selections(revision: revision, versionId: versionId, locale: locale)
-            return try LanguageDrafts.sections(source: source, draft: draft, selections: selections)
+            guard let version = revision.versions.first(where: { $0.id == versionId }) else { throw DraftFailure.invalid }
+            return try Dictionary(uniqueKeysWithValues: locales.filter { locale in version.localizations.contains { $0.locale == locale } }.map { locale in
+                let selections = try LanguageEditorState.selections(revision: revision, versionId: versionId, locale: locale)
+                return (locale, try LanguageDrafts.sections(source: source, draft: draft, selections: selections))
+            })
         }
     }
     /// Both source and target are checked under the existing draft mutex. Translation never holds that mutex over a model request.

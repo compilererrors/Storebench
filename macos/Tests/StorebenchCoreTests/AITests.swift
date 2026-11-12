@@ -49,6 +49,34 @@ import Testing
         #expect(try await session.aiJobs(accountId: account, appId: app).first?.state == .complete)
         #expect(try await session.publishHistory(accountId: account, appId: app).isEmpty)
     }
+    @Test func claudeListsModelsAndTranslatesThroughItsOwnSavedConnection() async throws {
+        let (session, root, writer, connection) = try await connected(.anthropic)
+        defer { try? FileManager.default.removeItem(at: root) }
+        StubProtocol.handle("api.openai.com") { _ in
+            Issue.record("A Claude task must never use the other provider's connection")
+            return (500, [:], Data())
+        }
+        let other = try await session.saveAIConnection(provider: .openai, model: "synthetic-other-model", apiKey: "synthetic-other-key", expected: 0, writer: writer)
+        StubProtocol.handle("api.anthropic.com") { request in
+            #expect(request.value(forHTTPHeaderField: "x-api-key") == "synthetic-ai-key")
+            #expect(request.value(forHTTPHeaderField: "anthropic-version") == "2023-06-01")
+            if request.url?.path == "/v1/models" {
+                return (200, [:], JSONText.object([("data", .array([.object([("id", .string("synthetic-model")), ("display_name", .string("Synthetic Claude Model"))])])), ("has_more", .bool(false))]).data)
+            }
+            #expect(request.url?.path == "/v1/messages" && request.httpMethod == "POST")
+            let body = (try? JSONText.parse(StubProtocol.body(request))) ?? .null
+            #expect(body["model"] == .string("synthetic-model"))
+            let text = JSONText.object([("translations", .array([.string("Synthetic translated copy")]))]).stringify()
+            return (200, [:], JSONText.object([("stop_reason", .string("end_turn")), ("content", .array([.object([("type", .string("text")), ("text", .string(text))])]))]).data)
+        }
+        let models = try await session.availableAIModels(connection)
+        #expect(models.map(\.id) == ["synthetic-model"] && models.first?.name == "Synthetic Claude Model")
+        let translated = try await session.translateWithAI(accountId: account, appId: app, provider: .anthropic, texts: ["Synthetic source"], source: "en-US", target: "sv")
+        #expect(translated == ["Synthetic translated copy"])
+        #expect(try await session.aiConnections().contains(other))
+        #expect(try await session.publishHistory(accountId: account, appId: app).isEmpty)
+        #expect(StubProtocol.requests("api.openai.com").isEmpty)
+    }
     @Test func malformedResultsAndQuotaFailuresStayRetryableWithoutChangingDrafts() async throws {
         let (session, root, _, _) = try await connected(); defer { try? FileManager.default.removeItem(at: root) }
         let bad = reply([])
@@ -99,8 +127,49 @@ import Testing
         let (session, root, _, _) = try await connected(); defer { try? FileManager.default.removeItem(at: root) }
         let oversized = reply([String(repeating: "x", count: 31)])
         StubProtocol.handle("api.openai.com") { _ in (200, [:], oversized) }
-        await #expect(throws: AIFailure.response) { try await session.translateWithAI(accountId: account, appId: app, provider: .openai, texts: ["Synthetic subtitle"], source: "en-US", target: "sv", fields: ["subtitle"]) }
+        await #expect(throws: TranslationLengthFailure.self) { try await session.translateWithAI(accountId: account, appId: app, provider: .openai, texts: ["Synthetic subtitle"], source: "en-US", target: "sv", fields: ["subtitle"]) }
         #expect(try await session.aiJobs(accountId: account, appId: app).first?.result == nil)
+        #expect(try await session.aiJobs(accountId: account, appId: app).first?.failure == .translationLength)
+        #expect(try await session.aiJobs(accountId: account, appId: app).first?.failureDetail?.contains("Subtitle still uses 31 of 30") == true)
+        #expect(StubProtocol.requests("api.openai.com").count == 4)
+    }
+
+    @Test func lengthRepairsUseTheSelectedModelAndCompletedFittingIsCached() async throws {
+        let (session, root, _, _) = try await connected(); defer { try? FileManager.default.removeItem(at: root) }
+        let initial = reply([String(repeating: "x", count: 31), "Syntetisk beskrivning"]), repaired = reply(["Kort syntetisk text"])
+        StubProtocol.handle("api.openai.com") { request in
+            let body = (try? JSONText.parse(StubProtocol.body(request))) ?? .null
+            #expect(body["model"] == .string("synthetic-selected-model"))
+            return (200, [:], body["instructions"]?.text?.hasPrefix("Rewrite") == true ? repaired : initial)
+        }
+        for _ in 0..<2 {
+            let result = try await session.translateWithAI(accountId: account, appId: app, provider: .openai,
+                texts: ["Synthetic subtitle", "Synthetic description"], source: "en-US", target: "sv", fields: ["subtitle", "description"], model: "synthetic-selected-model")
+            #expect(result == ["Kort syntetisk text", "Syntetisk beskrivning"])
+        }
+        #expect(StubProtocol.requests("api.openai.com").count == 2)
+        let job = try #require(try await session.aiJobs(accountId: account, appId: app).first)
+        #expect(job.state == .complete && job.connection.model == "synthetic-selected-model")
+        #expect(try await session.publishHistory(accountId: account, appId: app).isEmpty)
+    }
+
+    @Test func aConnectionChangedDuringRewordingCannotCommitItsAnswer() async throws {
+        let (session, root, writer, connection) = try await connected(); defer { try? FileManager.default.removeItem(at: root) }
+        let initial = AnalyticsJobDelayStubProtocol.Gate(), repair = AnalyticsJobDelayStubProtocol.Gate()
+        defer { initial.release(); repair.release() }
+        AnalyticsJobDelayStubProtocol.register("api.openai.com", gate: initial, bytes: reply([String(repeating: "x", count: 31)]))
+        try await session.configureSyntheticAI(gated: true)
+        let task = Task { try await session.translateWithAI(accountId: account, appId: app, provider: .openai,
+            texts: ["Synthetic subtitle"], source: "en-US", target: "sv", fields: ["subtitle"]) }
+        try await waitForResponse(initial)
+        AnalyticsJobDelayStubProtocol.register("api.openai.com", gate: repair, bytes: reply(["Kort text"]))
+        initial.release()
+        try await waitForResponse(repair)
+        _ = try await session.saveAIConnection(provider: .openai, model: "new-synthetic-model", apiKey: "", expected: connection.revision, writer: writer)
+        repair.release()
+        await #expect(throws: AIFailure.changed) { try await task.value }
+        let job = try #require(try await session.aiJobs(accountId: account, appId: app).first)
+        #expect(job.state == .failed && job.result == nil && job.failure == .changed)
     }
     private actor ConcurrencyProbe {
         var active = 0, peak = 0
@@ -118,6 +187,14 @@ import Testing
             #expect(completed == 6)
         }
         #expect(await probe.peak == 2)
+    }
+    @Test func localModelQueueRunsOnlyOneRequestAtATime() async throws {
+        let queue = AIWorkQueue(limit: 1), probe = ConcurrencyProbe()
+        try await withThrowingTaskGroup(of: JSONText.self) { group in
+            for _ in 0..<6 { group.addTask { try await queue.run { try await probe.work() } } }
+            for try await _ in group { }
+        }
+        #expect(await probe.peak == 1)
     }
     @Test func translationsPreserveExistingTextAndRejectAChangedSource() async throws {
         let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }

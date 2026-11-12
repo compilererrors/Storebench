@@ -111,8 +111,9 @@ extension EnvironmentValues {
 /// Installed inside the page's primary scroll view, never in an editor or text track.
 struct StorebenchScrollCheckpoint: NSViewRepresentable {
     @Environment(\.navigationPresentation) private var context
+    @Environment(\.pageFocusInteraction) private var interaction
     func makeNSView(context: Context) -> CheckpointView { CheckpointView() }
-    func updateNSView(_ view: CheckpointView, context: Context) { view.configure(self.context) }
+    func updateNSView(_ view: CheckpointView, context: Context) { view.configure(self.context, interaction: interaction) }
     static func dismantleNSView(_ view: CheckpointView, coordinator: ()) { view.retire() }
 
     final class CheckpointView: NSView {
@@ -124,13 +125,15 @@ struct StorebenchScrollCheckpoint: NSViewRepresentable {
         private var lastOffset: CGPoint = .zero
         private var applying = false
         private var ready = false
+        private var interaction: (() -> Void)?
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             if window == nil { capture(); lifetime.end(); owner = nil }
             else { if !lifetime.active, context != nil { start() } else { attach() } }
         }
         isolated deinit { lifetime.end() }
-        func configure(_ next: NavigationPresentationContext?) {
+        func configure(_ next: NavigationPresentationContext?, interaction: (() -> Void)? = nil) {
+            self.interaction = interaction
             guard context?.entry != next?.entry || context?.store !== next?.store else { attach(); return }
             capture(); lifetime.end(); owner = nil; context = next; ready = false
             restoration = ScrollRestoration(next.map { $0.store.offset($0.entry) })
@@ -166,13 +169,14 @@ struct StorebenchScrollCheckpoint: NSViewRepresentable {
                 else { view.recordOffset() }
             }
             if let document = scroll.documentView { observe(NSView.frameDidChangeNotification, object: document) { $0.restore() } }
-            observe(NSScrollView.willStartLiveScrollNotification, object: scroll) { view in view.cancelForInput() }
-            let inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .keyDown, .leftMouseDown]) { [weak self] event in
+            observe(NSScrollView.willStartLiveScrollNotification, object: scroll) { view in view.userInteracted() }
+            observe(StorebenchNestedScrolling.didRedirect, object: scroll) { view in view.userInteracted() }
+            let inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .keyDown, .leftMouseDown, .rightMouseDown]) { [weak self] event in
                 MainActor.assumeIsolated {
                     guard let self, let owner = self.owner, event.window === owner.window else { return }
                     let focused = owner.window?.firstResponder as? NSView
                     let point = owner.convert(event.locationInWindow, from: nil)
-                    if event.type == .keyDown ? focused?.isDescendant(of: owner) == true : owner.bounds.contains(point) { self.cancelForInput() }
+                    if event.type == .keyDown ? focused?.isDescendant(of: owner) == true : owner.bounds.contains(point) { self.userInteracted() }
                 }
                 return event
             }
@@ -192,6 +196,7 @@ struct StorebenchScrollCheckpoint: NSViewRepresentable {
             recordOffset()
         }
         private func cancelForInput() { restoration.cancel(); recordOffset() }
+        private func userInteracted() { cancelForInput(); interaction?() }
         private func recordOffset() {
             guard !applying, restoration.target == nil, let owner else { return }
             lastOffset = owner.contentView.bounds.origin; observedSize = owner.documentView?.bounds.size ?? .zero
@@ -201,6 +206,6 @@ struct StorebenchScrollCheckpoint: NSViewRepresentable {
             guard !applying, restoration.target == nil, let context else { return }
             context.store.save(lastOffset, for: context.entry)
         }
-        func retire() { capture(); lifetime.end(); owner = nil; context = nil }
+        func retire() { capture(); lifetime.end(); owner = nil; context = nil; interaction = nil }
     }
 }

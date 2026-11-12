@@ -9,15 +9,14 @@ struct ShortcutSettingsView: View {
     private struct Edit: Identifiable { let id = UUID(); let command: ShortcutCommand }
     var body: some View {
         StorebenchForm {
-            Card(title: "Keyboard shortcuts", subtitle: "Customize actions and navigation. Shortcuts apply to the active window. Command+Comma always opens Settings.") {
-                HStack(spacing: StorebenchTheme.space(3)) {
-                    StorebenchSearchField("Search actions or sections", text: $query)
-                    Button("Restore Defaults") { if settings?.recording != true { restoring = true } }.storebenchWorking(settings?.recording == true).fixedSize()
-                }
+            Card(title: "Keyboard shortcuts", subtitle: "Customize actions and navigation. Shortcuts apply to the active window. Command+Comma always opens Settings.",
+                 accessory: AnyView(Button("Restore Defaults") { if settings?.recording != true { restoring = true } }.storebenchWorking(settings?.recording == true))) {
+                StorebenchSearchField("Search actions or sections", text: $query)
                 StorebenchFeedback(text: settings?.issue ?? "", height: 48)
                 Text("Tab moves between controls. Arrow keys move focus in the sidebar and section tabs; Return or Space opens the focused section. Next section: \(settings?.keymap.binding(.nextSection)?.display ?? "Unassigned"). Previous section: \(settings?.keymap.binding(.previousSection)?.display ?? "Unassigned").")
                     .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
             }
+            .settingsSearchAnchor("shortcuts-keyboard")
             ForEach(["Actions", "Navigation"], id: \.self) { group in
                 let commands = ShortcutCommand.allCases.filter { $0.group == group && (query.isEmpty || $0.title.localizedCaseInsensitiveContains(query)) }
                 if !commands.isEmpty {

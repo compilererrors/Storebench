@@ -15,7 +15,7 @@ import Testing
                     #expect(frame.minX >= 0 && frame.maxX <= width && frame.maxY <= layout.height)
                     for earlier in layout.frames.prefix(index) { #expect(!frame.intersects(earlier)) }
                 }
-                if width >= (pageSize ? 650 : 488) { #expect(layout.frames.allSatisfy { $0.minY == 0 }) }
+                if width >= (pageSize ? 380 : 280) { #expect(layout.frames.allSatisfy { $0.minY == 0 }) }
                 else { #expect(layout.frames[1].minY >= layout.frames[0].maxY + 8) }
             }
         }
@@ -56,9 +56,9 @@ import Testing
         #expect(design.number("space-4") + 32 / 2 == toolbar / 2)
         for width in [1920.0, 1440, 1001, 1000, 768, 701, 700, 390] {
             let insets = ComponentLayout.pageInsets(viewportWidth: width)
-            #expect(insets.horizontal == (width > 1000 ? 48 : width > 700 ? 28 : 20))
-            #expect(insets.top == (width > 700 ? 32 : 24))
-            #expect(insets.top >= design.number("space-6"))
+            #expect(insets.horizontal == (width > 1000 ? 24 : width > 700 ? 20 : 16))
+            #expect(insets.top == (width > 700 ? 24 : 16))
+            #expect(insets.top >= design.number("space-4"))
         }
     }
 
@@ -97,6 +97,18 @@ import Testing
                     if count == 0 { #expect(layout.height == 0) }
                 }
             }
+        }
+    }
+
+    @Test func contextualFootersSpanTheFormInsteadOfShrinkingIntoButtonCells() {
+        for width in [320.0, 600, 1096] {
+            let layout = ComponentLayout.actionGrid(width: width, heights: [32, 32, 140, 32, 32], trailing: true, fullWidth: [2])
+            #expect(layout.frames[2].width == width && layout.frames[2].minX == 0)
+            #expect(layout.frames[2].minY >= layout.frames[1].maxY)
+            #expect(layout.frames[3].minY >= layout.frames[2].maxY)
+            #expect(layout.frames.enumerated().allSatisfy { $0.offset == 2 || $0.element.width == 192 })
+            for index in 1..<layout.frames.count { #expect(!layout.frames[index].intersects(layout.frames[index - 1])) }
+            #expect(layout.frames.last.map { Double($0.maxY) } == layout.height)
         }
     }
 
@@ -190,7 +202,7 @@ import Testing
                 }
             }
         }
-        #expect(ComponentLayout.navigationRow(width: 1088, textHeight: 61).height + 40 == 112)
+        #expect(ComponentLayout.navigationRow(width: 1088, textHeight: 61).height + 2 * StorebenchDesign.shared.number("panel-padding") == 112)
     }
 
     @Test func adaptiveGridsPreserveRowsWhenTextOrRecordsExpand() {
@@ -219,14 +231,14 @@ import Testing
     }
 
     @Test func labelsHintsAndTableTextHaveReservedFootprints() {
-        #expect(ComponentLayout.fieldHeight() == 108)
-        #expect(ComponentLayout.fieldHeight(hint: false) == 67)
-        #expect(ComponentLayout.fieldHeight(hintHeight: 17) == 91)
-        #expect(ComponentLayout.fieldHeight(control: 110) == 176)
+        #expect(ComponentLayout.fieldHeight() == 90)
+        #expect(ComponentLayout.fieldHeight(hint: false) == 66)
+        #expect(ComponentLayout.fieldHeight(hintHeight: 17) == 89)
+        #expect(ComponentLayout.fieldHeight(control: 110) == 158)
         #expect(ComponentLayout.fieldHeight(label: false, hint: false) == 42)
-        #expect(ComponentLayout.tableRowHeight(lines: 2) == 53)
-        #expect(ComponentLayout.tableRowHeight(lines: 3) == 53)
-        #expect(ComponentLayout.tableRowHeight(lines: 4) == 53)
+        #expect(ComponentLayout.tableRowHeight(lines: 2) == 44)
+        #expect(ComponentLayout.tableRowHeight(lines: 3) == 44)
+        #expect(ComponentLayout.tableRowHeight(lines: 4) == 44)
         #expect(abs(ComponentLayout.textareaHeight() - 105.2) < 0.001)
         #expect(abs(ComponentLayout.textareaHeight(rows: 2) - 63.6) < 0.001)
     }
@@ -372,12 +384,12 @@ import Testing
         }
     }
 
-    @Test func smallDialogFieldsFollowTheActualWebMinimumAndSubgridSpacing() {
+    @Test func smallDialogFieldsKeepTheirSharedColumnAndCompactRowSpacing() {
         let design = StorebenchDesign.shared
         let grid = ComponentLayout.grid(width: 436, heights: Array(repeating: ComponentLayout.fieldHeight() + design.dimension("formBottomPadding"), count: 6), maximum: 2, minimumWidth: design.dimension("formMinimumWidth"), rowSpacing: design.dimension("formRowGap"))
         #expect(grid.columns == 1)
-        #expect(grid.rowHeights == Array(repeating: 116, count: 6))
-        #expect(grid.rowOffsets == [0, 123, 246, 369, 492, 615])
+        #expect(grid.rowHeights == Array(repeating: 90, count: 6))
+        #expect(grid.rowOffsets == [0, 102, 204, 306, 408, 510])
     }
 
     @Test func wideAndOrdinaryDialogsRemainInsideTheirOwningViewport() {

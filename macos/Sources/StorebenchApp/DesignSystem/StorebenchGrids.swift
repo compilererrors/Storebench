@@ -67,7 +67,7 @@ struct StorebenchFormGrid<Content: View>: View {
     @Environment(\.settingsPresentation) private var settingsPresentation
     var body: some View {
         StorebenchMetricGrid(maximumColumns: settingsPresentation ? 1 : maximumColumns, minimumWidth: minimumWidth,
-                             rowSpacing: settingsPresentation ? StorebenchTheme.gap : StorebenchTheme.measure("formRowGap"),
+                             rowSpacing: settingsPresentation ? StorebenchTheme.space(2) : StorebenchTheme.measure("formRowGap"),
                              bottomPadding: settingsPresentation ? 0 : StorebenchTheme.measure("formBottomPadding"), keepColumns: keepColumns) { content() }
     }
 }

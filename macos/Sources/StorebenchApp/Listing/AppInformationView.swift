@@ -35,7 +35,7 @@ struct AppInformationView: View {
     private func children(_ parent: String?) -> [AppCategory] { editor.categoryChoices.filter { $0.parentId != nil && $0.parentId == parent } }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             if checklist, editor.informationReady {
                 StorebenchChecklist(rows: [
                     .init(id: "rights", title: "Content Rights", done: editor.information?.contentRights?.isEmpty == false),
@@ -48,7 +48,7 @@ struct AppInformationView: View {
                 StorebenchFeedback(text: status, height: 40)
                 if let draft, !draft.loaded { LocalDraftActions(editor: draft, value: editor.localDraft, restore: { editor.restoreLocalDraft($0) }, blocked: busy) }
             }
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
                 if parts.contains(.categories) { informationCard.id("release-info-categories"); reviewPanel(.categories) }
                 if parts.contains(.ageRating) { ageCard.id("release-info-age-rating"); reviewPanel(.ageRating) }
                 if parts.contains(.accessibility) { accessibilityCard.id("release-info-accessibility"); reviewPanel(.accessibility) }
@@ -61,6 +61,15 @@ struct AppInformationView: View {
             }.storebenchWorking(busy || draft?.loaded != true)
         }
         .trackUnsavedChanges(draft?.dirty(editor.localDraft) ?? editor.dirty, busy: busy || draft?.busy == true, onSave: { await draft?.saveCurrent(value: { editor.localDraft }) == true })
+        .pageRefreshParticipant(readKey,
+            state: { .init(dirty: draft?.dirty(editor.localDraft) ?? editor.dirty, busy: busy || draft?.busy == true, signature: editor.localDraft.sha256) },
+            save: { await draft?.saveCurrent(value: { editor.localDraft }) == true }, discard: {
+                guard !busy, let baseline = draft?.baseline else { return false }
+                editor.restoreLocalDraft(baseline); review = nil; return draft?.dirty(editor.localDraft) == false
+            }, refresh: {
+                guard !busy else { return false }; if review?.state != "running" { review = nil }
+                await load(fresh: true); return status.isEmpty && ageStatus.isEmpty && accessibilityStatus.isEmpty
+            })
         .historyValue("app-information", Binding(get: { Choices(query: query, family: family) }, set: { query = $0.query; family = $0.family }))
         .task {
             // Apple's answers last read in this window show at once, read-only while they are read again.
@@ -217,17 +226,17 @@ struct AppInformationView: View {
             if editor.informationReady && editor.information?.availabilityError == nil {
             StorebenchTextField("Search countries", text: $query).storebenchFormColumn()
             StorebenchCollection(items: editor.ordinaryTerritories.filter { query.isEmpty || (WorkspaceSession.countryName($0.id) + " " + $0.id).range(of: query, options: [.caseInsensitive, .literal]) != nil }, title: { WorkspaceSession.countryName($0.id) }, subtitle: { $0.available ? "Selected at Apple" : "Not selected at Apple" }, empty: query.isEmpty ? "No supported region changes are available." : "No countries or regions match. Change or clear the search.") { territory in
-                HStack {
+                StorebenchActionRow {
                     Text(WorkspaceSession.countryName(territory.id)).fixedSize(horizontal: false, vertical: true)
-                    Spacer()
                     Text(territory.available ? "Selected at Apple" : "Not selected at Apple").foregroundStyle(StorebenchTheme.muted)
+                } actions: {
                     Button(territory.available ? "Review Removal" : "Review Selection") { Task { await prepareRegion(territory) } }.buttonStyle(StorebenchButtonStyle(.quiet))
                 }
             }
             } else if reading(editor.informationReady) {
                 StorebenchTextField("Search countries", text: .constant("")).storebenchFormColumn().storebenchPlaceholder()
                 ForEach(0..<5, id: \.self) { _ in
-                    HStack { Text("Country or region name"); Spacer(); Text("Not selected at Apple"); Button("Review Selection") {}.buttonStyle(StorebenchButtonStyle(.quiet)) }.storebenchPlaceholder()
+                    StorebenchActionRow { Text("Country or region name"); Text("Not selected at Apple") } actions: { Button("Review Selection") {}.buttonStyle(StorebenchButtonStyle(.quiet)) }.storebenchPlaceholder()
                 }
             } else if !editor.informationReady { notReady }
         }

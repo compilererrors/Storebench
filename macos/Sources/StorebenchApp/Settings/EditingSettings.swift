@@ -23,6 +23,7 @@ struct EditingSettings: View {
                     }
                 }
             }
+            .settingsSearchAnchor("editing-drafts")
             StorebenchFormSection("Confirmations") {
                 Text("Removing or discarding work on this Mac asks first. Turn a question off here, or choose Don't ask again when it appears. Changes at App Store Connect always show a review you approve.")
                     .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
@@ -34,6 +35,7 @@ struct EditingSettings: View {
                 }
                 StorebenchFeedback(text: confirmationStatus, height: 40, error: !confirmationStatus.isEmpty)
             }
+            .settingsSearchAnchor("editing-confirmations")
         }.storebenchWorking(working)
             .trackUnsavedChanges(baseline.map { $0 != enabled } ?? false, busy: working, problem: { problem ? "Automatically save local drafts: " + status : nil }, onSave: { await save(); return baseline == enabled })
             .task {

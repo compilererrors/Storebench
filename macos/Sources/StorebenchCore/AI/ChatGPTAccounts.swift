@@ -54,7 +54,7 @@ extension WorkspaceSession {
             let nonce = try ChatGPTOAuth.random(), verifier = try ChatGPTOAuth.random(), id = UUID().uuidString.lowercased()
             let authorization = try ChatGPTOAuth.authorize(profile: selected, host: host, redirect: redirect, state: state, nonce: nonce, verifier: verifier, hint: hint)
             let attempt = ChatGPTSignIn(id: id, authorizationURL: authorization, profile: selected, connection: try aiConnection(.chatgpt), redirect: redirect, state: state, nonce: nonce, verifier: verifier, created: .now)
-            chatGPTAttempts = chatGPTAttempts.filter { $0.value.created.duration(to: .now) < .seconds(180) }
+            chatGPTAttempts = chatGPTAttempts.filter { $0.value.created.duration(to: .now) < ChatGPTOAuth.signInLifetime }
             guard chatGPTAttempts.count < 8 else { throw AIFailure.unavailable }
             chatGPTAttempts[id] = attempt; return attempt
         }
@@ -62,8 +62,8 @@ extension WorkspaceSession {
     public func cancelChatGPTSignIn(_ id: String) { chatGPTAttempts[id] = nil; chatGPTSignInTasks[id]?.cancel() }
     public func finishChatGPTSignIn(_ attempt: ChatGPTSignIn, callback: URL, writer: VaultWriter) async throws -> ChatGPTSignInResult {
         _ = try chatGPTWriter(writer)
-        guard let pending = chatGPTAttempts.removeValue(forKey: attempt.id), pending.state == attempt.state,
-              pending.created.duration(to: .now) < .seconds(180) else { throw AIFailure.identity }
+        guard let pending = chatGPTAttempts.removeValue(forKey: attempt.id), pending.state == attempt.state else { throw AIFailure.identity }
+        guard pending.created.duration(to: .now) < ChatGPTOAuth.signInLifetime else { throw AIFailure.signInExpired }
         let result = try ChatGPTOAuth.callback(callback, attempt: pending)
         let lease = try lifetime.admit(.ai)
         let task = Task { [self] in

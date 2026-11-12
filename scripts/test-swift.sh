@@ -40,6 +40,7 @@ root=$(cd "$root" && pwd -P)
 children=()
 cleanup() {
   for child in "${children[@]:-}"; do [ -n "$child" ] && kill "$child" 2>/dev/null || true; done
+  for child in "${children[@]:-}"; do [ -n "$child" ] && wait "$child" 2>/dev/null || true; done
   rm -rf "$root"
 }
 trap cleanup EXIT
@@ -81,7 +82,7 @@ native_env=(PATH=/usr/bin:/bin:/usr/sbin:/sbin USER="$(id -un)" LOGNAME="$(id -u
   SWIFTPM_MODULECACHE_OVERRIDE="$root/swift-cache" xcrun_nocache=1
   STOREBENCH_TEST_MODE=1 STOREBENCH_TEST_ROOT="$root" STOREBENCH_TEST_TOKEN="$token")
 in_env() { (cd "$source" && /usr/bin/env -i "${native_env[@]}" "$@"); }
-scrub() { sed -e "s#$source#macos#g" -e "s#$root#<isolated-run>#g" -e "s#$home#<user-home>#g"; }
+scrub() { LC_ALL=C sed -e "s#$source#macos#g" -e "s#$root#<isolated-run>#g" -e "s#$home#<user-home>#g"; }
 log="$root/native.log"
 # Loader variables are set after sandbox-exec starts; protected launchers strip inherited DYLD variables.
 run() {
@@ -187,8 +188,10 @@ if [ $tests = 1 ]; then
   done
   # Execute the compiled test bundle directly; SwiftPM test would replan the build.
   bundle="$build/release/StorebenchPackageTests.xctest/Contents/MacOS/StorebenchPackageTests"
-  run "$sandbox" /usr/bin/env DYLD_FRAMEWORK_PATH="$platform/Developer/Library/Frameworks" "$testing_helper" --test-bundle-path "$bundle" --testing-library swift-testing
+  # Suites share AppKit's windows and event loop. Concurrent behavior is exercised explicitly inside each test.
+  run "$sandbox" /usr/bin/env DYLD_FRAMEWORK_PATH="$platform/Developer/Library/Frameworks" "$testing_helper" --test-bundle-path "$bundle" --testing-library swift-testing --no-parallel
   output=$(scrub < "$log")
+  /usr/bin/touch "$root/.test-complete"
   for child in "${children[@]}"; do wait "$child" || fail "A guarded native lock fixture failed."; done
   children=()
   grep -Eq 'Test run with [1-9][0-9]* tests( in [0-9]+ suites)? passed' <<< "$output" && ! grep -qw skipped <<< "$output" ||

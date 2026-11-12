@@ -7,7 +7,11 @@ import Observation
     public let workflow: ListingSaveWorkflow
     public let autosave = DraftAutosave()
     @ObservationIgnored public var didChange: @MainActor () -> Void = {}
-    public private(set) var editor: LanguageEditorState? { didSet { changed() } }
+    public private(set) var editor: LanguageEditorState? {
+        didSet { let next = editor?.dirty == true; if next != dirty { dirty = next }; changed() }
+    }
+    /// Kept apart from the text, so a list of languages refreshes when a language gains or loses unsaved edits, not on every keystroke.
+    public private(set) var dirty = false
     public private(set) var latest: [LanguageDrafts.Section]?
     public private(set) var loading = false { didSet { changed() } }
     public private(set) var saving = false { didSet { changed() } }
@@ -24,7 +28,6 @@ import Observation
     @ObservationIgnored private var operation: UUID?
     @ObservationIgnored private var registration: UUID?
     @ObservationIgnored private var observer: UUID?
-    public var dirty: Bool { editor?.dirty == true }
     public var busy: Bool { loading || saving || readingLatest || auxiliaryBusy || dialogOpen }
     public var problem: String? {
         guard let editor else { return "Read the saved language text before continuing." }
@@ -32,6 +35,12 @@ import Observation
     }
     public var state: ListingSaveWorkflow.State {
         .init(dirty: dirty, blocked: !active || busy || editor == nil || needsComparison || problem != nil, signature: editor?.signature ?? "Unread language text")
+    }
+    public var publishingReady: Bool { registration.map { workflow.ready(only: [$0]) } ?? false }
+    public func runText(prepare: (@MainActor () async throws -> Void)? = nil) async -> ListingSaveWorkflow.Result {
+        guard active, let registration else { return .init(id: UUID(), saves: 0, prepared: false, failure: .cancelled) }
+        autosave.cancelPending()
+        return await workflow.run(only: [registration], prepare: prepare)
     }
 
     public init(scope: MediaDraftScope, versionId: String, locale: String, selections: [LanguageDrafts.Selection], workflow shared: ListingSaveWorkflow? = nil,
@@ -79,7 +88,8 @@ import Observation
     @discardableResult public func save(automatic: Bool = false) async -> Bool {
         guard active, !busy, !needsComparison, let snapshot = editor, !Task.isCancelled else { return false }
         do {
-            let entries = try snapshot.entries(); if entries.isEmpty { return true }
+            let entries = try snapshot.entries()
+            if entries.isEmpty { status = "Language draft is already saved on this Mac."; return true }
             if !automatic { autosave.resume() }
             let ticket = begin(); saving = true; defer { if owns(ticket) { operation = nil; saving = false } }
             do {
@@ -118,7 +128,7 @@ import Observation
         } catch { status = Self.message(error) }
     }
     public func publishingRequest(targetMode: String) throws -> PublishRequest {
-        guard active, !state.blocked, !dirty, let editor else { throw PublishFailure.invalid("Confirm and save the language text before preparing its App Store review.") }
+        guard active, let registration, workflow.inputsReady(only: [registration]), let editor else { throw PublishFailure.invalid("Confirm and save the language text and version plan before preparing its App Store review.") }
         var request = try editor.publishingRequest(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId, versionId: versionId, targetMode: targetMode)
         request.listingLocale = locale
         return try request.validated()

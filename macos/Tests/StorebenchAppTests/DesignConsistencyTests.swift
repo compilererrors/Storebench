@@ -57,6 +57,109 @@ import Testing
     }
 
     @MainActor @Observable final class DisclosureState { var expanded = false; var mounts = 0 }
+    @MainActor @Observable final class FeedbackState { var text = "" }
+
+    @MainActor private final class SignInReceiver: ChatGPTSignInReceiving {
+        var starts = 0, cancelled = false
+        private var waiter: CheckedContinuation<URL, Error>?
+        func start() async throws -> URL {
+            starts += 1
+            return URL(string: "http://127.0.0.1:49152/auth/callback")!
+        }
+        func wait() async throws -> URL {
+            if cancelled { throw CancellationError() }
+            return try await withCheckedThrowingContinuation { waiter = $0 }
+        }
+        func cancel() { cancelled = true; waiter?.resume(throwing: CancellationError()); waiter = nil }
+    }
+
+    @Test func chatGPTButtonStartsOneBrowserAttemptEvenWhenPressedTwice() async throws {
+        let root = try TestIsolation.require().appendingPathComponent("synthetic-sign-in-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = Workspace(root: root), writer = VaultWriter(dataRoot: root, storage: MemoryVaultStorage())
+        let model = WorkspaceController(workspace: workspace, writer: writer, backupDelay: .seconds(3600), availabilityDelay: .seconds(3600), releaseWarmDelay: nil)
+        await model.start(); await model.setUp(password: nil)
+        let receiver = SignInReceiver()
+        var opens = 0
+        let services = ChatGPTSignInServices(receiver: { _ in receiver }, openBrowser: { url in
+            #expect(url.scheme == "https" && url.host == "auth.openai.com")
+            opens += 1; return true
+        })
+        let window = try await window(ChatGPTSettings(model: model, signInServices: services).padding(20).environment(\.settingsPresentation, true), width: 720)
+        defer { receiver.cancel(); window.orderOut(nil); window.close() }
+        let view = try #require(window.contentView)
+        var marker: StorebenchControlMarker?
+        let readyDeadline = ContinuousClock.now + .seconds(5)
+        while marker?.available != true {
+            guard ContinuousClock.now < readyDeadline else { Issue.record("The synthetic sign-in button did not become available"); await model.prepareToTerminate(); return }
+            try await settle(window)
+            marker = descendants(view).compactMap { $0 as? StorebenchControlMarker }.first { $0.identifier?.rawValue == "chatgpt.sign-in" }
+        }
+        let target = try #require(marker), point = target.convert(CGPoint(x: target.bounds.midX, y: target.bounds.midY), to: nil)
+        window.makeKeyAndOrderFront(nil)
+        if let native = descendants(view).compactMap({ $0 as? NSControl }).first(where: {
+            $0.cell is NSButtonCell && !$0.isHiddenOrHasHiddenAncestor && $0.convert($0.bounds, to: nil).contains(point)
+        }) {
+            #expect(native.isEnabled)
+            native.performClick(nil); native.performClick(nil)
+        } else {
+            for _ in 0..<2 {
+                for kind in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    let event = try #require(NSEvent.mouseEvent(with: kind, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                               windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: kind == .leftMouseDown ? 1 : 0))
+                    window.sendEvent(event)
+                }
+            }
+        }
+        let deadline = ContinuousClock.now + .seconds(5)
+        while opens == 0 && ContinuousClock.now < deadline { try await settle(window) }
+        #expect(receiver.starts == 1 && opens == 1, "A click must start the callback and open the browser; repeated presses must keep that attempt")
+        receiver.cancel(); window.contentView = nil
+        try await settle(window)
+        await model.prepareToTerminate()
+    }
+
+    @Test func settingsCardsFitTogetherAndFeedbackDoesNotMoveTheirCommands() async throws {
+        let state = FeedbackState(), destination = try TestIsolation.require()
+        let preferences = StorebenchAppearancePreferences.shared, previous = preferences.choice
+        defer { preferences.choose(previous) }
+        for dark in [false, true] {
+            preferences.choose(dark ? .dark : .light)
+            let content = StorebenchForm {
+                StorebenchSectionLinks {
+                    Button("ChatGPT") {}; Button("Claude") {}; Button("Apple Intelligence") {}; Button("AI History") {}
+                }.storebenchControlID("density.links")
+                StorebenchFormSection("Default AI Service", icon: "settings", description: "The starting service for new cards and translations. Each task can choose its own service and model.") {
+                    StorebenchPicker("Use for New AI Tasks", selection: .constant("synthetic")) {
+                        SelectionOption("Synthetic AI Service", value: "synthetic")
+                    }.environment(\.fieldHintHeight, 0).storebenchControlID("density.picker")
+                    StorebenchTextSlot(text: state.text, height: 32, font: .sbCaption, color: StorebenchTheme.muted, live: true)
+                    DisclosureGroup("Compare Saved Values") { Text("Synthetic comparison") }
+                    StorebenchFormFooter { Button("Use As Default") {}.storebenchControlID("density.save") }
+                }.storebenchControlID("density.card")
+                StorebenchFormSection("Claude", icon: "sparkles", description: "Connect a synthetic service for cards and translations.") {
+                    StorebenchTextField("API Key", text: .constant(""))
+                    StorebenchFormFooter { Button("Save Connection") {} }
+                }.storebenchControlID("density.next")
+            }.environment(\.settingsPresentation, true)
+            let window = try await window(content, width: 720, height: 700)
+            defer { window.orderOut(nil); window.close() }
+            let root = try #require(window.contentView)
+            let card = try frame("density.card", in: root), save = try frame("density.save", in: root), picker = try frame("density.picker", in: root)
+            #expect(card.height <= 280, "An ordinary settings section must not consume most of the window")
+            #expect(try frame("density.links", in: root).height <= 33, "Section navigation fits on one row")
+            #expect(try frame("density.next", in: root).maxY <= root.bounds.height, "The next settings section remains visible")
+            for message in ["Synthetic status", String(repeating: "Synthetic longer feedback. ", count: 30), ""] {
+                state.text = message; try await settle(window)
+                #expect(try frame("density.card", in: root) == card)
+                #expect(try frame("density.save", in: root) == save && frame("density.picker", in: root) == picker)
+            }
+            let bitmap = try #require(root.bitmapImageRepForCachingDisplay(in: root.bounds))
+            root.effectiveAppearance.performAsCurrentDrawingAppearance { root.cacheDisplay(in: root.bounds, to: bitmap) }
+            let png = try #require(bitmap.representation(using: .png, properties: [:]))
+            try png.write(to: destination.appendingPathComponent(dark ? "settings-density-dark.png" : "settings-density-light.png"))
+        }
+    }
     private struct RetainedContent: View {
         let state: DisclosureState
         @State private var text = "Synthetic Draft"
@@ -145,13 +248,12 @@ import Testing
 
     private var gallery: some View {
         VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
-            StorebenchFormSection("Connection", icon: "settings", description: "Synthetic controls using the same field and command surfaces.") {
+            StorebenchFormSection("Connection", icon: "settings", description: "Synthetic controls using the same field and command surfaces.", accessory: AnyView(
+                StorebenchIconMenu(title: "Connection Options") { Button("Synthetic Action") {} }
+            )) {
                 settingsFields
-                StorebenchFormField(label: "Actions", hideHint: true) {
-                    StorebenchMenu("Account Options", icon: "users") { Button("Synthetic Action") {} }
-                }
                 DisclosureGroup("Compare Saved Values", isExpanded: .constant(false)) { Text("Synthetic comparison") }
-                StorebenchFormFooter { Button("Refresh Models") {}; Button("Save Model") {}.buttonStyle(StorebenchButtonStyle(.primary)) }
+                StorebenchFormFooter { Button("Save Model") {}.buttonStyle(StorebenchButtonStyle(.primary)) }
             }
             StorebenchFormSection("Advanced Options", icon: "security", description: "Related fields follow the same grid when expanded.") {
                 DisclosureGroup("Connection Settings", isExpanded: .constant(true)) {

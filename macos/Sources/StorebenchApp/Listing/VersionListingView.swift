@@ -7,6 +7,7 @@ struct VersionListingView: View {
     var focusedLocale: Binding<String?>? = nil
     var providedModel: VersionListingEditor? = nil
     var didSync: () -> Void = {}
+    var didCheck: () -> Void = {}
     @State private var model: VersionListingEditor?
     @State private var operation: Task<Void, Never>?
     @State private var protectionId = UUID().uuidString
@@ -27,13 +28,14 @@ struct VersionListingView: View {
     private func reloading(_ model: VersionListingEditor) -> Bool { model.loading && model.revision != nil && model.version != nil }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             if let model {
                 Card(title: "Languages", subtitle: "Edit each language’s text, previews and screenshots below. Drafts stay on this Mac until you sync.", help: "release-material") {
                     let feedback = reloading(model) ? Self.readingLanguages : status.isEmpty ? model.status : status
                     if !feedback.isEmpty { StorebenchTextSlot(text: feedback, height: 40, font: .sbCallout, color: StorebenchTheme.muted, live: true) }
-                    if model.catalogFailed { StorebenchReadButton("Read Saved Listing") { await model.load() } }
+                    if model.catalogFailed { StorebenchActionGroup { StorebenchReadButton("Read Saved Listing") { await model.load() } } }
                     addLanguage(model)
+                    if model.languages.count > 1 { allLanguages(model) }
                 }
                 if model.loading && !reloading(model) {
                     StorebenchLoadState(state: .loading(Self.readingLanguages)) { EmptyView() } placeholder: { StorebenchCollectionPlaceholder(rows: 3) }
@@ -41,32 +43,43 @@ struct VersionListingView: View {
                 if let revision = model.revision, let version = model.version {
                     AIListingTranslationView(account: account, appId: model.scope.appId, revisionId: model.scope.revisionId, version: version, session: session, model: model)
                         .id("\(model.scope.accountId)/\(model.scope.appId)/\(model.scope.revisionId)/ai/\(version.id)")
-                    if let languageLayout { LanguageLayoutControls(editor: languageLayout, accountId: account.id, appId: model.scope.appId, session: session) }
                     StorebenchCollection(items: model.languages, title: { StoreLocales.name($0.locale) },
                         subtitle: { $0.locale + ($0.text.dirty || $0.media.contains { $0.dirty } ? " · Unsaved changes" : " · Saved language and media") },
+                        headerActions: { language in AnyView(HStack(spacing: StorebenchTheme.space(2)) {
+                            if model.localOnlyLocalization(language.locale) != nil {
+                                Button("Remove Language", role: .destructive) { remove(model, language.locale) }
+                                    .help("Remove \(StoreLocales.name(language.locale)) from this version on this Mac. It is not in App Store Connect yet.")
+                                    .storebenchWorking(model.busy || publishing)
+                                    .storebenchControlID("language.remove." + language.locale)
+                            }
+                            if let languageLayout { LanguageLayoutControls(editor: languageLayout, accountId: account.id, appId: model.scope.appId, session: session, locale: language.locale) }
+                        }) },
                         focusedID: model.languages.first { $0.locale == focusedLocale?.wrappedValue }?.id, empty: "No languages in this version yet. Choose a language under Add language above.") { language in
                             let scope = Editing(accountId: model.scope.accountId, appId: model.scope.appId, revisionId: model.scope.revisionId, local: false)
                             VStack(alignment: .leading, spacing: 16) {
                                 LanguageEditor(account: account, revision: revision, version: version, scope: scope, locale: language.locale, targetMode: "release-plan", session: session,
-                                    openReview: { review = $0.review; return true }, providedModel: language.text, contained: true, didSync: didSync)
+                                    openReview: { review = $0.review; return true }, providedModel: language.text, contained: true, didSync: didSync, didCheck: didCheck)
                                 let mediaAnchor = ReleaseReadiness.fieldAnchor(language.locale, "screenshots"), mediaFocused = fieldFocus?.anchor == mediaAnchor
                                 VStack(alignment: .leading, spacing: 12) {
                                     if mediaFocused {
-                                        HStack(alignment: .firstTextBaseline, spacing: 12) {
-                                            Text("Add screenshots for \(StoreLocales.name(language.locale)) below. They are saved on this Mac right away.").font(.sbCallout)
-                                                .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
-                                            if let backToChecklist { Button("Done", action: backToChecklist).help("Save this language and go back to the step’s list") }
-                                        }
+                                        ReleaseMediaEditingGuide(locale: language.locale, busy: language.media.contains { $0.busy },
+                                            finish: backToChecklist.map { back in {
+                                                operation = Task {
+                                                    for media in language.media {
+                                                        let result = await media.run(onlyThisPart: true)
+                                                        guard result.complete, !Task.isCancelled else { return }
+                                                    }
+                                                    back()
+                                                }
+                                            } })
                                     }
                                     ForEach(language.media, id: \.localizationId) { media in
                                         if let localization = version.localizations.first(where: { $0.id == media.localizationId }) {
                                             MediaListingView(account: account, version: version, scope: scope, localization: localization, others: version.localizations.filter { $0.id != localization.id },
-                                                targetMode: "release-plan", session: session, openReview: { review = $0.review; return true }, providedModel: media, didSync: didSync)
+                                                targetMode: "release-plan", session: session, openReview: { review = $0.review; return true }, providedModel: media, didSync: didSync, didCheck: didCheck)
                                         }
                                     }
                                 }
-                                .background { ReleaseFocusFrame(visible: mediaFocused) }
-                                .animation(.easeInOut(duration: 0.3), value: mediaFocused)
                                 .id(mediaAnchor)
                             }.padding(.top, 12)
                             .id(ReleaseReadiness.languageAnchor(language.locale))
@@ -79,7 +92,7 @@ struct VersionListingView: View {
                     }
                 }
                 if let app = account.apps.first(where: { $0.id == model.scope.appId }) {
-                    ReviewPanel(account: account, app: app, session: session, review: $review, done: { if review?.state == "complete" { didSync() } }, busyChanged: { publishing = $0 }, actionsBusy: model.busy || model.dirty || model.workflow.blocked, syncConfirmation: true)
+                    ReviewPanel(account: account, app: app, session: session, review: $review, done: { if review?.state == "complete" { didSync() } }, busyChanged: { publishing = $0 }, actionsBusy: model.busy || model.workflow.shown.dirty || model.workflow.shown.blocked, syncConfirmation: true)
                 }
             } else if status.isEmpty {
                 StorebenchLoadState(state: .loading("Reading planned listing…")) { EmptyView() } placeholder: {
@@ -89,7 +102,7 @@ struct VersionListingView: View {
             }
             else {
                 StorebenchFeedback(text: status, height: 34)
-                Button("Read Planned Listing") { status = ""; loadAttempt += 1 }
+                StorebenchActionGroup { Button("Read Planned Listing") { status = ""; loadAttempt += 1 } }
             }
         }
         .environment(\.draftWorkflowBusy, model?.loading == true || model?.adding == true || model?.auxiliaryBusy == true || model?.workflow.busy == true || planEditor.busy || publishing)
@@ -134,6 +147,38 @@ struct VersionListingView: View {
         }
     }
     @Environment(\.languageLayout) private var languageLayout
+    @Environment(\.confirmDestructive) private var confirm
+    /// One save and one review for every language, beside each language's own commands.
+    @ViewBuilder private func allLanguages(_ model: VersionListingEditor) -> some View {
+        let unsaved = model.languages.filter { $0.text.dirty || $0.media.contains { $0.dirty } }.map { StoreLocales.name($0.locale) }
+        StorebenchTextSlot(text: unsaved.isEmpty ? "Every language is saved on this Mac." : "Unsaved changes: " + unsaved.joined(separator: ", "),
+                           height: 40, font: .sbCallout, color: StorebenchTheme.muted, live: true)
+        StorebenchFormFooter {
+            StorebenchBusyButton(title: "Save All Drafts", loadingTitle: "Saving…", busy: model.workflow.phase == .saving) { run(model) }
+                .help("Save the text and media of every language on this Mac")
+                .storebenchWorking(unsaved.isEmpty || model.busy || model.workflow.shown.blocked || publishing)
+                .storebenchControlID("languages.save-all")
+            StorebenchBusyButton(title: "Sync All to Apple", loadingTitle: "Preparing…", busy: model.workflow.phase == .preparing, variant: .primary) { run(model, sync: true) }
+                .help("Save every language, then review all language changes for App Store Connect in one approval")
+                .storebenchWorking(model.busy || model.workflow.shown.blocked || publishing)
+                .storebenchControlID("languages.sync-all")
+        }
+    }
+    private func remove(_ model: VersionListingEditor, _ locale: String) {
+        guard model.active, !model.busy, !publishing else { return }
+        let name = StoreLocales.name(locale)
+        guard confirm(.removeLanguage, title: "Remove \(name) from this version?",
+                      message: "\(name) was added on this Mac and is not in App Store Connect. Its local text, screenshot and preview choices are removed, including unsaved edits. Other languages and saved media files are kept.",
+                      action: "Remove Language") else { return }
+        status = ""; review = nil
+        operation = Task {
+            _ = await model.removeLanguage(locale)
+            guard model.active, !Task.isCancelled else { return }
+            status = model.status
+            if newLocale.isEmpty || !model.availableLocales.contains(newLocale) { newLocale = model.availableLocales.first ?? "" }
+            if copyFrom == locale || Self.translationSource(copyFrom) == locale { copyFrom = "" }
+        }
+    }
     @ViewBuilder private func addLanguage(_ model: VersionListingEditor) -> some View {
         if !model.availableLocales.isEmpty {
             ViewThatFits(in: .horizontal) {
@@ -152,13 +197,15 @@ struct VersionListingView: View {
             }
         }.storebenchFormColumn()
         .help("Translate uses Apple’s translation on this Mac. The name and links are copied unchanged.")
-        if !newLocale.isEmpty && (copyFrom.isEmpty || model.workflow.ready) {
+        if !newLocale.isEmpty && (copyFrom.isEmpty || model.workflow.shown.ready) {
             let translating = Self.translationSource(copyFrom) != nil
-            Button(model.adding || translation != nil ? (translating ? "Translating…" : "Adding…") : "Add Language") {
-                let code = newLocale, source = copyFrom
-                if let original = Self.translationSource(source) { translation = ListingTranslationRequest(source: original, target: code); return }
-                operation = Task { await add(model, code, copyFrom: source.isEmpty ? nil : source) }
-            }.storebenchWorking(model.busy || translation != nil)
+            StorebenchFieldCommands {
+                Button(model.adding || translation != nil ? (translating ? "Translating…" : "Adding…") : "Add Language") {
+                    let code = newLocale, source = copyFrom
+                    if let original = Self.translationSource(source) { translation = ListingTranslationRequest(source: original, target: code); return }
+                    operation = Task { await add(model, code, copyFrom: source.isEmpty ? nil : source) }
+                }.storebenchWorking(model.busy || translation != nil)
+            }
         }
     }
     private static let translationPrefix = "translate:"

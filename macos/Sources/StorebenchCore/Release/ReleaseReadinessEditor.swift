@@ -102,6 +102,9 @@ import Observation
     @discardableResult public func sync() async -> Bool {
         guard active, !busy, planEditor.ready, !planEditor.dirty, let plan = planEditor.plan, !Task.isCancelled else { return false }
         guard let probe, let current = snapshot, confirmed, !readFailed, sinceWrite.map({ $0 >= ReleaseStatusSync.settleWindow }) ?? true else { return await refresh() }
+        if let materialSignature {
+            guard let signature = try? await materialSignature(plan), TextSemantics.same(signature, current.materialSignature) else { return await refresh() }
+        }
         let ticket = UUID(), starting = generation; operation = ticket
         let state: String?
         do { state = try await probe(plan); try Task.checkCancellation() }

@@ -20,14 +20,19 @@ struct AIServicePicker: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             StorebenchFormGrid {
-                StorebenchPicker(includesTranslation ? "Translation Service" : "AI Service", selection: Binding(get: { selection }, set: { selection = $0; modelID = "" })) {
+                StorebenchPicker(includesTranslation ? "Translation Service" : "AI Service", selection: Binding(get: { selection }, set: { selection = $0; modelID = "" }), accessory: navigation.open.map { open in AnyView(
+                    StorebenchIconButton(title: "AI Settings…", icon: "settings", action: open)
+                ) }) {
                     if includesTranslation { SelectionOption("Apple Translation · On This Mac", value: "") }
                     selectionOptions([AIProvider.chatgpt, .apple, .openai, .anthropic, .gemini]) { service in
                         SelectionOption(title(service), value: service.rawValue)
                     }
                 }
                 if let provider, provider != .apple {
-                    StorebenchPicker("AI Model", selection: $modelID, hint: requiresImages ? "Choose a model that accepts screenshots." : "") {
+                    StorebenchPicker("AI Model", selection: $modelID, hint: requiresImages ? "Choose a model that accepts screenshots." : "", accessory: AnyView(
+                        StorebenchIconButton(title: "Refresh Models", icon: "refresh") { Task { await load(refresh: true) } }
+                            .storebenchWorking(reading || connection == nil)
+                    )) {
                         SelectionOption(connection.map { "Saved Default · " + $0.model } ?? "Connect This Service First", value: "")
                         if !modelID.isEmpty, !models.contains(where: { $0.id == modelID }) { SelectionOption(modelID + " · Selected", value: modelID) }
                         selectionOptions(models) { SelectionOption($0.name, value: $0.id) }
@@ -39,14 +44,6 @@ struct AIServicePicker: View {
             Text(usage)
                 .font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
             StorebenchTextSlot(text: reading ? "Reading available models…" : status, height: 36, font: .sbCaption, color: StorebenchTheme.muted, live: true)
-            StorebenchActionGroup {
-                if provider != nil && provider != .apple {
-                    Button("Refresh Models") { Task { await load(refresh: true) } }.storebenchWorking(reading || connection == nil)
-                }
-                if let open = navigation.open {
-                    Button("AI Settings…", action: open).help("Choose saved defaults and manage ChatGPT or API connections")
-                }
-            }
         }.task(id: selection) { await load() }
         .onReceive(NotificationCenter.default.publisher(for: .storebenchAIConnectionsChanged)) { _ in Task { await load() } }
     }

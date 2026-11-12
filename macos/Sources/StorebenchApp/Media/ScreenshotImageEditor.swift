@@ -48,6 +48,7 @@ struct ScreenshotImageEditor: View {
                 if working || source != nil && edits != nil && status.isEmpty {
                     Button { Task { await export() } } label: { StorebenchBusyLabel("Apply Changes", loading: "Applying…", busy: working) }
                         .buttonStyle(StorebenchButtonStyle(.primary)).storebenchWorking(working || loading || renderedEdits != edits)
+                        .storebenchControlID("media.image-apply")
                 }
             }
         }
@@ -68,8 +69,8 @@ struct ScreenshotImageEditor: View {
             GeometryReader { bounds in
                 let ratio = min(bounds.size.width / Double(value.width), bounds.size.height / Double(value.height))
                 ZStack {
-                    if let preview, renderedEdits == value { Image(decorative: preview.image, scale: 1).resizable().interpolation(.high) }
-                    else { Rectangle().fill(StorebenchTheme.color("color-surface-sunken")); ProgressView().accessibilityLabel("Rendering Screenshot Preview") }
+                    if let preview { Image(decorative: preview.image, scale: 1).resizable().interpolation(.high).aspectRatio(contentMode: .fit) }
+                    else { Rectangle().fill(StorebenchTheme.color("color-surface-sunken")); StorebenchMediaStatus(message: "").accessibilityLabel("Rendering Screenshot Preview") }
                 }
                 .frame(width: Double(value.width) * ratio, height: Double(value.height) * ratio)
                 .contentShape(Rectangle()).focusable(!working, interactions: .edit).focused($focused)
@@ -101,11 +102,11 @@ struct ScreenshotImageEditor: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .task(id: value) {
-                renderedEdits = nil; preview = nil; status = ""
+                renderedEdits = nil; status = ""
                 do { let result = try await ScreenshotRenderer.previewAsync(source, edits: value); try Task.checkCancellation(); preview = result; renderedEdits = value }
                 catch is CancellationError {} catch let failure as ScreenshotEditFailure { status = failure.message } catch { status = ScreenshotEditFailure.render.message }
             }
-        } else { Rectangle().fill(StorebenchTheme.color("color-surface-sunken")).overlay { if loading { ProgressView().accessibilityLabel("Reading Original Screenshot") } } }
+        } else { Rectangle().fill(StorebenchTheme.color("color-surface-sunken")).overlay { if loading { StorebenchMediaStatus(message: "").accessibilityLabel("Reading Original Screenshot") } } }
     }
 
     private func edit<Value>(_ key: WritableKeyPath<ScreenshotEdits, Value>) -> Binding<Value> {
@@ -133,28 +134,28 @@ struct ScreenshotImageEditor: View {
     }
     private var controls: some View {
         VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Image Adjustments").font(.sbCallout.weight(.semibold))
+                Spacer(minLength: 0)
+                StorebenchIconMenu(title: "Image Options") { Button("Reset Image Adjustments") { if let source { edits = try? initial(source) } } }
+            }
             StorebenchPicker("Output Size", selection: Binding(get: { "\(edits!.width)x\(edits!.height)" }, set: { value in
                 guard let target = targets.first(where: { "\($0.width)x\($0.height)" == value }) else { return }
                 edits?.width = target.width; edits?.height = target.height; status = ""
-            })) { selectionOptions(targets) { target in SelectionOption(target.label, value: "\(target.width)x\(target.height)") } }
-            Text("Different proportions crop the edges. The image is never stretched.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
-            StorebenchSliderField(title: "Zoom", value: edit(\.zoom), range: 1...4, step: 0.01, percentage: true)
-            StorebenchActionGroup(alignment: .trailing) {
-                if edits!.zoom > 1 { Button("Zoom Out") { edits?.zoom = max(1, edits!.zoom - 0.1) } }
-                if edits!.zoom < 4 { Button("Zoom In") { edits?.zoom = min(4, edits!.zoom + 0.1) } }
-                Button("Recenter") { edits?.zoom = 1; edits?.x = 0.5; edits?.y = 0.5 }
+            }), hint: "Different proportions crop the edges. The image is never stretched.") { selectionOptions(targets) { target in SelectionOption(target.label, value: "\(target.width)x\(target.height)") } }
+            StorebenchCropControls(zoom: edit(\.zoom)) { edits?.zoom = 1; edits?.x = 0.5; edits?.y = 0.5 }
+            StorebenchFormField(label: "Orientation", hideHint: true) {
+                StorebenchActionGroup {
+                    Button("Rotate 90°") { edits?.rotation = (edits!.rotation + 90) % 360; edits?.x = 0.5; edits?.y = 0.5 }
+                    StorebenchToggle("Flip Horizontally", isOn: edit(\.flip))
+                }
             }
-            HStack {
-                Button("Rotate 90°") { edits?.rotation = (edits!.rotation + 90) % 360; edits?.x = 0.5; edits?.y = 0.5 }
-                StorebenchToggle("Flip Horizontally", isOn: edit(\.flip))
-            }
-            Button("Reset") { if let source { edits = try? initial(source) } }
             DisclosureGroup("Make Image a Card") { cardControls }
             DisclosureGroup("Fine-tune Position and File Size") {
                 VStack(alignment: .leading, spacing: 8) {
-                    StorebenchSliderField(title: "Horizontal crop position", value: edit(\.x), range: 0...1, step: 0.01, percentage: true)
-                    StorebenchSliderField(title: "Vertical crop position", value: edit(\.y), range: 0...1, step: 0.01, percentage: true)
-                    StorebenchSliderField(title: "JPEG quality", value: edit(\.quality), range: 0.5...1, step: 0.01, percentage: true)
+                    StorebenchSliderField(title: "Horizontal Position", value: edit(\.x), range: 0...1, step: 0.01, percentage: true)
+                    StorebenchSliderField(title: "Vertical Position", value: edit(\.y), range: 0...1, step: 0.01, percentage: true)
+                    StorebenchSliderField(title: "JPEG Quality", value: edit(\.quality), range: 0.5...1, step: 0.01, percentage: true)
                     Text("Lower quality reduces file size. The resulting size appears after applying.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
                 }.padding(.top, 8)
             }

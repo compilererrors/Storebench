@@ -82,6 +82,8 @@ struct RecoveryActions: View {
     var showMessage = false
     /// In a compact row, also offers the error code to copy for support.
     var copyCode = false
+    /// A contextual command can already take the user to the exact editor that needs attention.
+    var showPrimaryAction = true
     @Environment(\.recoveryNavigation) private var navigation
     @State private var errorExpanded = false
     private var safe: String { ReportingMessages.normalized(code) }
@@ -128,12 +130,12 @@ struct RecoveryActions: View {
     /// The guide button is left out when the message already carries its (?) help.
     @ViewBuilder private func guidanceButtons(_ entry: RecoveryGuidance.Entry, guide: Bool = true) -> some View {
         let action = entry.target.resolved(scope: navigation.scope), help = entry.help.resolved(scope: navigation.scope)
-        if action != nil && navigation.navigate != nil {
+        if showPrimaryAction && action != nil && navigation.navigate != nil {
             Button { if let action { navigation.navigate?(action) } } label: {
                 if entry.target.area == .developerAccount { StorebenchLabel(entry.action, icon: "external") }
                 else { Text(entry.action) }
             }.help(entry.status)
-        } else if action == nil { Text("Select an app to open its recovery view.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted) }
+        } else if showPrimaryAction && action == nil { Text("Select an app to open its recovery view.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted) }
         if guide && help != nil && navigation.navigate != nil { Button(entry.guide) { if let help { navigation.navigate?(help) } }.help("Read the setup and recovery steps in " + entry.guide + ".") }
     }
 }

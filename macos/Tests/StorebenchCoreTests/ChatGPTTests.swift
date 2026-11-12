@@ -106,6 +106,23 @@ extension AITests {
             #expect(throws: AIFailure.identity) { try ChatGPTOAuth.verifyIdentity(token, jwks: f.jwks, client: "oaiapp_synthetic", nonce: attempt.nonce) }
         }
     }
+    @Test func chatGPTAuthorizationErrorsKeepTheirMeaningAndNeverExchangeACode() async throws {
+        let f = try await chatGPTFixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        StubProtocol.handle("auth.openai.com") { _ in
+            Issue.record("An unsuccessful authorization must never exchange a code")
+            return (500, [:], Data())
+        }
+        for (code, expected) in [("access_denied", AIFailure.cancelled), ("invalid_client", .signInRejected),
+                                 ("invalid_scope", .signInRejected), ("server_error", .subscriptionUnavailable), ("login_required", .signIn)] {
+            let attempt = try await f.attempt()
+            var callback = URLComponents(url: f.callback(attempt), resolvingAgainstBaseURL: false)!
+            callback.queryItems = [.init(name: "state", value: attempt.state), .init(name: "error", value: code)]
+            let url = try #require(callback.url)
+            await #expect(throws: expected) { try await f.session.finishChatGPTSignIn(attempt, callback: url, writer: f.writer) }
+        }
+        #expect(StubProtocol.requests("auth.openai.com").isEmpty)
+        #expect(try await f.session.aiConnections().isEmpty)
+    }
     @Test func chatGPTVerifiesRSASignaturesUsingOnlyEphemeralSyntheticKeys() throws {
         _ = try TestIsolation.require()
         let attributes = [kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeySizeInBits: 2048, kSecAttrIsPermanent: false] as CFDictionary

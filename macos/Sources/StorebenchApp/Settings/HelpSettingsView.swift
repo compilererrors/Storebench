@@ -27,14 +27,15 @@ struct HelpSettingsView: View {
                         if contact != nil {
                             Text("Contact Support opens the support page in your browser. Nothing is sent from the app; remove private information from what you write.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
                         } else { Text("Support links are available in the packaged application.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
-                        if failed { Text("Help could not be read. Retry to load the complete help catalog.").foregroundStyle(StorebenchTheme.muted); Button("Read Help Again") { load() } }
-                        else if catalog == nil { ProgressView("Reading help…") }
+                        if failed { Text("Help could not be read. Retry to load the complete help catalog.").foregroundStyle(StorebenchTheme.muted); StorebenchActionGroup { Button("Read Help Again") { load() } } }
+                        else if catalog == nil { StorebenchLoadingStatus(message: "Reading help…", surface: false) }
                         else {
                             StorebenchPicker("Go to topic", selection: Binding(get: { jump }, set: { id in
-                                jump = id; withAnimation { scroll.scrollTo(id, anchor: .top) }
+                                jump = id; scroll.scrollTo(id, anchor: .top)
                             })) { selectionOptions(topics) { SelectionOption($0.title, value: $0.id) } }
                         }
                     }
+                    .settingsSearchAnchor("help-topics")
                     ForEach(topics) { topic in
                         Card(title: topic.title, subtitle: "") {
                             Text(topic.summary).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)

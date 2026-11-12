@@ -76,10 +76,10 @@ import Testing
         // The fixture's status stays as it was; the names travel only in the record the release check reads.
         #expect(status.json == .object([("state", .string("blocked")), ("detail", .string(status.detail))]) && status.record["rejected"] != nil)
 
-        let refused = ReleaseMedia.unplaced(catalog, kind: .image, platform: "IOS", displayType: "APP_IPHONE_67", localeName: "British English (en-GB)", files: [("wide.png", 2000, 1220, "png")])
-        #expect(refused.hasPrefix("Apple does not accept these iPhone large display screenshots for British English (en-GB): wide.png (2000 × 1220 px, png). Apple accepts 1290 × 2796 px"))
+        let refused = ReleaseMedia.unplaced(catalog, kind: .image, platform: "IOS", displayType: "APP_IPHONE_67", localeName: "English (U.K.) (en-GB)", files: [("wide.png", 2000, 1220, "png")])
+        #expect(refused.hasPrefix("Apple does not accept these iPhone large display screenshots for English (U.K.) (en-GB): wide.png (2000 × 1220 px, png). Apple accepts 1290 × 2796 px"))
         #expect(refused.hasSuffix("Replace them in step 2, Text and Screenshots, then prepare the review again. Nothing was sent."))
-        let platform = ReleaseMedia.unplaced(catalog, kind: .image, platform: "MAC_OS", displayType: "APP_DESKTOP", localeName: "British English (en-GB)", files: [("mac.png", 2880, 1800, "png")])
+        let platform = ReleaseMedia.unplaced(catalog, kind: .image, platform: "MAC_OS", displayType: "APP_DESKTOP", localeName: "English (U.K.) (en-GB)", files: [("mac.png", 2880, 1800, "png")])
         #expect(platform == "Apple's current specifications list no screenshots for macOS (MAC_OS), only for IPHONE_APP_STORE. Nothing was sent.")
     }
 

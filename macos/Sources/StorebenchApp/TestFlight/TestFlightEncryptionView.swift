@@ -68,6 +68,12 @@ struct TestFlightEncryptionView: View {
         .onDisappear { busyChanged(false) }
         .onChange(of: draftValue) { if review?.state == "prepared" { review = nil } }
         .trackUnsavedChanges(draft?.dirty(draftValue) == true, busy: busy || draft?.busy == true, onSave: { await draft?.saveCurrent(value: { draftValue }) == true })
+        .pageRefreshParticipant(readKey,
+            state: { .init(dirty: draft?.dirty(draftValue) == true, busy: busy || draft?.busy == true, signature: draftValue.sha256) },
+            save: { await draft?.saveCurrent(value: { draftValue }) == true }, discard: {
+                guard let baseline = draft?.baseline else { return false }
+                restoreDraft(baseline); review = nil; return draft?.dirty(draftValue) == false
+            }, refresh: { await load(fresh: true); return failure.isEmpty })
     }
 
     @ViewBuilder private func content(_ compliance: BuildExportCompliance) -> some View {

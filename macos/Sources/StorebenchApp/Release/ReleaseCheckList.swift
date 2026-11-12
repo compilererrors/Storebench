@@ -41,10 +41,13 @@ struct ReleaseCheckList: View {
     private func problems(_ step: ReleaseReadiness.Step) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(step.issues.enumerated()), id: \.offset) { _, issue in
-                HStack(alignment: .center, spacing: 12) {
-                    StorebenchIcon(name: "warning", size: 16).foregroundStyle(StorebenchTheme.color("color-danger")).accessibilityHidden(true)
-                    Text(issue.message).font(.sbCallout).foregroundStyle(StorebenchTheme.ink).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                StorebenchActionRow {
+                    HStack(alignment: .center, spacing: 12) {
+                        StorebenchIcon(name: "warning", size: 16).foregroundStyle(StorebenchTheme.color("color-danger")).accessibilityHidden(true)
+                        Text(issue.message).font(.sbCallout).foregroundStyle(StorebenchTheme.ink).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } actions: {
                     if ready, let fix {
                         Button("Edit") { fix(step, issue) }.help(issue.section == "screenshots" ? "Go to the screenshots" : "Go to " + (TextDrafts.labels[issue.field] ?? "the field"))
                             .accessibilityLabel("Edit: " + issue.message)

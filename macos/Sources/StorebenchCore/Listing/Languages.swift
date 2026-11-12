@@ -4,13 +4,14 @@ public enum StoreLocales {
     public static let codes = ["ar-SA", "bn-BD", "ca", "zh-Hans", "zh-Hant", "hr", "cs", "da", "nl-NL", "en-AU", "en-CA", "en-GB", "en-US", "fi", "fr-FR", "fr-CA", "de-DE", "el",
                                "gu-IN", "he", "hi", "hu", "id", "it", "ja", "kn-IN", "ko", "ms", "ml-IN", "mr-IN", "no", "or-IN", "pl", "pt-BR", "pt-PT", "pa-IN", "ro", "ru", "sk",
                                "sl-SI", "es-MX", "es-ES", "sv", "ta-IN", "te-IN", "th", "tr", "uk", "ur-PK", "vi"]
-    static let names = ["ar-SA": "Arabic (Saudi Arabia)", "bn-BD": "Bangla (Bangladesh)", "ca": "Catalan", "zh-Hans": "Simplified Chinese", "zh-Hant": "Traditional Chinese", "hr": "Croatian",
-                        "cs": "Czech", "da": "Danish", "nl-NL": "Dutch (Netherlands)", "en-AU": "Australian English", "en-CA": "Canadian English", "en-GB": "British English", "en-US": "American English",
-                        "fi": "Finnish", "fr-FR": "French (France)", "fr-CA": "Canadian French", "de-DE": "German (Germany)", "el": "Greek", "gu-IN": "Gujarati (India)", "he": "Hebrew", "hi": "Hindi",
-                        "hu": "Hungarian", "id": "Indonesian", "it": "Italian", "ja": "Japanese", "kn-IN": "Kannada (India)", "ko": "Korean", "ms": "Malay", "ml-IN": "Malayalam (India)",
-                        "mr-IN": "Marathi (India)", "no": "Norwegian", "or-IN": "Odia (India)", "pl": "Polish", "pt-BR": "Brazilian Portuguese", "pt-PT": "European Portuguese",
-                        "pa-IN": "Punjabi (India)", "ro": "Romanian", "ru": "Russian", "sk": "Slovak", "sl-SI": "Slovenian (Slovenia)", "es-MX": "Mexican Spanish", "es-ES": "European Spanish",
-                        "sv": "Swedish", "ta-IN": "Tamil (India)", "te-IN": "Telugu (India)", "th": "Thai", "tr": "Turkish", "uk": "Ukrainian", "ur-PK": "Urdu (Pakistan)", "vi": "Vietnamese"]
+    // App Store Connect's English language labels, independent of the API locale identifiers.
+    static let names = ["ar-SA": "Arabic", "bn-BD": "Bangla", "ca": "Catalan", "zh-Hans": "Chinese (Simplified)", "zh-Hant": "Chinese (Traditional)", "hr": "Croatian",
+                        "cs": "Czech", "da": "Danish", "nl-NL": "Dutch", "en-AU": "English (Australia)", "en-CA": "English (Canada)", "en-GB": "English (U.K.)", "en-US": "English (U.S.)",
+                        "fi": "Finnish", "fr-FR": "French", "fr-CA": "French (Canada)", "de-DE": "German", "el": "Greek", "gu-IN": "Gujarati", "he": "Hebrew", "hi": "Hindi",
+                        "hu": "Hungarian", "id": "Indonesian", "it": "Italian", "ja": "Japanese", "kn-IN": "Kannada", "ko": "Korean", "ms": "Malay", "ml-IN": "Malayalam",
+                        "mr-IN": "Marathi", "no": "Norwegian", "or-IN": "Odia", "pl": "Polish", "pt-BR": "Portuguese (Brazil)", "pt-PT": "Portuguese (Portugal)",
+                        "pa-IN": "Punjabi", "ro": "Romanian", "ru": "Russian", "sk": "Slovak", "sl-SI": "Slovenian", "es-MX": "Spanish (Mexico)", "es-ES": "Spanish (Spain)",
+                        "sv": "Swedish", "ta-IN": "Tamil", "te-IN": "Telugu", "th": "Thai", "tr": "Turkish", "uk": "Ukrainian", "ur-PK": "Urdu", "vi": "Vietnamese"]
     public static func name(_ code: String) -> String { names[code] ?? code }
 
     static let displayTypes = ["IOS": ["APP_IPHONE_67", "APP_IPHONE_61", "APP_IPHONE_65", "APP_IPHONE_58", "APP_IPHONE_55", "APP_IPHONE_47", "APP_IPHONE_40", "APP_IPHONE_35", "APP_IPAD_PRO_3GEN_129",
@@ -42,7 +43,7 @@ public enum StoreLocales {
 }
 
 public enum LanguageFailure: Error, Equatable {
-    case versionNotFound, unknownLanguage, exists, sourceNotFound, sourceChanged, translationFailed, translationTooLong(field: String)
+    case versionNotFound, unknownLanguage, exists, sourceNotFound, sourceChanged, translationFailed, translationTooLong(field: String), notLocal
 
     public var message: String {
         switch self {
@@ -53,6 +54,7 @@ public enum LanguageFailure: Error, Equatable {
         case .sourceChanged: "The source language changed while it was being translated. Nothing was added; try again."
         case .translationFailed: "The translation could not be finished. Nothing was added; try again or copy the language instead."
         case .translationTooLong(let field): "The translated \(TextDrafts.labels[field] ?? field) is longer than 10,000 characters, so it cannot be saved. Nothing was added; shorten the source text or copy the language instead."
+        case .notLocal: "Only a language added on this Mac can be removed here. Languages already in App Store Connect are removed there."
         }
     }
 }
@@ -97,6 +99,51 @@ extension WorkspaceSession {
             try Self.addingLanguage(draft, source: try JSONDecoder().decode(Revision.self, from: sourceJSON.data), revisionId: revisionId, versionId: versionId, locale: locale,
                                     copyFrom: copyFrom, translation: translation)
         }
+    }
+
+    /// The version localizations added on this Mac, which can be removed again before they reach App Store Connect.
+    public func addedLocalizationIds(accountId: String, appId: String, revisionId: String, versionId: String) throws -> Set<String> {
+        let key = try TextDrafts.key(accountId: accountId, appId: appId, revisionId: revisionId)
+        let draft = try storeAccess { store in try store.document(namespace: "drafts", key: key).map { try JSONText.parse($0.payload) } }
+        return Set(Self.items(draft?["addedLocalizations"]).filter { $0["versionId"]?.text == versionId }.compactMap { $0["id"]?.text })
+    }
+
+    /// Removes a language that was added to a version on this Mac, with its local text, layouts and selected media.
+    /// Saved originals stay in the media library; languages that came from App Store Connect cannot be removed here.
+    public func removeLanguage(accountId: String, appId: String, revisionId: String, versionId: String, localizationId: String) throws {
+        try mutateDraft(accountId: accountId, appId: appId, revisionId: revisionId) { draft, _ in
+            (try Self.removingLanguage(draft, versionId: versionId, localizationId: localizationId), ())
+        }
+    }
+
+    /// The draft without one locally added language, as a pure change that callers apply inside their own draft transaction.
+    static func removingLanguage(_ draft: JSONText, versionId: String, localizationId: String) throws -> JSONText {
+        let added = Self.items(draft["addedLocalizations"])
+        guard localizationId.hasPrefix("local-locale-"),
+              let entry = added.first(where: { $0["id"]?.text == localizationId && $0["versionId"]?.text == versionId }),
+              let locale = entry["locale"]?.text else { throw LanguageFailure.notLocal }
+        let remaining = added.filter { $0["id"]?.text != localizationId }
+        let sets = Self.items(draft["addedScreenshotSets"])
+        let removedSets = Set(sets.filter { $0["localizationId"]?.text == localizationId }.compactMap { $0["id"]?.text })
+        // The local App Information text belongs to the locale while any version still adds it.
+        var textIds: Set<String> = [localizationId]
+        if !remaining.contains(where: { $0["locale"]?.text == locale }) { textIds.insert("local-app-info-\(locale)") }
+        func object(_ key: String, keeping keep: (String, JSONText) -> Bool) -> JSONText? {
+            guard case .object(let pairs)? = draft[key] else { return nil }
+            return .object(pairs.filter { keep($0.0, $0.1) })
+        }
+        var result = draft.setting("addedLocalizations", .array(remaining))
+            .setting("addedScreenshotSets", .array(sets.filter { $0["localizationId"]?.text != localizationId }))
+        let changes: [(String, (String, JSONText) -> Bool)] = [
+            ("texts", { id, _ in !textIds.contains(id) }),
+            ("textSources", { id, _ in !textIds.contains(id) }),
+            ("screenshotLayouts", { id, _ in !removedSets.contains(id) }),
+            ("uploads", { _, upload in !removedSets.contains(upload["setId"]?.text ?? "") }),
+            ("previewUploads", { _, video in video["localizationId"]?.text != localizationId }),
+            ("previewLayouts", { key, _ in !key.hasPrefix(localizationId + ":") }),
+        ]
+        for (key, keep) in changes { if let value = object(key, keeping: keep) { result = result.setting(key, value) } }
+        return result
     }
 
     /// The draft with one language added to a version, as a pure change that callers apply inside their own draft transaction.

@@ -16,7 +16,8 @@ let package = Package(
         .target(name: "StorebenchCore", dependencies: [.product(name: "SQLCipher", package: "SQLCipher.swift")], resources: [.copy("Resources/help-topics.json"), .copy("Resources/recovery-guidance.json"), .copy("Resources/reporting-sources.json"), .copy("Resources/design.json")]),
         .executableTarget(name: "StorebenchApp", dependencies: ["StorebenchCore"]),
         .executableTarget(name: "StorebenchPolicyFixtures", dependencies: ["StorebenchCore"]),
-        .testTarget(name: "StorebenchAppTests", dependencies: ["StorebenchApp", "StorebenchCore"]),
-        .testTarget(name: "StorebenchCoreTests", dependencies: ["StorebenchCore"], resources: [.copy("Fixtures/synthetic-journal.json"), .copy("Fixtures/synthetic-progress.json")]),
+        .target(name: "StorebenchTestSupport", dependencies: ["StorebenchCore"], path: "Tests/StorebenchTestSupport"),
+        .testTarget(name: "StorebenchAppTests", dependencies: ["StorebenchApp", "StorebenchCore", "StorebenchTestSupport"]),
+        .testTarget(name: "StorebenchCoreTests", dependencies: ["StorebenchCore", "StorebenchTestSupport"], resources: [.copy("Fixtures/synthetic-journal.json"), .copy("Fixtures/synthetic-progress.json")]),
     ]
 )

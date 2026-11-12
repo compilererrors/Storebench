@@ -19,11 +19,11 @@ struct StorageChoiceView: View {
 
                 VStack(spacing: 0) {
                     StorebenchSetupOption(title: "Mac Keychain", description: "Unlock automatically with your Mac. Choose Always Allow if macOS asks for access.", recommended: true) {
-                        Button("Use Keychain") { Task { await model.selectStorage(.keychain) } }.buttonStyle(StorebenchButtonStyle(.primary))
+                        StorebenchActionGroup { Button("Use Keychain") { Task { await model.selectStorage(.keychain) } }.buttonStyle(StorebenchButtonStyle(.primary)) }
                     }
                     StorebenchDivider().padding(.horizontal, 20)
                     StorebenchSetupOption(title: "Storebench Password", description: "Use a separate password instead of Keychain. You enter it when opening the app; it cannot be recovered.") {
-                        Button("Use Password") { Task { await model.selectStorage(.password) } }.help("Use Password Without Keychain").accessibilityLabel("Use Password Without Keychain")
+                        StorebenchActionGroup { Button("Use Password") { Task { await model.selectStorage(.password) } }.help("Use Password Without Keychain").accessibilityLabel("Use Password Without Keychain") }
                     }
                 }
                 .background(StorebenchTheme.surface, in: RoundedRectangle(cornerRadius: StorebenchTheme.radius))
@@ -36,9 +36,11 @@ struct StorageChoiceView: View {
                 VStack(spacing: 0) {
                     StorebenchDivider().padding(.horizontal, 20)
                     StorebenchSetupOption(title: "Take a Look Around", description: "Explore Storebench with sample apps before setting up.") {
-                        Button("Load Sample Data") { Task { await model.openSampleData() } }
-                            .buttonStyle(StorebenchButtonStyle(.quiet))
-                            .help("Explore Storebench with Fictional Apps").accessibilityLabel("Load Sample Data")
+                        StorebenchActionGroup {
+                            Button("Load Sample Data") { Task { await model.openSampleData() } }
+                                .buttonStyle(StorebenchButtonStyle(.quiet))
+                                .help("Explore Storebench with Fictional Apps").accessibilityLabel("Load Sample Data")
+                        }
                     }
                 }
                 StorebenchTextSlot(text: model.lastError, height: 44, font: .sbCallout, color: StorebenchTheme.color("color-danger"), live: true)
@@ -61,14 +63,16 @@ struct PasswordStorageMigrationView: View {
                 StorebenchSecureField("Repeat new password", text: $repeated)
                 Text("Use 12 to 256 characters. The password cannot be recovered. Earlier copies remain in Keychain for older installations; this copy does not delete them.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
                 StorebenchFeedback(text: model.lastError, error: true)
-                if (12...256).contains(password.utf16.count) && password == repeated {
-                    Button("Copy Saved Data") {
-                        let previous = current.isEmpty ? nil : current, next = password
-                        current = ""; password = ""; repeated = ""
-                        Task { await model.migrateStorage(currentPassword: previous, newPassword: next) }
-                    }.buttonStyle(StorebenchButtonStyle(.primary))
+                StorebenchActionGroup {
+                    if (12...256).contains(password.utf16.count) && password == repeated {
+                        Button("Copy Saved Data") {
+                            let previous = current.isEmpty ? nil : current, next = password
+                            current = ""; password = ""; repeated = ""
+                            Task { await model.migrateStorage(currentPassword: previous, newPassword: next) }
+                        }.buttonStyle(StorebenchButtonStyle(.primary))
+                    }
+                    Button("Back") { model.reviewStorageChoice() }.help("Back to Storage Choice").accessibilityLabel("Back to Storage Choice")
                 }
-                Button("Back") { model.reviewStorageChoice() }.help("Back to Storage Choice").accessibilityLabel("Back to Storage Choice")
             }
         }
     }
@@ -82,23 +86,25 @@ struct SetupView: View {
 
     var body: some View {
         StorebenchAuthScreen {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
                 StorebenchAuthCard(title: model.writer.usesPasswordFile ? "Create your Storebench password" : "Set up Storebench", message: model.writer.usesPasswordFile ? "Your database key, Apple API keys, Apple ID sign-ins, reporting tokens and backup passphrases are encrypted locally. Storebench will not access Keychain." : "Storebench encrypts your saved data and keeps its encryption key and credentials in your Mac Keychain.") {
                     if model.writer.usesPasswordFile {
                         StorebenchSecureField("Storebench password", text: $password)
                         StorebenchSecureField("Repeat password", text: $repeated)
                         Text("Use 12 to 256 characters. You will need it when opening Storebench; it cannot be recovered.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
-                        if (12...256).contains(password.utf16.count) && password == repeated {
+                    }
+                    StorebenchFeedback(text: model.lastError, error: true)
+                    StorebenchActionGroup {
+                        if !model.writer.usesPasswordFile {
+                            Button("Create Storage") { Task { await model.setUp(password: nil) } }.help("Create Encrypted Storage").accessibilityLabel("Create Encrypted Storage").buttonStyle(StorebenchButtonStyle(.primary))
+                        } else if (12...256).contains(password.utf16.count) && password == repeated {
                             Button("Create Storage") {
                                 let value = password; password = ""; repeated = ""
                                 Task { await model.setUp(password: value) }
                             }.help("Create Password Storage").accessibilityLabel("Create Password Storage").buttonStyle(StorebenchButtonStyle(.primary))
                         }
-                    } else {
-                        Button("Create Storage") { Task { await model.setUp(password: nil) } }.help("Create Encrypted Storage").accessibilityLabel("Create Encrypted Storage").buttonStyle(StorebenchButtonStyle(.primary))
+                        Button("Back") { model.reviewStorageChoice() }.help("Back to Storage Choice").accessibilityLabel("Back to Storage Choice")
                     }
-                    StorebenchFeedback(text: model.lastError, error: true)
-                    Button("Back") { model.reviewStorageChoice() }.help("Back to Storage Choice").accessibilityLabel("Back to Storage Choice")
                 }
                 RestoreBackupCard(model: model)
                 Card(title: "Explore first", subtitle: "Look around with sample data before creating storage. Nothing is saved or sent to Apple, and you return here when you close it.") {
@@ -153,7 +159,7 @@ struct ConnectAccountView: View {
     }
 
     private var connectionContent: some View {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
                 if !asDialog {
                     StorebenchPageHeader(title: "Connect your Apple apps", description: "Select your App Store Connect API key once. Storebench checks it, finds your apps, and saves it in your selected encrypted credential storage.")
                 }
@@ -223,12 +229,13 @@ struct RestoreBackupCard: View {
 
     var body: some View {
         Card(title: "Restore from a backup", subtitle: "Choose a Storebench encrypted backup folder and enter its restore passphrase. Storebench checks every file before restoring, and then asks for that passphrase when it starts.") {
-            HStack(spacing: 12) {
+            StorebenchActionRow {
+                Text(folder?.path ?? "No backup chosen").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).lineLimit(1).truncationMode(.middle).help(folder?.path ?? "")
+            } actions: {
                 Button("Choose Backup…") {
                     let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
                     if panel.runModal() == .OK { folder = panel.url }
-                }.fixedSize()
-                Text(folder?.path ?? "No backup chosen").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).lineLimit(1).truncationMode(.middle).help(folder?.path ?? "")
+                }
             }
             StorebenchSecureField("Restore passphrase", text: $passphrase).storebenchFormColumn()
             if folder != nil && passphrase.utf16.count >= 12 {

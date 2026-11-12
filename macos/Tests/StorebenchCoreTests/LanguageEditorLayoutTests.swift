@@ -6,6 +6,72 @@ import Testing
     init() throws { _ = try TestIsolation.require() }
     func fixture() throws -> JSONText { try JSONText.parse(Data(contentsOf: TestIsolation.require().appendingPathComponent("native-fixtures/language-layout.json"))) }
 
+    @Test func individualLanguageSectionsRoundTripWithoutResizingOtherLanguages() throws {
+        let closed = try LanguageEditorLayout().merging([.copy: false, .search: false])
+        let swedish = try closed.merging([.copy: true], locale: "sv")
+        #expect(swedish.isExpanded(.copy, locale: "sv"))
+        #expect(!swedish.isExpanded(.copy, locale: "en-GB") && !swedish.isExpanded(.copy))
+        #expect(!swedish.isExpanded(.search, locale: "sv"))
+        #expect(try LanguageEditorLayout(swedish.json) == swedish)
+        let both = try swedish.merging([.privacy: false], locale: "en-GB")
+        #expect(both.isExpanded(.privacy, locale: "sv") && !both.isExpanded(.privacy, locale: "en-GB"))
+        let appliedToAll = try both.merging([.copy: false])
+        #expect(!appliedToAll.isExpanded(.copy, locale: "sv") && !appliedToAll.isExpanded(.copy, locale: "en-GB"))
+        #expect(!appliedToAll.isExpanded(.privacy, locale: "en-GB"))
+        #expect(throws: LanguageEditorLayout.Failure.self) { try closed.merging([.copy: true], locale: "synthetic-unknown") }
+        let invalidLanguages = JSONText.object([("synthetic-unknown", .object([("copy", .bool(true))]))])
+        let invalid = JSONText.object([("schemaVersion", .number(3)), ("expanded", closed.json["expanded"]!), ("languages", invalidLanguages)])
+        #expect(throws: LanguageEditorLayout.Failure.self) { try LanguageEditorLayout(invalid) }
+    }
+
+    @Test func concurrentLanguagePreferencesStayScopedAndNeverChangeDraftText() async throws {
+        let (first, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let second = try WorkspaceSession(workspace: Workspace(root: root), vault: await first.vault)
+        let account = try #require(try await first.accounts().first), appId = "1000000001"
+        let store = try EncryptedDocumentStore(url: EncryptedDocumentStore.databaseURL(root: root), key: Data(0..<32), writable: true)
+        let drafts = try store.documents(namespace: "drafts")
+        async let swedish = first.saveLanguageEditorLayout(accountId: account.id, appId: appId, patch: [.copy: false], locale: "sv")
+        async let english = second.saveLanguageEditorLayout(accountId: account.id, appId: appId, patch: [.privacy: false], locale: "en-GB")
+        _ = try await (swedish, english)
+        let saved = try await first.languageEditorLayout(accountId: account.id, appId: appId)
+        #expect(!saved.isExpanded(.copy, locale: "sv") && saved.isExpanded(.copy, locale: "en-GB"))
+        #expect(!saved.isExpanded(.privacy, locale: "en-GB") && saved.isExpanded(.privacy, locale: "sv"))
+        #expect(try store.documents(namespace: "drafts") == drafts)
+        await #expect(throws: RevisionHistoryFailure.self) { try await first.saveLanguageEditorLayout(accountId: "synthetic-foreign", appId: appId, patch: [.copy: true], locale: "sv") }
+        #expect(try await first.languageEditorLayout(accountId: account.id, appId: appId) == saved)
+    }
+
+    @MainActor @Test func failedScopedSavesKeepNewerChoicesAndValidateTheLanguageReceipt() async {
+        let editor = LanguageLayoutEditor(); editor.loaded(LanguageEditorLayout())
+        editor.change([.copy: false], locale: "sv"); editor.change([.privacy: false], locale: "en-GB")
+        await editor.flushScoped { patch, _ in try LanguageEditorLayout().merging(patch) }
+        #expect(editor.failed && !editor.saved && !editor.layout.isExpanded(.copy, locale: "sv"))
+        editor.change([.privacy: true], locale: "en-GB")
+        var persisted = LanguageEditorLayout()
+        await editor.flushScoped { patch, locale in
+            persisted = try persisted.merging(patch, locale: locale); return persisted
+        }
+        #expect(editor.saved && !editor.failed)
+        #expect(!persisted.isExpanded(.copy, locale: "sv") && persisted.isExpanded(.copy, locale: "en-GB"))
+        #expect(persisted.isExpanded(.privacy, locale: "en-GB"))
+    }
+
+    @MainActor @Test func aLaterAllLanguagesChoiceSupersedesAnInterruptedLanguageSave() async throws {
+        let editor = LanguageLayoutEditor(); editor.loaded(LanguageEditorLayout()); editor.change([.copy: false], locale: "sv")
+        var gate: CheckedContinuation<Void, Never>?, persisted = LanguageEditorLayout(), scopes: [String] = []
+        let writing = Task { await editor.flushScoped { patch, locale in
+            scopes.append(locale ?? "all")
+            if locale == "sv" { await withCheckedContinuation { gate = $0 }; throw LanguageEditorLayout.Failure.invalid }
+            persisted = try persisted.merging(patch, locale: locale); return persisted
+        } }
+        let deadline = ContinuousClock.now + .seconds(2)
+        while gate == nil, ContinuousClock.now < deadline { await Task.yield() }
+        let release = try #require(gate)
+        editor.change([.copy: true]); release.resume(); await writing.value
+        #expect(editor.saved && !editor.failed && scopes == ["sv", "all"])
+        #expect(editor.layout == persisted && persisted.isExpanded(.copy, locale: "sv") && persisted.languages["sv"] == nil)
+    }
+
     @Test func allGroupsFieldsLegacyDefaultsAndValidationMatchPrimary() throws {
         let fixture = try fixture()
         #expect(LanguageEditorLayout().json == fixture["default"])

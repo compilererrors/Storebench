@@ -1,6 +1,11 @@
 import StorebenchCore
 import SwiftUI
 
+private struct OpenCollectionRecordKey: EnvironmentKey { static var defaultValue: (() -> Void)? { nil } }
+extension EnvironmentValues {
+    var openCollectionRecord: (() -> Void)? { get { self[OpenCollectionRecordKey.self] } set { self[OpenCollectionRecordKey.self] = newValue } }
+}
+
 struct StorebenchCollectionSort<Item> {
     let id: String, label: String
     let less: (Item, Item) -> Bool
@@ -31,10 +36,14 @@ struct StorebenchCollection<Item: Identifiable, Content: View>: View {
     let title: (Item) -> String
     var subtitle: (Item) -> String = { _ in "" }
     var icon: ((Item) -> AnyView)? = nil
+    /// Commands for this record stay outside its disclosure target and remain available when it is closed.
+    var headerActions: ((Item) -> AnyView)? = nil
     var sorts: [StorebenchCollectionSort<Item>] = []
     var maximumColumns = 1
     var minimumWidth: CGFloat = 260
     var cardSurface = true
+    /// Already-complete cards keep the shared browsing controls without another heading or disclosure around each record.
+    var standalone = false
     var preferenceID = ""
     var initialOpeningLimit = 0
     var focusedID: Item.ID? = nil
@@ -88,20 +97,24 @@ struct StorebenchCollection<Item: Identifiable, Content: View>: View {
                 openingLimit: Binding(get: { presentation.openingLimit }, set: { presentation.chooseOpeningLimit($0, on: current) }),
                 allExpanded: !current.ids.isEmpty && current.ids.allSatisfy { presentation.expanded($0, on: current) },
                 allCollapsed: current.ids.allSatisfy { !presentation.expanded($0, on: current) },
-                expand: { presentation.setPageExpanded(current, true) }, collapse: { presentation.setPageExpanded(current, false) }, pageItems: current.ids.count, expandable: activate == nil) }
+                expand: { presentation.setPageExpanded(current, true) }, collapse: { presentation.setPageExpanded(current, false) }, pageItems: current.ids.count, expandable: activate == nil && !standalone) }
             if items.isEmpty && !empty.isEmpty { Text(empty).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true) }
             StorebenchCollectionLayout(maximumColumns: maximumColumns, minimumWidth: minimumWidth) {
                 ForEach(ordered) { item in
                     let visible = current.ids.contains(item.id)
-                    if let activate {
+                    if standalone {
+                        content(item).transformEnvironment(\.navigationPresentation) { $0 = $0?.scoped(String(describing: item.id)) }
+                            .collectionVisibility(visible).layoutValue(key: CollectionVisible.self, value: visible)
+                    } else if let activate {
                         StorebenchCollectionLink(title: title(item), subtitle: subtitle(item), action: action, icon: icon?(item), visible: visible, surface: cardSurface) { activate(item) }
                             .storebenchControlID("collection.open." + String(describing: item.id))
                             .layoutValue(key: CollectionVisible.self, value: visible)
                     } else {
-                    StorebenchCollectionCard(title: title(item), subtitle: subtitle(item), icon: icon?(item), visible: visible, surface: cardSurface,
+                    StorebenchCollectionCard(title: title(item), subtitle: subtitle(item), controlID: String(describing: item.id), icon: icon?(item), headerActions: headerActions?(item), visible: visible, surface: cardSurface,
                         expanded: Binding(get: { presentation.expanded(item.id, on: current) }, set: { value in
                             presentation.setExpanded(item.id, value); if value { onOpen?(item) }
                         }), revealToken: reveal?.id == item.id ? reveal?.token : nil, onShown: { onRevealed?(item.id) }) { content(item).transformEnvironment(\.navigationPresentation) { $0 = $0?.scoped(String(describing: item.id)) } }
+                        .environment(\.openCollectionRecord, { presentation.setExpanded(item.id, true); onOpen?(item) })
                         .layoutValue(key: CollectionVisible.self, value: visible)
                     }
                 }
@@ -196,45 +209,45 @@ struct StorebenchCollectionControls: View {
     var pageItems = 2
     /// False for rows that open directly, which have nothing to expand.
     var expandable = true
-    @State private var options = false
+    @State private var scrollFocus = StorebenchScrollFocus()
+    @Environment(\.pageFocusInteraction) private var interaction
     var body: some View {
-        VStack(alignment: .leading, spacing: StorebenchTheme.space(2)) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .center, spacing: StorebenchTheme.space(3)) { leading; Spacer(minLength: StorebenchTheme.space(3)); pageCommand }
-                VStack(alignment: .leading, spacing: StorebenchTheme.space(2)) { leading; pageCommand }
-            }
-            if options {
-                StorebenchMetricGrid(maximumColumns: 4, minimumWidth: 180) {
-                    StorebenchPicker("Results per page", selection: $pageSize) { selectionOptions(CollectionPresentation<Int>.pageSizes) { SelectionOption("\($0) results", value: $0) } }
-                    StorebenchPicker("Sort", selection: $sort) {
-                        SelectionOption("Original order", value: "default")
-                        selectionOptions(sorts) { SelectionOption($0.1, value: $0.0) }
+        HStack(alignment: .center, spacing: StorebenchTheme.space(3)) {
+            Text(summary + " · \(pageSize) per page").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
+                .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+            StorebenchIconMenu(title: "View Options for This List", icon: "sort") {
+                StorebenchSubmenu("Results per Page") {
+                    ForEach(CollectionPresentation<Int>.pageSizes, id: \.self) { count in
+                        StorebenchMenuOption(title: "\(count) Results", selected: pageSize == count) { pageSize = count }
                     }
-                    StorebenchPicker("Order", selection: $descending) { SelectionOption("Ascending", value: false); SelectionOption("Descending", value: true) }
-                    if expandable {
-                        StorebenchPicker("Default expansion per page · remembered", selection: $openingLimit) {
-                            SelectionOption("None", value: 0); SelectionOption("First card", value: 1); SelectionOption("First 3 cards", value: 3); SelectionOption("First 5 cards", value: 5); SelectionOption("All on page", value: -1)
+                }
+                StorebenchSubmenu("Sort By") {
+                    StorebenchMenuOption(title: "Original Order", selected: sort == "default") { sort = "default" }
+                    ForEach(sorts, id: \.0) { option in
+                        StorebenchMenuOption(title: option.1, selected: sort == option.0) { sort = option.0 }
+                    }
+                }
+                StorebenchSubmenu("Order") {
+                    StorebenchMenuOption(title: "Ascending", selected: !descending) { descending = false }
+                    StorebenchMenuOption(title: "Descending", selected: descending) { descending = true }
+                }
+                if expandable {
+                    StorebenchSubmenu("Open by Default") {
+                        ForEach([0, 1, 3, 5, -1], id: \.self) { count in
+                            StorebenchMenuOption(title: count == 0 ? "None" : count == -1 ? "All on Page" : count == 1 ? "First Card" : "First \(count) Cards", selected: openingLimit == count) { preserve { openingLimit = count } }
                         }
                     }
-                }.environment(\.fieldHintHeight, 0)
-            }
-        }.frame(maxWidth: .infinity, alignment: .leading)
-            .historyDisclosure("collection-view-options", isExpanded: $options)
-    }
-    private var leading: some View {
-        HStack(alignment: .center, spacing: StorebenchTheme.space(3)) {
-            StorebenchDisclosureButton(isExpanded: $options) {
-                Text("View Options").font(.sbCallout.weight(.semibold)).foregroundStyle(StorebenchTheme.color("color-accent-muted"))
-            }.fixedSize()
-            Text(summary + " · \(pageSize) per page").font(.sbCaption).foregroundStyle(StorebenchTheme.muted).lineLimit(1).fixedSize()
+                    if pageItems > 1 {
+                        StorebenchMenuSeparator()
+                        Button("Expand All on Page") { preserve(expand) }.storebenchWorking(allExpanded)
+                        Button("Collapse All on Page") { preserve(collapse) }.storebenchWorking(allCollapsed)
+                    }
+                }
+            }.storebenchControlID("collection.view-options").background(StorebenchScrollFocusAnchor(focus: scrollFocus))
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
-    @ViewBuilder private var pageCommand: some View {
-        if pageItems > 1 && expandable {
-            Button(allExpanded ? "Collapse All on Page" : "Expand All on Page", action: allExpanded ? collapse : expand)
-                .help(allExpanded ? "Close every card on this page." : "Open every card on this page.")
-        }
-    }
+    private func preserve(_ action: () -> Void) { interaction?(); scrollFocus.reveal(.preserve); action() }
 }
 
 /// A row that opens its destination directly, with the action and an arrow at its trailing edge.
@@ -268,8 +281,9 @@ private struct StorebenchCollectionLink: View {
 }
 
 private struct StorebenchCollectionCard<Content: View>: View {
-    let title, subtitle: String
+    let title, subtitle, controlID: String
     let icon: AnyView?
+    let headerActions: AnyView?
     let visible: Bool, surface: Bool
     @Binding var expanded: Bool
     var revealToken: UUID? = nil
@@ -278,17 +292,21 @@ private struct StorebenchCollectionCard<Content: View>: View {
     @State private var mounted = false
     var body: some View {
         VStack(alignment: .leading, spacing: expanded && visible ? StorebenchTheme.gap : 0) {
+            HStack(alignment: .top, spacing: StorebenchTheme.space(2)) {
             StorebenchDisclosureButton(isExpanded: $expanded, card: true) {
                 HStack(spacing: StorebenchTheme.space(3)) {
                     if let icon { icon.frame(width: 42, height: 42).fixedSize().accessibilityHidden(true) }
                     VStack(alignment: .leading, spacing: 2) {
-                        StorebenchAdaptiveText(text: title, maximumHeight: 40, font: .sbHeadline)
+                        StorebenchAdaptiveText(text: title, maximumHeight: 40, font: .sbTitle3.weight(.semibold))
                         if !subtitle.isEmpty { StorebenchAdaptiveText(text: subtitle, maximumHeight: 34, font: .sbCaption, color: StorebenchTheme.muted) }
                     }.frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 }
-            }.accessibilityLabel(title)
+            }.accessibilityLabel(title).storebenchControlID("collection.disclosure." + controlID)
+            if let headerActions { headerActions.fixedSize().storebenchControlID("collection.actions." + controlID) }
+            }
             if mounted || expanded {
                 VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
+                    StorebenchDivider()
                     content()
                 }.fixedSize(horizontal: false, vertical: true)
                     .collectionVisibility(expanded && visible)

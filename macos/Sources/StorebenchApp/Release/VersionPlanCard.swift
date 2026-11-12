@@ -10,6 +10,8 @@ struct VersionPlanCard: View {
     /// Quick Release keeps the version's starting point and a valid release option as they are, and only names them.
     var quick = false
     var sync: (() -> Void)? = nil
+    var createTitle = "Save Draft"
+    var syncTitle = "Sync to Apple"
     private enum Start: String, CaseIterable { case reuse = "Continue a version", copy = "Copy an earlier version", empty = "Start empty" }
     private typealias Base = ReleaseSetup.Candidate
     @State private var latestReading = false
@@ -19,9 +21,9 @@ struct VersionPlanCard: View {
 
     var body: some View {
         Card(title: model.plan.map { "Version \($0.targetVersion)" } ?? "New Version",
-             subtitle: quick ? (model.plan == nil ? "Enter the version number and choose how Apple releases it, then click Create. The version starts from the current text and keeps everything else. App Store Connect changes only when you approve the reviews below." : "Change the number or release option here, then Save. This app's next version starts with the same release option. App Store Connect changes only when you approve the reviews below.")
-                : model.plan == nil ? "Enter the version number and choose how Apple releases it, then click Create. The version is kept on this Mac until you save it to App Store Connect in step 3." : "Change the number or release option here. App Store Connect changes only when you approve them in step 3.",
-             help: "versions") {
+             subtitle: quick ? (model.plan == nil ? "Enter the version number and choose how Apple releases it, then choose \(createTitle). The existing listing is reused. App Store Connect changes only when you approve a sync review." : "Change the number or release option here, then Save Draft. This app's next version starts with the same release option. App Store Connect changes only when you approve a sync review.")
+                : model.plan == nil ? "Enter the version number and choose how Apple releases it, then choose \(createTitle). The version stays on this Mac until you review and sync it to App Store Connect." : "Change the number or release option here. App Store Connect changes only when you approve a sync review.",
+             help: "versions", accessory: model.plan != nil && model.loaded && !model.needsComparison ? AnyView(versionOptions) : nil) {
             if !model.loaded { Text("Reading the saved version…").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
             if model.loaded && model.needsComparison {
                 Text("This version changed elsewhere. Compare it with the latest save below, then choose which values to keep.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
@@ -34,38 +36,49 @@ struct VersionPlanCard: View {
                 if !quick { Text("App Store Version Release").font(.sbCallout.weight(.semibold)) }
                 releaseFields(model)
             }
-            if !model.status.isEmpty { StorebenchTextSlot(text: model.status, height: 40, font: .sbCallout, color: StorebenchTheme.muted, live: true) }
+            StorebenchTextSlot(text: model.status, height: 40, font: .sbCallout, color: StorebenchTheme.muted, live: true)
             if case .available(let submitted?) = availability {
                 Text("\(submitted) has been submitted in App Store Connect. You can remove this version and start a new one.").font(.sbCallout).fixedSize(horizontal: false, vertical: true)
             }
             if model.loaded && !model.needsComparison {
                 StorebenchFormFooter {
-                    if let plan = model.plan {
-                        StorebenchMenu("Version Options", icon: "settings") {
-                            Button("Revert Changes") { model.revert() }.storebenchWorking(!model.dirty)
-                            StorebenchMenuSeparator()
-                            Button("Remove Version…", role: .destructive) {
-                                guard confirm(.removeVersion, title: "Remove version \(plan.targetVersion) from this Mac?",
-                                              message: "The version plan is removed from this Mac. Its text and screenshots stay saved as a local draft. Nothing changes at App Store Connect.", action: "Remove") else { return }
-                                run(model, removing: true)
-                            }
-                        }.storebenchWorking(model.busy)
-                    }
-                    StorebenchBusyButton(title: "Save Draft", loadingTitle: "Saving…", busy: model.busy, variant: sync == nil ? .primary : .secondary) { run(model, removing: false) }
+                    StorebenchBusyButton(title: model.plan == nil ? createTitle : "Save Draft", loadingTitle: "Saving…", busy: model.busy, variant: sync == nil ? .primary : .secondary) { run(model, removing: false) }
                             .help(model.plan == nil ? "Create the new version on this Mac and continue" : "Save the version on this Mac")
                             .storebenchWorking(model.plan != nil && !model.dirty)
+                            .storebenchControlID("version-plan.save")
                     if let sync {
-                        StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Saving…", busy: model.busy, variant: .primary) {
+                        StorebenchBusyButton(title: syncTitle, loadingTitle: "Preparing…", busy: model.busy, variant: .primary) {
                             operation = Task {
                                 guard await model.save(), model.active, !model.dirty, !Task.isCancelled else { return }
                                 await didSave(false); sync()
                             }
                         }
+                        .storebenchControlID("version-plan.sync")
                     }
                 }
             }
         }
         .onDisappear { operation?.cancel() }
+        .pageRefreshParticipant("version-plan/" + String(describing: ObjectIdentifier(model)), priority: -20,
+            state: { .init(dirty: model.dirty, busy: model.busy || !model.loaded, signature: model.inputs.signature) },
+            save: { await model.save() }, discard: { model.revert(); return !model.dirty }, refresh: {
+                guard model.active, !model.busy, !model.dirty else { return false }
+                await model.readLatest(); guard model.latestRead, !model.dirty else { return false }
+                model.acceptLatest(keepEdits: false); return model.ready
+            })
+    }
+    private var versionOptions: some View {
+        StorebenchIconMenu(title: "Version Options") {
+            Button("Revert Changes") { model.revert() }.storebenchWorking(!model.dirty)
+            StorebenchMenuSeparator()
+            if let plan = model.plan {
+                Button("Remove Version…", role: .destructive) {
+                    guard confirm(.removeVersion, title: "Remove version \(plan.targetVersion) from this Mac?",
+                                  message: "The version plan is removed from this Mac. Its text and screenshots stay saved as a local draft. Nothing changes at App Store Connect.", action: "Remove") else { return }
+                    run(model, removing: true)
+                }
+            }
+        }.storebenchWorking(model.busy)
     }
     @ViewBuilder private func starting(_ model: ReleasePlanEditor) -> some View {
         let first = mode(model.inputs) == .empty && ReleaseSetup.candidates(history).isEmpty

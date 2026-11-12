@@ -105,10 +105,10 @@ struct SavedPreviewPlayer: View {
         VStack(alignment: .leading, spacing: 8) {
             Group {
                 if let playback { VideoPlayer(player: playback.player).aspectRatio(Double(item.width) / Double(item.height), contentMode: .fit).frame(maxWidth: 600, maxHeight: canvasHeight ?? 340).accessibilityLabel("Play \(item.fileName)") }
-                else if loading { ProgressView("Opening saved video…").frame(height: canvasHeight ?? 100) }
+                else if loading { StorebenchMediaStatus(message: "Opening saved video…").frame(height: canvasHeight ?? 100) }
                 else if canvasHeight != nil { Text("Preview unavailable").font(.sbCaption).foregroundStyle(StorebenchTheme.muted).frame(maxWidth: .infinity) }
             }.frame(maxWidth: canvasHeight == nil ? nil : .infinity).frame(height: canvasHeight)
-            HStack(spacing: 8) {
+            StorebenchActionGroup {
                 if playback != nil { Button(saving ? "Downloading…" : "Download Original…") { Task { await download() } }.storebenchWorking(saving || loading) }
                 if playback == nil && !loading { Button("Retry Playback") { Task { await load() } } }
             }.environment(\.naturalActions, canvasHeight != nil)

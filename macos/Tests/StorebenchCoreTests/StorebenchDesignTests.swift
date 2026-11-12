@@ -8,7 +8,8 @@ import Testing
 
     @Test func everySharedWebIconDecodesIntoContainedNativeVectorGeometry() throws {
         let design = StorebenchDesign.shared
-        #expect(design.icons.count == 46)
+        #expect(design.icons.count == 52)
+        #expect(design.icons["more"]?.count == 3)
         #expect(design.icons["keyboard"]?.isEmpty == false)
         #expect(design.icons["disclosure"]?.first?.tag == "polygon")
         for (name, primitives) in design.icons {

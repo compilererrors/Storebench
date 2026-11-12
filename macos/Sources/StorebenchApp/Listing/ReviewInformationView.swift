@@ -9,6 +9,7 @@ struct ReviewInformationView: View {
     var initialVersionId: String? = nil
     /// Shows only this Apple version, without the version choice.
     var fixedVersionId: String? = nil
+    var didSync: () -> Void = {}
     @State private var latestReading = false
     @State private var saving = false
     @State private var editor = ReviewInformationEditor()
@@ -25,20 +26,21 @@ struct ReviewInformationView: View {
     @Environment(\.navigationPresentation) private var history
     @Environment(\.pageScroll) private var pageScroll
     @Environment(\.pageReveal) private var pageReveal
+    @Environment(\.releaseFieldFocus) private var fieldFocus
     private struct Read { let editor: ReviewInformationEditor, layout: ReviewInformationLayout }
     private func readKey(_ versionId: String?) -> String { "app-review/\(account.id)/\(app.id)/\(versionId ?? "")" }
     private var busy: Bool { working || publishing || fileSelection.pending }
     private var editable: Bool { editor.snapshot?.version?.editable == true }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Card(title: "App Review Information", subtitle: "Contact details, sign-in information and notes for App Review. Sync to Apple lists the changes for App Store Connect; nothing is sent until you approve them.", help: "review-information") {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
+            Card(title: "App Review Information", subtitle: "Contact details, sign-in information and notes for App Review. Sync to Apple lists the changes for App Store Connect; nothing is sent until you approve them.", help: "review-information",
+                 accessory: editor.loaded ? nil : AnyView(StorebenchBusyButton(title: "Read from Apple", loadingTitle: "Reading…", busy: busy) { Task { await load(fixedVersionId, fresh: true) } }.help("Read App Review Information").accessibilityLabel("Read App Review Information"))) {
                 if fixedVersionId == nil {
                     StorebenchPicker("Version", selection: Binding(get: { editor.snapshot?.versionId ?? "" }, set: { value in
                         if !busy, value != editor.snapshot?.versionId, protection?.allowLeaving() != false { Task { await load(value) } }
                     })) { selectionOptions(editor.snapshot?.versions ?? []) { SelectionOption("\($0.name) · \($0.state)", value: $0.id) } }.storebenchFormColumn().storebenchWorking(busy)
                 }
-                if !editor.loaded { StorebenchBusyButton(title: "Read from Apple", loadingTitle: "Reading…", busy: busy) { Task { await load(fixedVersionId, fresh: true) } }.help("Read App Review Information").accessibilityLabel("Read App Review Information") }
                 if editor.loaded {
                 if let reused = editor.snapshot?.reusedFrom { Text("Reused from \(reused). Check these details before publishing.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
                 // Laid out as in App Store Connect: sign-in first, then contact details, always visible.
@@ -52,7 +54,9 @@ struct ReviewInformationView: View {
                         if editor.fields.demoAccountRequired {
                             StorebenchFormGrid() {
                                 StorebenchTextField("User name", text: $editor.fields.demoAccountName).info("A working demo account Apple's reviewer can sign in with. Use a test account, not a personal one.")
+                                    .requestFocus(fieldFocus?.anchor == "review-information.demoAccountName" ? fieldFocus?.ticket : nil).id("review-information.demoAccountName")
                                 StorebenchSecureField(editor.snapshot?.demoPasswordSaved == true ? "Replacement password" : "Password", text: $editor.fields.demoAccountPassword)
+                                    .requestFocus(fieldFocus?.anchor == "review-information.demoAccountPassword" ? fieldFocus?.ticket : nil).id("review-information.demoAccountPassword")
                             }.environment(\.fieldHintHeight, 17)
                             Text(editor.snapshot?.demoPasswordSaved == true ? "A password is saved. Leave this field empty to keep it, or enter a replacement." : "Enter the demo account password.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
                         }
@@ -60,9 +64,13 @@ struct ReviewInformationView: View {
                     StorebenchCardSection(title: "Contact Information") {
                         StorebenchFormGrid() {
                             StorebenchTextField("First name", text: $editor.fields.contactFirstName)
+                                .requestFocus(fieldFocus?.anchor == "review-information.contactFirstName" ? fieldFocus?.ticket : nil).id("review-information.contactFirstName")
                             StorebenchTextField("Last name", text: $editor.fields.contactLastName)
+                                .requestFocus(fieldFocus?.anchor == "review-information.contactLastName" ? fieldFocus?.ticket : nil).id("review-information.contactLastName")
                             StorebenchTextField("Phone number", text: $editor.fields.contactPhone).info("Apple may call this number during review. Include the country code, such as +46 70 123 45 67.")
+                                .requestFocus(fieldFocus?.anchor == "review-information.contactPhone" ? fieldFocus?.ticket : nil).id("review-information.contactPhone")
                             StorebenchTextField("Email", text: $editor.fields.contactEmail).info("Apple writes to this address if the reviewer has questions about this version.")
+                                .requestFocus(fieldFocus?.anchor == "review-information.contactEmail" ? fieldFocus?.ticket : nil).id("review-information.contactEmail")
                         }.environment(\.fieldHintHeight, 17)
                     }
                 }.storebenchWorking(busy)
@@ -74,7 +82,7 @@ struct ReviewInformationView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(editor.selectedFile != nil && !working ? "Attachment not saved: \(editor.attachmentName)" : "Local attachment: \(editor.attachmentName)").lineLimit(2).help(editor.attachmentName)
                         .foregroundStyle(editor.selectedFile != nil && !working ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted)
-                    HStack {
+                    StorebenchActionGroup {
                         if editor.selectedFile != nil { Button("Try Again") { Task { await save(prepare: false) } }.buttonStyle(StorebenchButtonStyle(.primary)) }
                         else { Button("Choose File…") { if let versionId = editor.snapshot?.versionId { fileSelection.begin(versionId) } } }
                         if editor.selectedFile != nil || editor.attachment != nil { Button("Remove Attachment", role: .destructive) { editor.removeAttachment(); review = nil; problem = false; status = "" }.help("Remove Local Attachment").accessibilityLabel("Remove Local Attachment") }
@@ -112,14 +120,16 @@ struct ReviewInformationView: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     StorebenchTextField("Entitlement key (up to 200 characters)", text: $editor.sandbox[index].key)
                                     StorebenchTextArea(title: "Usage information", text: $editor.sandbox[index].usage, height: StorebenchTheme.textarea()).accessibilityLabel("Usage information (up to 4,000 characters)")
-                                    HStack {
+                                    StorebenchActionGroup {
                                         Button("Copy Explanation") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(editor.sandbox[index].clipboardText, forType: .string); status = "Sandbox explanation copied." }
                                         Button("Remove Exception", role: .destructive) { editor.sandbox.remove(at: index); review = nil }
                                     }
                                 }
                             }
-                            if editor.sandbox.count < 20 { Button("Add Exception") { editor.sandbox.append(SandboxException()); review = nil } }
-                            StorebenchActionLink("Open Version", destination: URL(string: "https://appstoreconnect.apple.com/apps/\(app.id)/distribution/macos/version/inflight")!, help: "Open the macOS version in App Store Connect")
+                            StorebenchActionGroup {
+                                if editor.sandbox.count < 20 { Button("Add Exception") { editor.sandbox.append(SandboxException()); review = nil } }
+                                StorebenchActionLink("Open Version", destination: URL(string: "https://appstoreconnect.apple.com/apps/\(app.id)/distribution/macos/version/inflight")!, help: "Open the macOS version in App Store Connect")
+                            }
                         }.padding(.top, 8)
                     }.storebenchWorking(busy)
                 }
@@ -139,9 +149,13 @@ struct ReviewInformationView: View {
             if review != nil && editor.dirty && review?.request.reviewAttachmentId == nil {
                 Text("You changed the details after preparing this review. Choose Sync to Apple again to list the current details.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
             } else {
-                ReviewPanel(account: account, app: app, session: session, review: $review, done: { if review?.state == "complete" { Task { await refreshApple() } } }, busyChanged: { publishing = $0 }, syncConfirmation: true)
+                ReviewPanel(account: account, app: app, session: session, review: $review, done: { if review?.state == "complete" { didSync(); Task { await refreshApple() } } }, busyChanged: { publishing = $0 }, syncConfirmation: true)
                     .storebenchWorking(working || fileSelection.pending)
             }
+        }
+        .onChange(of: editor.loaded) { _, loaded in
+            guard loaded, let anchor = fieldFocus?.anchor, anchor.hasPrefix("review-information.") else { return }
+            Task { @MainActor in await Task.yield(); pageReveal?(anchor) }
         }
         .historyValue("app-review", Binding(get: { editor.snapshot?.versionId ?? restoredVersion ?? "" }, set: { restoredVersion = $0.isEmpty ? nil : $0 }))
         .task {
@@ -153,6 +167,12 @@ struct ReviewInformationView: View {
         }
         .onDisappear { remember(editor.snapshot?.versionId) }
         .trackUnsavedChanges(editor.dirty, busy: busy, problem: { problem ? "App Review Information: " + status : nil }, onSave: { await save(prepare: false); return !editor.dirty })
+        .pageRefreshParticipant(readKey(editor.snapshot?.versionId),
+            state: { .init(dirty: editor.dirty, busy: busy, signature: editor.inputFingerprint) },
+            save: { await save(prepare: false); return !editor.dirty }, discard: {
+                guard !busy, let snapshot = editor.snapshot else { return false }
+                editor.load(snapshot); review = nil; return !editor.dirty
+            }, refresh: { await load(editor.snapshot?.versionId, fresh: true); return editor.loaded && status.isEmpty })
         .onChange(of: editor.inputFingerprint) { _, _ in if editor.dirty { review = nil } }
         .onDisappear { fileTask?.cancel() }
         .fileImporter(isPresented: $fileSelection.isPresented, allowedContentTypes: [.pdf, .png, .jpeg, .mpeg4Movie, .quickTimeMovie]) { result in

@@ -17,7 +17,7 @@ struct PreparationSettings: View {
                     selectionOptions(BackgroundPreparation.limits) { SelectionOption(Self.label($0), value: $0) }
                 }
             }
-            Text("Storebench reads the release status and material of these apps in the background, so Release and Quick Release open without waiting. With more connected apps, the ones you open most often come first. Nothing is sent to App Store Connect.")
+            Text("Storebench prepares these apps for Release and Quick Release, with frequently opened apps first. While unlocked, it checks for an outdated app list after opening, on returning to the app and periodically. App lists are reused for 15 minutes. Release states are checked after unlock and about once a minute while the app is open. Full preparation follows the app limit above and rechecks recent release plans about every 10 minutes. Background reads yield to open screens. App-list failures use longer retry delays.")
                 .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
             StorebenchFeedback(text: status, height: 40, error: problem)
             RecoveryActions(code: issueCode)

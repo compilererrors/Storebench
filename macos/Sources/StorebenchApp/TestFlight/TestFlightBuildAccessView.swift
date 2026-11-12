@@ -34,15 +34,13 @@ struct TestFlightBuildAccessView: View {
         VStack(alignment: .leading, spacing: 16) {
             Card(title: "Individual testers · \(build.title)", subtitle: "Direct access to this build. Apple controls invitation delivery and eligibility.") {
                 StorebenchCollection(items: assigned, title: { $0.email }, subtitle: { $0.name }, empty: loaded ? "No individual testers assigned to this build." : "Reading individual testers…") { tester in
-                    HStack(alignment: .top) {
-                        VStack(alignment: .leading) {
-                            StorebenchTextSlot(text: tester.email, height: 36, font: .sbBody)
-                            Text(AppStoreNames.state(tester.state)).font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
-                        }
-                        Spacer()
+                    StorebenchActionRow {
+                        StorebenchTextSlot(text: tester.email, height: 36, font: .sbBody)
+                        Text(AppStoreNames.state(tester.state)).font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
+                    } actions: {
                         Button(role: .destructive) { Task { await prepare("remove-\(tester.id)") { $0.testflightAction = "remove-individual-tester"; $0.testerId = tester.id } } } label: {
                             StorebenchBusyLabel("Review Removal", loading: "Preparing…", busy: preparing == "remove-\(tester.id)")
-                        }.storebenchWorking(busy).fixedSize()
+                        }.storebenchWorking(busy)
                     }
                 }
                 StorebenchDivider()

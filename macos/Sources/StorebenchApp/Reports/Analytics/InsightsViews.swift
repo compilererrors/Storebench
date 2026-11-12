@@ -72,7 +72,7 @@ struct AnalyticsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             if state == "failed" || (state == "ready" && periods.isEmpty) {
                 Card(title: "Saved Analytics analysis", subtitle: "Choose downloaded reports and activity dates.", actions: AnyView(downloadAction)) { analysisFilters }
             }
@@ -124,12 +124,10 @@ struct ReviewsView: View {
     private var downloadCard: some View {
         Card(title: "Download reviews", subtitle: "New and changed reviews are saved. Reviews Apple no longer returns stay saved.", help: "reviews") {
             StorebenchActionGroup { downloadActions }
-            ProgressView().opacity(downloadRunning ? 1 : 0).frame(height: 16).accessibilityLabel("Review download progress").accessibilityHidden(!downloadRunning)
-            ScrollView { Text(downloadProgressMessage).font(.sbCallout).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
-                .frame(height: 88).accessibilityLabel("Saved review download status")
+            if downloadRunning { StorebenchProgressStatus(message: downloadProgressMessage, height: 88).accessibilityLabel("Review download progress") }
+            else { StorebenchTextSlot(text: downloadProgressMessage, height: 88, font: .sbCallout, color: nil, live: true).accessibilityLabel("Saved review download status") }
             RecoveryActions(code: downloadIssue ?? (jobReadFailed ? "SB-REPORT-JOB" : downloadJob?.code), showMessage: true)
-            ScrollView { Text(status).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
-                .frame(height: 44).accessibilityLabel("Review download operation status")
+            StorebenchFeedback(text: status, height: 44).accessibilityLabel("Review download operation status")
         }
     }
 
@@ -193,7 +191,7 @@ struct ReviewsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             downloadCard
             ReviewsFilesView(account: account, app: app, session: session, blocked: blocked || downloading, refreshToken: refreshedJobId ?? "", onChanged: { await loadReviews(context: contextId) })
             switch state {

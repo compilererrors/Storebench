@@ -24,6 +24,34 @@ struct StorebenchMenu<Content: View>: View {
     }
 }
 
+/// Secondary commands stay beside the heading of the content they control.
+struct StorebenchIconMenu<Content: View>: View {
+    let title: String
+    var icon = "more"
+    @State private var hovering = false
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        Menu { content().nativeMenuContent() } label: {
+            StorebenchIcon(name: icon, size: 18)
+                .modifier(StorebenchControlSurface(variant: .quiet, size: .icon, emphasized: hovering))
+        }.menuStyle(.button).menuIndicator(.hidden)
+            .buttonStyle(StorebenchPressStyle())
+            .frame(width: StorebenchTheme.controlHeight, height: StorebenchTheme.controlHeight)
+            .onHover { hovering = $0 }
+            .help(title).accessibilityLabel(title)
+    }
+}
+
+struct StorebenchIconButton: View {
+    let title: String, icon: String
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) { StorebenchIcon(name: icon, size: 16) }
+            .buttonStyle(StorebenchButtonStyle(.quiet, size: .icon))
+            .help(title).accessibilityLabel(title)
+    }
+}
+
 extension View {
     /// App colors and custom button drawing must not become native menu-item attributes.
     func nativeMenuContent() -> some View { font(.body).foregroundStyle(.primary).buttonStyle(.automatic).toggleStyle(.automatic).tint(nil) }
@@ -45,6 +73,12 @@ struct StorebenchMenuOption: View {
     var body: some View { Toggle(title, isOn: Binding(get: { selected }, set: { if $0 { action() } })).toggleStyle(.automatic) }
 }
 
+struct StorebenchMenuToggle: View {
+    let title: String
+    @Binding var isOn: Bool
+    var body: some View { Toggle(title, isOn: $isOn).toggleStyle(.automatic) }
+}
+
 struct StorebenchMenuSeparator: View {
     var body: some View { Divider() }
 }
@@ -57,23 +91,17 @@ struct StorebenchExternalMenuItem: View {
     var body: some View { Button(title) { openURL(destination) }.help(destination.host ?? title) }
 }
 
-/// AppKit owns selection and keyboard tracking; the shared face owns the field's appearance.
+/// AppKit owns the popup's appearance, selected-item alignment and keyboard tracking.
 struct StorebenchNativePicker<Value: Hashable>: View {
     let title: String
     @Binding var selection: Value
     let options: [SelectionOption<Value>]
     @State private var focused = false
-    @State private var hovered = false
     private var available: Bool { options.contains(where: \.isEnabled) && Set(options.map(\.value)).count == options.count }
-    private var selected: String { SelectionOption.title(for: selection, in: options) ?? (options.isEmpty ? "No options available" : "Choose…") }
     var body: some View {
-        ZStack {
-            StorebenchMenuFace(title: selected, focused: focused, emphasized: hovered)
-                .allowsHitTesting(false).accessibilityHidden(true)
-            NativeSelectionControl(title: title, selection: $selection, options: options, focused: $focused)
-        }
+        NativeSelectionControl(title: title, selection: $selection, options: options, focused: $focused)
             .frame(minWidth: 0, maxWidth: .infinity).frame(height: StorebenchTheme.controlHeight)
-            .disabled(!available).onHover { hovered = $0 }
+            .disabled(!available)
     }
 }
 
@@ -85,9 +113,8 @@ private struct NativeSelectionControl<Value: Hashable>: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> SelectionPopUpButton {
         let view = SelectionPopUpButton(frame: .zero, pullsDown: false)
-        view.cell = SelectionPopUpCell(textCell: "", pullsDown: false)
         view.isTransparent = false; view.isBordered = true; view.bezelStyle = .rounded
-        view.focusRingType = .none; view.controlSize = .large
+        view.focusRingType = .default; view.controlSize = .large
         view.font = .systemFont(ofSize: StorebenchTheme.measure("inputFont"))
         view.cell?.lineBreakMode = .byTruncatingMiddle
         view.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -163,11 +190,6 @@ private struct NativeSelectionControl<Value: Hashable>: NSViewRepresentable {
     }
 }
 
-/// The SwiftUI face draws the control; the native cell retains menu positioning, checked choices and tracking.
-private final class SelectionPopUpCell: NSPopUpButtonCell {
-    override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {}
-}
-
 private final class SelectionPopUpButton: NSPopUpButton {
     var prepareForOpening: (() -> Void)?
     var focusChanged: ((Bool) -> Void)?
@@ -217,6 +239,7 @@ struct StorebenchFormField<Content: View>: View {
     var hideLabel = false
     var hideHint = false
     var info = ""
+    var accessory: AnyView? = nil
     @ViewBuilder let content: () -> Content
     @Environment(\.fieldHintHeight) private var hintHeight
     @Environment(\.settingsPresentation) private var settingsPresentation
@@ -240,7 +263,11 @@ struct StorebenchFormField<Content: View>: View {
         }.frame(maxWidth: .infinity, alignment: .leading)
     }
     private var input: some View {
-        content().overlay(StorebenchControlOutline(border: needed == nil ? .clear : StorebenchTheme.color("color-danger-border"), focusedOverride: false).allowsHitTesting(false))
+        HStack(alignment: .top, spacing: StorebenchTheme.space(2)) {
+            content().frame(maxWidth: .infinity, alignment: .leading)
+                .overlay(StorebenchControlOutline(border: needed == nil ? .clear : StorebenchTheme.color("color-danger-border"), focusedOverride: false).allowsHitTesting(false))
+            if let accessory { accessory.fixedSize() }
+        }
     }
     /// The label sits level with the control's text line; a hint continues below it in the same column.
     private var settingsCopy: some View {
@@ -252,7 +279,7 @@ struct StorebenchFormField<Content: View>: View {
     private var fieldLabel: some View {
         HStack(alignment: .center, spacing: StorebenchTheme.space(1)) {
             StorebenchHugWidth {
-                StorebenchTextSlot(text: label, height: StorebenchTheme.measure("fieldLabel"), font: .sbCallout.weight(.semibold), color: StorebenchTheme.color("color-text-secondary"))
+                StorebenchTextSlot(text: label, height: StorebenchTheme.measure("fieldLabel"), font: .sbCallout.weight(.medium), color: StorebenchTheme.ink)
             }.layoutPriority(1)
             if !info.isEmpty { StorebenchInfoTip(title: label, text: info); Spacer(minLength: 0) }
         }
@@ -285,25 +312,43 @@ struct StorebenchSettingToggle: View {
     var body: some View { Toggle(title, isOn: $isOn).toggleStyle(StorebenchToggleStyle(prominent: true)) }
 }
 
+private struct StorebenchInputFocusRequest: Hashable {
+    let ticket: UUID?
+    let active: Bool
+}
+
 struct StorebenchTextField: View {
     private let title: String, hint: String
-    private let control: AnyView
+    private let control: (FocusState<Bool>.Binding) -> AnyView
     private var hidden = false
     private var info = ""
+    private var focusTicket: UUID?
+    @FocusState private var inputFocused: Bool
+    @State private var appliedFocus: UUID?
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.collectionVisible) private var visible
     /// `contentType` lets macOS AutoFill offer saved values, such as a username.
     init(_ title: String, text: Binding<String>, hint: String = "", placeholder: String? = nil, contentType: NSTextContentType? = nil) {
         self.title = title; self.hint = hint
-        control = AnyView(TextField("", text: text, prompt: Text(placeholder ?? "").foregroundColor(StorebenchTheme.muted)).textFieldStyle(StorebenchTextFieldStyle())
-            .textContentType(contentType).accessibilityLabel(title))
+        control = { focus in AnyView(TextField("", text: text, prompt: Text(placeholder ?? "").foregroundColor(StorebenchTheme.muted)).textFieldStyle(StorebenchTextFieldStyle())
+            .textContentType(contentType).accessibilityLabel(title).focused(focus)) }
     }
     init<F: ParseableFormatStyle>(_ title: String, value: Binding<F.FormatInput>, format: F, hint: String = "") where F.FormatOutput == String, F.FormatInput: Equatable {
         self.title = title; self.hint = hint
-        control = AnyView(TextField("", value: value, format: format).textFieldStyle(StorebenchTextFieldStyle()).accessibilityLabel(title))
+        control = { focus in AnyView(TextField("", value: value, format: format).textFieldStyle(StorebenchTextFieldStyle()).accessibilityLabel(title).focused(focus)) }
     }
     func labelsHidden() -> Self { var copy = self; copy.hidden = true; return copy }
     func info(_ text: String) -> Self { var copy = self; copy.info = text; return copy }
+    func requestFocus(_ ticket: UUID?) -> Self { var copy = self; copy.focusTicket = ticket; return copy }
     var body: some View {
-        StorebenchFormField(label: title, hint: hint, hideLabel: hidden, hideHint: hidden, info: info) { control }
+        StorebenchFormField(label: title, hint: hint, hideLabel: hidden, hideHint: hidden, info: info) { control($inputFocused) }
+            .scrollFocus(focusTicket, active: enabled && visible)
+            .task(id: StorebenchInputFocusRequest(ticket: focusTicket, active: enabled && visible)) {
+                if focusTicket == nil, appliedFocus != nil { inputFocused = false; appliedFocus = nil }
+                guard let focusTicket, enabled, visible else { return }
+                await Task.yield(); guard !Task.isCancelled else { return }
+                inputFocused = true; appliedFocus = focusTicket
+            }
     }
 }
 
@@ -469,10 +514,10 @@ struct StorebenchChoicePicker<Selection: Hashable>: View {
                             .overlay { if chosen { Circle().fill(active ? StorebenchTheme.accent : StorebenchTheme.subtle).padding(4) } }
                             .frame(width: 18, height: 18)
                         StorebenchTextSlot(text: option.1, height: StorebenchTheme.measure("choiceLabel"), font: .sbCallout, color: active ? StorebenchTheme.ink : StorebenchTheme.subtle, centered: true)
-                    }.padding(.horizontal, 12).padding(.vertical, StorebenchTheme.space(2)).frame(minHeight: StorebenchTheme.measure("choiceHeight"))
+                    }.padding(.horizontal, 8).padding(.vertical, StorebenchTheme.space(1)).frame(minHeight: StorebenchTheme.measure("choiceHeight"))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(surface(chosen), in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
-                        .overlay(StorebenchControlOutline(border: StorebenchTheme.color(chosen ? "color-border-accent" : "color-border-control")))
+                        .overlay(StorebenchControlOutline(border: chosen ? StorebenchTheme.color("color-border-accent") : .clear))
                 } else {
                     HStack(spacing: StorebenchTheme.space(2)) {
                         if chosen { StorebenchIcon(name: "check", size: 14) }
@@ -511,12 +556,25 @@ struct StorebenchSecureField: View {
     @Binding private var text: String
     private var hidden = false
     private let contentType: NSTextContentType?
+    private var focusTicket: UUID?
+    @FocusState private var inputFocused: Bool
+    @State private var appliedFocus: UUID?
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.collectionVisible) private var visible
     /// `contentType` lets macOS AutoFill offer a saved password.
     init(_ title: String, text: Binding<String>, hint: String = "", contentType: NSTextContentType? = nil) { self.title = title; _text = text; self.hint = hint; self.contentType = contentType }
     func labelsHidden() -> Self { var copy = self; copy.hidden = true; return copy }
+    func requestFocus(_ ticket: UUID?) -> Self { var copy = self; copy.focusTicket = ticket; return copy }
     var body: some View {
         StorebenchFormField(label: title, hint: hint, hideLabel: hidden, hideHint: hidden) {
-            SecureField("", text: $text).textFieldStyle(StorebenchTextFieldStyle()).textContentType(contentType).accessibilityLabel(title)
+            SecureField("", text: $text).textFieldStyle(StorebenchTextFieldStyle()).textContentType(contentType).accessibilityLabel(title).focused($inputFocused)
+        }
+        .scrollFocus(focusTicket, active: enabled && visible)
+        .task(id: StorebenchInputFocusRequest(ticket: focusTicket, active: enabled && visible)) {
+            if focusTicket == nil, appliedFocus != nil { inputFocused = false; appliedFocus = nil }
+            guard let focusTicket, enabled, visible else { return }
+            await Task.yield(); guard !Task.isCancelled else { return }
+            inputFocused = true; appliedFocus = focusTicket
         }
     }
 }
@@ -528,11 +586,20 @@ struct StorebenchTextArea: View {
     var hint = ""
     @Environment(\.isEnabled) private var enabled
     @Environment(\.actionBusy) private var actionBusy
+    @Environment(\.collectionVisible) private var visible
+    @FocusState private var inputFocused: Bool
+    @State private var appliedFocus: UUID?
+    private var focusTicket: UUID?
+    init(title: String = "", text: Binding<String>, height: CGFloat = StorebenchTheme.textarea(), hint: String = "") {
+        self.title = title; _text = text; self.height = height; self.hint = hint
+    }
+    func requestFocus(_ ticket: UUID?) -> Self { var copy = self; copy.focusTicket = ticket; return copy }
     var body: some View {
         let active = enabled || actionBusy
         return StorebenchFormField(label: title, hint: hint, hideLabel: title.isEmpty, hideHint: title.isEmpty && hint.isEmpty) {
             StorebenchTextSurface(label: title.isEmpty ? "Text editor" : title, initialHeight: height) {
             TextEditor(text: $text).font(.system(size: StorebenchTheme.measure("inputFont")))
+                .focused($inputFocused)
                 .foregroundStyle(active ? StorebenchTheme.ink : StorebenchTheme.subtle)
                 .scrollContentBackground(.hidden)
                 .padding(.vertical, StorebenchTheme.measure("textareaPaddingY"))
@@ -541,6 +608,35 @@ struct StorebenchTextArea: View {
                 .accessibilityLabel(title.isEmpty ? "Text editor" : title)
             }
         }
+        .scrollFocus(focusTicket, active: enabled && visible)
+        .task(id: StorebenchInputFocusRequest(ticket: focusTicket, active: enabled && visible)) {
+            if focusTicket == nil, appliedFocus != nil { inputFocused = false; appliedFocus = nil }
+            guard let focusTicket, enabled, visible else { return }
+            await Task.yield(); guard !Task.isCancelled else { return }
+            inputFocused = true; appliedFocus = focusTicket
+        }
+    }
+}
+
+/// Disclosure feedback changes opacity, so a pressed heading never scales or shifts its text.
+struct StorebenchDisclosurePressStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.opacity(configuration.isPressed && enabled ? 0.72 : 1)
+    }
+}
+
+/// A detail command keeps its row in place while the content below it changes.
+struct StorebenchDisclosureCommand: View {
+    let title: String
+    let action: () -> Void
+    @State private var scrollFocus = StorebenchScrollFocus()
+    @Environment(\.pageFocusInteraction) private var interaction
+    var body: some View {
+        Button(title) {
+            interaction?()
+            scrollFocus.preserving(action)
+        }.background(StorebenchScrollFocusAnchor(focus: scrollFocus))
     }
 }
 
@@ -555,13 +651,19 @@ struct StorebenchDisclosureButton<Label: View>: View {
     @Binding var isExpanded: Bool
     var card = false
     @ViewBuilder let label: () -> Label
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isEnabled) private var enabled
+    @Environment(\.actionBusy) private var actionBusy
     @State private var hovering = false
+    @State private var scrollAnchor = "disclosure-" + UUID().uuidString
+    @State private var scrollFocus = StorebenchScrollFocus()
+    @FocusState private var headerFocused: Bool
+    @Environment(\.pageFocusInteraction) private var interaction
     var body: some View {
         Group {
-            control.buttonStyle(StorebenchPressStyle())
+            control.buttonStyle(StorebenchDisclosurePressStyle()).focused($headerFocused)
         }
+        .id(scrollAnchor)
+        .background(StorebenchScrollFocusAnchor(focus: scrollFocus))
         .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
         .accessibilityHint(isExpanded ? "Hide details" : "Show details")
         .help(isExpanded ? "Hide details" : "Show details")
@@ -576,8 +678,9 @@ struct StorebenchDisclosureButton<Label: View>: View {
         }
     }
     private func change(_ next: Bool) {
-        guard enabled else { return }
-        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.12)) { isExpanded = next }
+        guard enabled, next != isExpanded else { return }
+        interaction?()
+        scrollFocus.preserving { isExpanded = next }
     }
     private var control: some View {
         Button { change(!isExpanded) } label: {
@@ -586,7 +689,7 @@ struct StorebenchDisclosureButton<Label: View>: View {
                     StorebenchIcon(name: "disclosure", size: StorebenchTheme.measure("disclosureIcon"), filled: true).rotationEffect(.degrees(isExpanded ? 90 : 0)).padding(.top, 6)
                     label().frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 }.padding(StorebenchTheme.space(2)).frame(maxWidth: .infinity, minHeight: StorebenchTheme.controlHeight, alignment: .leading)
-                    .foregroundStyle(enabled ? StorebenchTheme.ink : StorebenchTheme.subtle).contentShape(Rectangle())
+                    .foregroundStyle(enabled || actionBusy ? StorebenchTheme.ink : StorebenchTheme.subtle).contentShape(Rectangle())
                     .background(enabled && hovering ? StorebenchTheme.color("color-surface-subtle") : .clear, in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
                     .overlay(StorebenchControlOutline(border: .clear))
             } else {
@@ -598,7 +701,7 @@ struct StorebenchDisclosureButton<Label: View>: View {
                 }.padding(.vertical, StorebenchTheme.measure("disclosurePaddingY"))
                     .padding(.trailing, StorebenchTheme.space(2))
                     .frame(minHeight: StorebenchTheme.controlHeight, alignment: .leading)
-                    .foregroundStyle(enabled ? StorebenchTheme.ink : StorebenchTheme.subtle).contentShape(Rectangle())
+                    .foregroundStyle(enabled || actionBusy ? StorebenchTheme.ink : StorebenchTheme.subtle).contentShape(Rectangle())
                     .background(enabled && hovering ? StorebenchTheme.color("color-surface-subtle") : .clear, in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
                     .overlay(StorebenchControlOutline(border: .clear))
                 }
@@ -646,7 +749,7 @@ struct StorebenchForm<Content: View>: View {
     @Environment(\.settingsPresentation) private var settingsPresentation
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: settingsPresentation ? StorebenchTheme.space(6) : StorebenchTheme.gap) { content() }
+            VStack(alignment: .leading, spacing: StorebenchTheme.gap) { content() }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .settingsPageInsets(settingsPresentation)
         }.scrollBounceBehavior(.basedOnSize)
@@ -657,8 +760,8 @@ extension View {
     /// Settings panes fill the window like workspace pages: the same side margins, with a shorter top under the pane toolbar.
     @ViewBuilder func settingsPageInsets(_ settings: Bool) -> some View {
         if settings {
-            padding(.horizontal, StorebenchTheme.settingsInset).padding(.vertical, StorebenchTheme.space(6))
-        } else { padding(28) }
+            padding(.horizontal, StorebenchTheme.settingsInset).padding(.vertical, StorebenchTheme.space(4))
+        } else { padding(StorebenchTheme.space(5)) }
     }
 }
 struct StorebenchFormSection<Content: View>: View {
@@ -666,12 +769,13 @@ struct StorebenchFormSection<Content: View>: View {
     let help: String
     let icon: String
     let description: String
+    let accessory: AnyView?
     @ViewBuilder let content: () -> Content
-    init(_ title: String, help: String = "", icon: String = "", description: String = "", @ViewBuilder content: @escaping () -> Content) {
-        self.title = title; self.help = help; self.icon = icon; self.description = description; self.content = content
+    init(_ title: String, help: String = "", icon: String = "", description: String = "", accessory: AnyView? = nil, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title; self.help = help; self.icon = icon; self.description = description; self.accessory = accessory; self.content = content
     }
     var body: some View {
-        Card(title: title, subtitle: description, help: help, icon: icon) { content() }
+        Card(title: title, subtitle: description, help: help, icon: icon, accessory: accessory) { content() }
     }
 }
 

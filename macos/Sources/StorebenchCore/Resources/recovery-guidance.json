@@ -689,6 +689,39 @@
       "guideHref": "/settings/help#analytics",
       "kind": "availability"
     },
+    "SB-PUBLISH-SCOPE": {
+      "status": "Refresh the selected app and prepare a new review",
+      "action": "Open App Store Changes",
+      "path": "/publish",
+      "guide": "Publishing Guide",
+      "guideHref": "/settings/help#publishing",
+      "message": "Storebench could not verify that this change belongs to the selected app. Refresh the app's information and prepare a new review. Completed steps remain applied.",
+      "kind": "retry"
+    },
+    "SB-PUBLISH-REFUSED": {
+      "status": "Resolve the named requirement",
+      "action": "Open App Store Changes",
+      "path": "/publish",
+      "guide": "Publishing Guide",
+      "guideHref": "/settings/help#publishing",
+      "kind": "retry"
+    },
+    "SB-PUBLISH-REQUIREMENTS": {
+      "status": "Check the required information",
+      "action": "Open App Store Changes",
+      "path": "/publish",
+      "guide": "Publishing Guide",
+      "guideHref": "/settings/help#publishing",
+      "kind": "retry"
+    },
+    "SB-PUBLISH-REVIEW": {
+      "status": "Prepare a new review",
+      "action": "Open App Store Changes",
+      "path": "/publish",
+      "guide": "Publishing Guide",
+      "guideHref": "/settings/help#publishing",
+      "kind": "retry"
+    },
     "SB-PUBLISH-APPROVAL": {
       "status": "Check publishing history",
       "action": "Open App Store Changes",

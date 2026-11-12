@@ -51,7 +51,9 @@ struct SavedComparisonTable: View {
             StorebenchHeader {
                 Text(page.summary + " comparisons · Drag column handles to resize. Double click to reset.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
             } actions: {
-                Button("Reset Column Widths") { savedWidths = "{}" }.environment(\.naturalActions, true)
+                StorebenchIconMenu(title: "Comparison Table Options") {
+                    Button("Reset Column Widths") { savedWidths = "{}" }
+                }
             }
             if let first = columns.first {
                 StorebenchTableFrame {
@@ -97,12 +99,8 @@ struct SavedComparisonTable: View {
                 let shown = cell(row, column.id)
                 Group {
                     if column.id == "version" {
-                        Button { open(row.id) } label: {
-                            Text(DataTablePresentation.compactText(shown.value + " · " + shown.detail)).font(.sbCallout)
-                                .lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12)
-                        }.buttonStyle(StorebenchPressStyle()).foregroundStyle(StorebenchTheme.color("color-accent-muted"))
-                            .help(shown.explanation + "\nOpen the saved listing change")
-                            .accessibilityAddTraits(.isLink).accessibilityLabel(shown.explanation)
+                        StorebenchRecordLink(text: DataTablePresentation.compactText(shown.value + " · " + shown.detail), lines: 1, help: shown.explanation + "\nOpen the saved listing change") { open(row.id) }
+                            .padding(.horizontal, 12).accessibilityLabel(shown.explanation)
                     } else {
                         StorebenchTableValue(text: shown.value + "\n" + shown.detail + "\n\n" + shown.explanation, title: column.title + " · " + row.version, summary: shown.value + " · " + shown.detail)
                     }

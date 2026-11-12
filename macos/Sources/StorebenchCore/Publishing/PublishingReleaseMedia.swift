@@ -232,7 +232,7 @@ extension WorkspaceSession {
         func target(_ id: String?) async throws -> AssetLibrary.Target {
             guard let id else { throw PublishFailure.write("Unsupported App Store media change.") }
             let locale = try await ownedResource("appStoreVersionLocalizations", id, appId: appId, client: client, checked: checked)
-            guard let owner = checked.owner(locale, "appStoreVersion"), owner.type == "appStoreVersions" else { throw PublishFailure.write("Apple publishing resource has no approved app owner.") }
+            guard let owner = checked.owner(locale, "appStoreVersion"), owner.type == "appStoreVersions" else { throw PublishFailure.ownership }
             let version = try await ownedResource(owner.type, owner.id, appId: appId, client: client, checked: checked)
             guard Apple.editable.contains(Apple.state(version)) else { throw PublishFailure.write("This Apple version is no longer editable. Prepare a new review.") }
             return .init(id: id, name: "", platform: version.attributes?["platform"]?.string ?? "", state: Apple.state(version), surface: .versions)

@@ -12,7 +12,7 @@ struct GeneralSettings: View {
     @State private var issueCode: String?
     var body: some View {
         StorebenchForm {
-            AppearanceSettings()
+            AppearanceSettings().settingsSearchAnchor("general-appearance")
             StorebenchFormSection("Local storage", help: "storage") {
                 StorebenchLabeledContent("Encrypted data folder") {
                     Text(Workspace.defaultRoot.path).lineLimit(1).truncationMode(.middle).textSelection(.enabled).help(Workspace.defaultRoot.path)
@@ -22,6 +22,7 @@ struct GeneralSettings: View {
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([Workspace.defaultRoot]) }.help("Show Data Folder in Finder").accessibilityLabel("Show Data Folder in Finder")
                 }
             }
+            .settingsSearchAnchor("general-storage")
             StorebenchFormSection("Display") {
                 if baseline != nil {
                     StorebenchPicker("Display currency", selection: Binding(get: { currency }, set: { currency = $0; Task { await save() } })) { selectionOptions(DisplayPreferences.currencies) { SelectionOption($0, value: $0) } }
@@ -35,9 +36,11 @@ struct GeneralSettings: View {
                     }
                 }
             }
-            SampleDataSettings(model: model)
-            PreparationSettings(model: model)
-            PerformanceSettings(model: model)
+            .settingsSearchAnchor("general-display")
+            ReleaseCardSettings(model: model)
+            SampleDataSettings(model: model).settingsSearchAnchor("general-sample")
+            PreparationSettings(model: model).settingsSearchAnchor("general-preparation")
+            PerformanceSettings(model: model).settingsSearchAnchor("general-performance")
         }.storebenchWorking(working)
             .trackUnsavedChanges(baseline.map { currency != $0 } ?? false, busy: working, problem: { problem ? "Display currency: " + status : nil }, onSave: { await save(); return baseline == currency })
             .task {

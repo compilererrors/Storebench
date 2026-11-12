@@ -6,9 +6,9 @@ struct StorebenchPageContent: ViewModifier {
     @Environment(\.workspaceWidth) private var width
     func body(content: Content) -> some View {
         let insets = ComponentLayout.pageInsets(viewportWidth: width)
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             content
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
                 StorebenchDivider()
                 Text("Storebench").font(.sbCaption).foregroundStyle(StorebenchTheme.color("color-neutral"))
             }

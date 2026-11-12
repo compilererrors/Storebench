@@ -20,11 +20,11 @@ struct ReportContextView: View {
                             HStack(alignment: .top, spacing: 16) { related(value) }
                             VStack(alignment: .leading, spacing: 16) { related(value) }
                         }.accessibilityLabel("Related reporting views")
-                        if navigation.navigate != nil { Button(value.helpLabel) { if let action = value.help.resolved(scope: nil) { navigation.navigate?(action) } } }
+                        if navigation.navigate != nil { StorebenchActionGroup { Button(value.helpLabel) { if let action = value.help.resolved(scope: nil) { navigation.navigate?(action) } } } }
                     }
                 } else {
                     Text("Reporting definitions could not be read. Saved reports remain available.").font(.sbCallout)
-                    Button("Read Again") { load() }.help("Read Reporting Definitions Again").accessibilityLabel("Read Reporting Definitions Again")
+                    StorebenchActionGroup { Button("Read Again") { load() }.help("Read Reporting Definitions Again").accessibilityLabel("Read Reporting Definitions Again") }
                 }
             }.accessibilityLabel("Report context")
         }.task { if catalog == nil { load() } }
@@ -39,7 +39,7 @@ struct ReportContextView: View {
             VStack(alignment: .leading, spacing: 8) {
                 StorebenchTextSlot(text: row.label, height: 28, font: .sbHeadline, color: nil)
                 track(row.description, height: 64)
-                if action != nil && navigation.navigate != nil { Button(row.action) { if let action { navigation.navigate?(action) } } }
+                if action != nil && navigation.navigate != nil { StorebenchActionGroup { Button(row.action) { if let action { navigation.navigate?(action) } } } }
             }.frame(minWidth: 200, maxWidth: .infinity, alignment: .leading)
         }
     }

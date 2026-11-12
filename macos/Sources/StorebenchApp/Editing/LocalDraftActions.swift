@@ -8,10 +8,13 @@ struct LocalDraftActions: View {
     var blocked = false
     var sync: (() async -> Void)? = nil
     var syncBlocked = false
+    var title: String? = nil
+    var hint: String? = nil
+    var syncTitle = "Sync to Apple"
     var body: some View {
         VStack(alignment: .leading, spacing: StorebenchTheme.space(2)) {
-            StorebenchEditorFooter(title: sync == nil ? "Local Draft" : "Draft and Sync", detail: editor.status.isEmpty ? (!editor.loaded ? "Read the saved draft to continue." : editor.dirty(value) ? "You have unsaved changes." : "Your draft is saved on this Mac.") : editor.status,
-                                  hint: sync == nil ? "Save your inputs here, then use the change's sync command to review it before sending." : "Save Draft keeps your inputs on this Mac. Sync to Apple saves first and opens a review for your approval.") {
+            StorebenchEditorFooter(title: title ?? (sync == nil ? "Local Draft" : "Draft and Sync"), detail: editor.status.isEmpty ? (!editor.loaded ? "Read the saved draft to continue." : editor.dirty(value) ? "You have unsaved changes." : "Your draft is saved on this Mac.") : editor.status,
+                                  hint: hint ?? (sync == nil ? "Save your inputs here, then use the change's sync command to review it before sending." : "Save Draft keeps your inputs on this Mac. Sync to Apple saves first and opens a review for your approval.")) {
                 StorebenchActionGroup(alignment: .trailing) {
                 if !editor.loaded {
                     StorebenchBusyButton(title: "Read Draft", loadingTitle: "Reading…", busy: editor.busy) {
@@ -20,10 +23,12 @@ struct LocalDraftActions: View {
                 }
                 StorebenchBusyButton(title: "Save Draft", loadingTitle: "Saving…", busy: editor.busy) { Task { await editor.save(value) } }
                     .storebenchWorking(blocked || !editor.loaded || editor.needsComparison || !editor.dirty(value))
+                    .storebenchControlID("draft.save." + editor.scope.editor)
                 if let sync {
-                    StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Preparing…", busy: editor.busy, variant: editor.hasChangesToSync(value) ? .primary : .secondary) {
+                    StorebenchBusyButton(title: syncTitle, loadingTitle: "Preparing…", busy: editor.busy, variant: editor.hasChangesToSync(value) ? .primary : .secondary) {
                         Task { if await editor.save(value) { await sync() } }
                     }.storebenchWorking(blocked || !editor.loaded || editor.needsComparison || syncBlocked)
+                        .storebenchControlID("draft.sync." + editor.scope.editor)
                 }
                 }
             }
@@ -32,7 +37,7 @@ struct LocalDraftActions: View {
                     if let latest = editor.acceptLatest(keepEdits: false) { restore(latest) }
                 })
             }
-        }
+        }.layoutValue(key: StorebenchFullWidthAction.self, value: true)
     }
     private func comparisons(_ saved: JSONText, _ edited: JSONText) -> [SavedValueChange] {
         func fields(_ value: JSONText, path: String = "Local Draft") -> [String: String] {

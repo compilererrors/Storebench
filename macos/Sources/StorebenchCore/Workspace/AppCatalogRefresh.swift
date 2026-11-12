@@ -1,6 +1,6 @@
 import Foundation
 
-/// The result of explicitly listing every app the configured API keys can access. Version state does not restrict this list.
+/// Discovery of apps the configured API keys can access. Version state does not restrict this list.
 public struct AppCatalogRefresh: Sendable, Equatable {
     public struct Issue: Sendable, Equatable {
         public let accountId, accountName: String
@@ -26,21 +26,33 @@ public struct AppCatalogRefresh: Sendable, Equatable {
 
 extension WorkspaceSession {
     /// Explicit discovery reads past the response cache. The existing account writer rechecks the connection under its mutex.
-    public func refreshAppCatalog() async throws -> AppCatalogRefresh {
-        try await refreshAppCatalog(clientFor: { try client(for: $0) })
+    public func refreshAppCatalog(onlyIfNeeded: Bool = false) async throws -> AppCatalogRefresh {
+        try await refreshAppCatalog(onlyIfNeeded: onlyIfNeeded, clientFor: { try readClient(for: $0) })
     }
 
-    func refreshAppCatalog(clientFor: (Account) throws -> AppStoreConnectClient) async throws -> AppCatalogRefresh {
+    func refreshAppCatalog(onlyIfNeeded: Bool = false, now: @Sendable () -> Date = Date.init, clientFor: (Account) throws -> AppStoreConnectClient) async throws -> AppCatalogRefresh {
         let configured = try accounts()
+        // Multiple processes may check freshness together. Only the exact job owner performs automatic discovery.
+        let release: (() -> Void)?
+        if onlyIfNeeded {
+            release = try JobLock.acquire(directory: storeAccess { $0.directory }, name: "app_catalog_refresh", id: UUID().uuidString.lowercased())
+            guard release != nil else { return .init(accounts: configured.count, refreshedAccounts: 0, appCount: configured.reduce(0) { $0 + $1.appIds.count }, issues: [], sample: false) }
+        } else { release = nil }
+        defer { release?() }
         var refreshed = 0, issues: [AppCatalogRefresh.Issue] = []
         for account in configured {
             try Task.checkCancellation(); try requireSessionAccess()
+            if onlyIfNeeded {
+                guard AppleRequestBudget.allowsReadingAhead(keyId: account.keyId), try catalogIsDue(account, now: now()) else { continue }
+            }
+            let started = now()
             do {
-                _ = try await refreshAccountApps(account, client: clientFor(account))
+                _ = try await refreshAccountApps(account, client: clientFor(account), now: now)
                 refreshed += 1
             } catch {
                 try Task.checkCancellation(); try requireSessionAccess()
                 if error is CancellationError { throw error }
+                try? recordCatalogFailure(account, started: started, now: now())
                 let reason = AccountFailure.classify(error) as? AccountFailure ?? .importFailed
                 issues.append(.init(accountId: account.id, accountName: account.name, reason: reason))
             }

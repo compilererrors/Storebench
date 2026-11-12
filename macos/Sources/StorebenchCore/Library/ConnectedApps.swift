@@ -16,7 +16,7 @@ public enum ConnectedApps {
     /// One immutable account projection reused by its cards; mutations require a new snapshot.
     public struct AccountSnapshot: Sendable {
         public let account: Account
-        fileprivate let appIds: Set<String>, token: String
+        let appIds: Set<String>, token: String
         public init(_ account: Account) {
             self.account = account; appIds = Set(account.appIds)
             token = SHA256.hash(data: WorkspaceSession.json(account).data).map { String(format: "%02x", $0) }.joined()
@@ -47,6 +47,7 @@ public enum ConnectedApps {
         public let sync: SyncJob?, material: ImportJob?
         public let syncUnavailable, materialUnavailable: Bool
         public let aggregateActive: Bool
+        public var release: ReleaseOverview? = nil
         public var id: String { "\(account.id)/\(app.id)" }
         public var historyLabel: String { revisionCount.map { "\($0) \($0 == 1 ? "revision" : "revisions")" } ?? "Saved history unavailable" }
         public var syncLabel: String {
@@ -103,6 +104,7 @@ public enum ConnectedApps {
             recoveryAction = nil
             switch source {
             case nil, "material": section = .overview; analyticsKind = nil
+            case "release": section = .release; analyticsKind = nil
             case "pricing": section = .pricing; analyticsKind = nil
             case "sales": section = .sales; analyticsKind = nil
             case "downloads", "engagement": section = .analytics; analyticsKind = source
@@ -140,9 +142,11 @@ extension WorkspaceSession {
                 catch { try requireSessionAccess(); try Task.checkCancellation(); _ = try currentAccount(account, exact: true); syncUnavailable = true }
                 do { material = try importJob(account: account, appId: app.id) }
                 catch { try requireSessionAccess(); try Task.checkCancellation(); _ = try currentAccount(account, exact: true); materialUnavailable = true }
-                result.append(try .init(snapshot: snapshot, app: app, savedName: metadata?.name, revisionCount: metadata?.count,
+                var row = try ConnectedApps.Row(snapshot: snapshot, app: app, savedName: metadata?.name, revisionCount: metadata?.count,
                                         latestImportedAt: metadata?.importedAt,
-                                        sync: sync, material: material, syncUnavailable: syncUnavailable, materialUnavailable: materialUnavailable, aggregateActive: aggregateActive))
+                                        sync: sync, material: material, syncUnavailable: syncUnavailable, materialUnavailable: materialUnavailable, aggregateActive: aggregateActive)
+                row.release = releaseOverview(account: account, appId: app.id)
+                result.append(row)
             }
         }
         for account in configured { _ = try currentAccount(account, exact: true) }

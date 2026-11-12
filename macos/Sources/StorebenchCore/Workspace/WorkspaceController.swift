@@ -21,7 +21,7 @@ import Security
     public private(set) var refreshingApps = false
     public private(set) var appRefreshMessage = ""
     public private(set) var appRefreshFailed = false
-    @ObservationIgnored private var appRefresh: (id: UUID, session: WorkspaceSession, task: Task<AppCatalogRefresh, Error>)?
+    @ObservationIgnored private var appRefresh: (id: UUID, session: WorkspaceSession, automatic: Bool, task: Task<AppCatalogRefresh, Error>)?
     @ObservationIgnored private var sampleWorkspace: SampleWorkspace.Opened?
     private let workspace: Workspace
     private let choosesStorage: Bool
@@ -29,9 +29,15 @@ import Security
     private let protectedStorage: VaultStorage
     private let authenticator: WorkspaceAuthenticating
     private let backupDelay: Duration, availabilityDelay: Duration
-    /// The wait after unlocking before recently planned releases are read in the background; nil turns the warm-up off.
+    /// The wait after unlocking before lightweight background reads start; nil turns scheduled reading off.
     private let releaseWarmDelay: Duration?
+    private let backgroundReadInterval: Duration, preparationInterval: Duration
     @ObservationIgnored private var releaseWarmTask: Task<Void, Never>?
+    @ObservationIgnored private var backgroundReadRun: (id: UUID, session: WorkspaceSession, task: Task<Void, Never>)?
+    @ObservationIgnored private var nextPreparation: ContinuousClock.Instant?
+    @ObservationIgnored var backgroundReads = BackgroundReadJobs()
+    /// The interface defers catalog replacement while any window has unfinished edits or foreground work.
+    @ObservationIgnored public var allowsAutomaticCatalogUpdates: @MainActor () -> Bool = { true }
     private var transitioning = false {
         didSet {
             if !transitioning {
@@ -51,13 +57,14 @@ import Security
         didSet { if cachePolicy != oldValue, let session { let policy = cachePolicy; Task { await session.applyCachePolicy(policy) } } }
     }
 
-    public init(workspace: Workspace = Workspace(), writer: VaultWriter? = nil, keychainStorage: VaultStorage = KeychainVaultStorage(), authenticator: WorkspaceAuthenticating = DeviceOwnerAuthentication(), protectedStorage: VaultStorage? = nil, backupDelay: Duration = .seconds(15 * 60), availabilityDelay: Duration = .seconds(1), releaseWarmDelay: Duration? = .seconds(5)) {
+    public init(workspace: Workspace = Workspace(), writer: VaultWriter? = nil, keychainStorage: VaultStorage = KeychainVaultStorage(), authenticator: WorkspaceAuthenticating = DeviceOwnerAuthentication(), protectedStorage: VaultStorage? = nil, backupDelay: Duration = .seconds(15 * 60), availabilityDelay: Duration = .seconds(1), releaseWarmDelay: Duration? = .seconds(5), backgroundReadInterval: Duration = .seconds(60), preparationInterval: Duration = .seconds(10 * 60)) {
         self.workspace = workspace; self.writer = writer ?? VaultWriter(dataRoot: workspace.root)
         self.choosesStorage = writer == nil; self.keychainStorage = keychainStorage
         self.authenticator = authenticator; self.protectedStorage = protectedStorage ?? TouchIDKeychainStorage(dataRoot: workspace.root)
         self.backupDelay = backupDelay; self.availabilityDelay = availabilityDelay; self.releaseWarmDelay = releaseWarmDelay
+        self.backgroundReadInterval = max(.milliseconds(10), backgroundReadInterval); self.preparationInterval = max(.milliseconds(10), preparationInterval)
     }
-    deinit { backupTask?.cancel(); availabilityTask?.cancel(); releaseWarmTask?.cancel(); appRefresh?.task.cancel(); memoryPressure?.cancel() }
+    deinit { backupTask?.cancel(); availabilityTask?.cancel(); releaseWarmTask?.cancel(); backgroundReadRun?.task.cancel(); appRefresh?.task.cancel(); memoryPressure?.cancel() }
 
     public func start() async {
         guard !isTerminating, !transitioning, session == nil else { return }
@@ -292,7 +299,7 @@ import Security
         guard !transitioning, let current = session else { return }
         transitioning = true; defer { transitioning = false }
         state = .closing; lastError = ""
-        backupTask?.cancel(); availabilityTask?.cancel(); releaseWarmTask?.cancel()
+        backupTask?.cancel(); availabilityTask?.cancel(); releaseWarmTask?.cancel(); backgroundReadRun?.task.cancel(); appRefresh?.task.cancel()
         do { try await current.signOut() }
         catch { lastError = Self.message(for: error) }
         drop(current); lockMode = try? workspaceLock(); state = .locked
@@ -307,7 +314,7 @@ import Security
         }
         transitioning = true; defer { transitioning = false }
         state = .closing
-        backupTask?.cancel(); availabilityTask?.cancel(); releaseWarmTask?.cancel(); appRefresh?.task.cancel()
+        backupTask?.cancel(); availabilityTask?.cancel(); releaseWarmTask?.cancel(); backgroundReadRun?.task.cancel(); appRefresh?.task.cancel()
         if let current = session {
             do { try await current.signOut() } catch { lastError = Self.message(for: error) }
             if let opened = sampleWorkspace { dropSample(opened) } else { drop(current) }
@@ -378,18 +385,19 @@ import Security
         sampleWorkspace = nil; showingSampleData = false
     }
 
-    public func reloadAccounts() async {
-        guard !transitioning, let current = session else { return }
+    public func reloadAccounts(automatically: Bool = false) async {
+        guard !transitioning, let current = session, !automatically || allowsAutomaticCatalogUpdates() else { return }
         let accounts = try? await current.accounts()
-        guard session === current, !transitioning, let accounts else { return }; state = .unlocked(accounts)
+        guard session === current, !transitioning, let accounts, !automatically || allowsAutomaticCatalogUpdates() else { return }
+        if state != .unlocked(accounts) { state = .unlocked(accounts) }
     }
 
-    /// Refresh Apps is explicit Apple discovery, shared by the app lists and their keyboard command. Local polling uses reloadAccounts.
+    /// Refresh Apps bypasses freshness, shared by the app lists and their keyboard command. Local polling uses reloadAccounts.
     public func refreshApps() async throws -> AppCatalogRefresh {
         try await refreshApps(using: { try await $0.refreshAppCatalog() })
     }
 
-    func refreshApps(using refresh: @escaping @Sendable (WorkspaceSession) async throws -> AppCatalogRefresh) async throws -> AppCatalogRefresh {
+    func refreshApps(using refresh: @escaping @Sendable (WorkspaceSession) async throws -> AppCatalogRefresh, automatic: Bool = false) async throws -> AppCatalogRefresh {
         guard !transitioning, let current = session, !Task.isCancelled else { throw CancellationError() }
         if showingSampleData {
             let accounts = try await current.accounts()
@@ -399,8 +407,17 @@ import Security
             appRefreshMessage = result.message; appRefreshFailed = false
             return result
         }
-        if let existing = appRefresh, existing.session === current { return try await existing.task.value }
+        if let existing = appRefresh, existing.session === current {
+            let result = try await existing.task.value
+            if !automatic, existing.automatic {
+                // An explicit refresh still checks every account after joining a narrower automatic read.
+                if appRefresh?.id == existing.id { appRefresh = nil }
+                return try await refreshApps(using: refresh)
+            }
+            return result
+        }
         let id = UUID()
+        let previousMessage = appRefreshMessage, previousFailure = appRefreshFailed
         refreshingApps = true; appRefreshFailed = false; appRefreshMessage = "Reading apps from App Store Connect…"
         let task = Task { [weak self] in
             do {
@@ -408,8 +425,10 @@ import Security
                 try Task.checkCancellation()
                 let accounts = try await current.accounts()
                 guard let self, self.session === current, !self.transitioning else { throw CancellationError() }
-                self.state = .unlocked(accounts)
-                self.appRefreshMessage = result.message; self.appRefreshFailed = !result.complete
+                if !automatic || result.refreshedAccounts > 0 || !result.issues.isEmpty {
+                    if !automatic || self.allowsAutomaticCatalogUpdates() { self.state = .unlocked(accounts) }
+                    self.appRefreshMessage = result.message; self.appRefreshFailed = !result.complete
+                } else { self.appRefreshMessage = previousMessage; self.appRefreshFailed = previousFailure }
                 return result
             } catch {
                 if let self, self.session === current, !self.transitioning, !Task.isCancelled {
@@ -418,9 +437,39 @@ import Security
                 throw error
             }
         }
-        appRefresh = (id, current, task)
+        appRefresh = (id, current, automatic, task)
         defer { if appRefresh?.id == id { appRefresh = nil; refreshingApps = false } }
         return try await task.value
+    }
+
+    /// Activation and the periodic tick join one lightweight read cycle across all windows.
+    public func refreshBackgroundReads() async {
+        guard !transitioning, !isTerminating, releaseWarmDelay != nil, let current = session, !current.isSample, !Task.isCancelled else { return }
+        if let existing = backgroundReadRun, existing.session === current { await existing.task.value; return }
+        let id = UUID(), jobs = backgroundReads
+        let task = Task(priority: .utility) { [weak self] in
+            await AppleReadPriority.$current.withValue(.background) {
+                // A completed read may have been held back while an editor was dirty. Adopt it once it is safe, even while fresh.
+                await self?.reloadAccounts(automatically: true)
+                if (try? await jobs.catalogDue(current)) == true {
+                    guard !Task.isCancelled, let self, !self.transitioning, self.session === current else { return }
+                    _ = try? await self.refreshApps(using: jobs.catalog, automatic: true)
+                }
+                guard !Task.isCancelled, let self, !self.transitioning, self.session === current else { return }
+                await jobs.releaseStates(current)
+                guard !Task.isCancelled, !self.transitioning, self.session === current else { return }
+                let now = ContinuousClock.now
+                if self.nextPreparation.map({ now >= $0 }) ?? true {
+                    self.nextPreparation = now + self.preparationInterval
+                    await jobs.preparation(current)
+                }
+                guard !Task.isCancelled, !self.transitioning, self.session === current else { return }
+                await jobs.pricingIndexes(current)
+            }
+        }
+        backgroundReadRun = (id, current, task)
+        defer { if backgroundReadRun?.id == id { backgroundReadRun = nil } }
+        await task.value
     }
 
     private func accept(_ opened: WorkspaceSession) async throws {
@@ -446,12 +495,14 @@ import Security
         guard session === expected else { return }
         appRefresh?.task.cancel(); appRefresh = nil; refreshingApps = false; appRefreshMessage = ""; appRefreshFailed = false
         backupTask?.cancel(); backupTask = nil; availabilityTask?.cancel(); availabilityTask = nil; releaseWarmTask?.cancel(); releaseWarmTask = nil
+        backgroundReadRun?.task.cancel(); backgroundReadRun = nil; nextPreparation = nil
         memoryPressure?.cancel(); memoryPressure = nil
         session = nil; editingPreferences = nil
         writer.lockCredentials()
     }
     private func startBackgroundWork(_ expected: WorkspaceSession) {
         backupTask?.cancel(); availabilityTask?.cancel(); releaseWarmTask?.cancel(); releaseWarmTask = nil
+        backgroundReadRun?.task.cancel(); backgroundReadRun = nil; nextPreparation = nil
         // Under memory pressure the session frees what it can read or decode again, whatever the Performance setting allows.
         memoryPressure?.cancel()
         let pressure = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
@@ -464,11 +515,14 @@ import Security
         // The sample workspace has no backups and nothing at Apple to read ahead.
         guard !expected.isSample else { availabilityTask = nil; return }
         if let warm = releaseWarmDelay {
-            // A light start: one app at a time, after the workspace has opened, so Release opens with saved and then fresh status.
+            // Local data opens first. Sleeping through several intervals creates one due check after wake, never a backlog.
+            let interval = backgroundReadInterval
             releaseWarmTask = Task { [weak self] in
-                do { try await Task.sleep(for: warm) } catch { return }
-                guard !Task.isCancelled, self?.session === expected else { return }
-                await expected.warmReleaseStatus()
+                do { try await Task.sleep(for: warm, clock: .continuous) } catch { return }
+                while !Task.isCancelled, self?.session === expected {
+                    await self?.refreshBackgroundReads()
+                    do { try await Task.sleep(for: interval, clock: .continuous) } catch { return }
+                }
             }
         }
         let writer = writer, delay = backupDelay
@@ -485,7 +539,7 @@ import Security
                 guard !Task.isCancelled, let self, !self.transitioning, self.session === expected else { continue }
                 do { try expected.validateAccess() }
                 catch {
-                    self.transitioning = true; self.state = .closing; self.backupTask?.cancel(); self.releaseWarmTask?.cancel()
+                    self.transitioning = true; self.state = .closing; self.backupTask?.cancel(); self.releaseWarmTask?.cancel(); self.backgroundReadRun?.task.cancel(); self.appRefresh?.task.cancel()
                     try? await expected.signOut()
                     self.drop(expected); self.lockMode = try? self.workspaceLock(); self.state = .locked; self.lastError = Self.message(for: error); self.transitioning = false
                     return

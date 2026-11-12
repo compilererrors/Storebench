@@ -18,7 +18,7 @@ struct BackupSettingsView: View {
                 VStack(alignment: .leading, spacing: StorebenchTheme.space(3)) {
                     StorebenchSettingToggle("Back up automatically", isOn: $editor.inputs.enabled)
                     StorebenchFormField(label: "Backup folder", hint: editor.inputs.destination.isEmpty ? "No backup folder chosen." : editor.inputs.destination) {
-                        Button("Choose Folder…", action: chooseFolder).help(editor.inputs.destination.isEmpty ? "Choose Backup Folder" : editor.inputs.destination)
+                        StorebenchActionGroup { Button("Choose Folder…", action: chooseFolder).help(editor.inputs.destination.isEmpty ? "Choose Backup Folder" : editor.inputs.destination) }
                     }
                     StorebenchPicker("Frequency", selection: $editor.inputs.intervalHours) { SelectionOption("Every hour", value: 1); SelectionOption("Every 6 hours", value: 6); SelectionOption("Every 12 hours", value: 12); SelectionOption("Every day", value: 24); SelectionOption("Every week", value: 168) }
                     StorebenchLabeledContent("Backups to keep") {
@@ -33,7 +33,7 @@ struct BackupSettingsView: View {
                 Text(editor.dirty ? "You have unsaved changes." : editor.ready ? "Your saved schedule is up to date." : "Backup settings have not been read.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
                 RecoveryActions(code: issueCode)
                 if !editor.ready {
-                    Button(working ? "Reading…" : "Read Backup Settings") { Task { await readInitial() } }.storebenchWorking(working || model.session == nil)
+                    StorebenchActionGroup { Button(working ? "Reading…" : "Read Backup Settings") { Task { await readInitial() } }.storebenchWorking(working || model.session == nil) }
                 } else {
                     LatestSaveReview(busy: working || model.session == nil, reading: latestReading, hasEdits: editor.dirty, available: editor.ready, changes: changes, note: "Passphrase contents are never read into the editor.",
                         onRead: { Task { latestReading = true; defer { latestReading = false }; await refresh(compare: true) } },
@@ -46,6 +46,7 @@ struct BackupSettingsView: View {
                     }
                 }
             }
+            .settingsSearchAnchor("backups-automatic")
             StorebenchFormSection("Backup health") {
                 StorebenchLabeledContent("Automatic backups", value: statusLabel)
                 StorebenchLabeledContent("Last verified", value: editor.status?.lastVerifiedAt.map { timestamp($0) } ?? (editor.status == nil ? "Unknown" : "No verified backup"))

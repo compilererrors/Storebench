@@ -25,7 +25,7 @@ struct SalesAvailabilityView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("\(guidance.missing.count) \(guidance.missing.count == 1 ? "day has" : "days have") no downloaded report").font(.sbHeadline)
                     Text("\(SalesCalendar.label(guidance.missing)): download these days or run Sync. \(scope)").fixedSize(horizontal: false, vertical: true)
-                    if let openReports { Button("Download Reports") { openReports() } }
+                    if let openReports { StorebenchActionGroup { Button("Download Reports") { openReports() } } }
                 }.padding(.vertical, 6)
             }
         } else { Text("Reporting-clock guidance is unavailable. Missing reports remain unknown.").foregroundStyle(StorebenchTheme.muted) }

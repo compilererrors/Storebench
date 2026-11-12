@@ -35,7 +35,7 @@ struct FinanceView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             ReportContextView(kind: .finance, coverage: state == "failed" ? .unavailable : state == "ready" ? .saved(periods.map(\.endDate)) : .loading)
             switch state {
             case "failed": Card(title: "Saved financial reports could not be read", subtitle: "Read and validate saved reports before continuing.") { EmptyView() }

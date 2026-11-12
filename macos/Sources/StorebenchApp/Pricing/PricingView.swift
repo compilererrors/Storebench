@@ -4,6 +4,11 @@ import SwiftUI
 /// A paid app's country prices: Apple's current prices, protected prices, country drafts and the guide-price model. Nothing here changes App Store Connect.
 struct CountryPricesView: View {
     let account: Account, app: Account.App, session: WorkspaceSession?
+    /// A selected strategy keeps unrelated editors out of the focused country-price workspace.
+    var focusedStrategy: PriceStrategy? = nil
+    var compareApple = false
+    var selectedPreview: [ModelPrice]? = nil
+    var onGuideState: (Bool) -> Void = { _ in }
     @State private var saved: SavedPricing?
     @State private var protection: [PriceProtection] = []
     @State private var drafts: [PricingDraft] = []
@@ -14,6 +19,7 @@ struct CountryPricesView: View {
     @State private var query = ""
     @State private var tableSort = "country"
     @State private var tableDescending = false
+    @State private var tableFilter = "all"
     @State private var selected: Set<String> = []
     @State private var mode = "percent"
     @State private var percent = "100"
@@ -37,6 +43,7 @@ struct CountryPricesView: View {
     @State private var loaded = false
     @State private var pricingReadable = false
     @State private var expanded: String?
+    @State private var overriding: String?
     @Environment(\.navigationPresentation) private var history
     @Environment(\.confirmDestructive) private var confirm
     @State private var historyOwner: NavigationPresentationContext?
@@ -44,7 +51,7 @@ struct CountryPricesView: View {
     @State private var restoredSort: String?
     @State private var restoredDescending: Bool?
     private struct TableSnapshot {
-        let query: String, sort: String, descending: Bool, page: CollectionPresentation<String>, selected: Set<String>, expanded: String?
+        let query: String, sort: String, descending: Bool, filter: String, page: CollectionPresentation<String>, selected: Set<String>, expanded: String?
     }
 
 
@@ -52,7 +59,12 @@ struct CountryPricesView: View {
     private var current: [PriceRow] { filteredCountries[currentPage.range].map(\.price) }
     private var reading: Bool { !loaded && status.isEmpty && session != nil }
     private func filterCountries(resetPage: Bool = true) {
-        let matches = query.isEmpty ? countries : countries.filter { $0.search.localizedCaseInsensitiveContains(query) }
+        let matches = countries.filter { country in
+            let territory = country.price.territory
+            return (query.isEmpty || country.search.localizedCaseInsensitiveContains(query)) &&
+                (tableFilter == "all" || (tableFilter == "protected" ? protection.contains { $0.territory == territory }
+                    : tableFilter == "drafts" ? drafts.contains { $0.territory == territory } : selected.contains(territory)))
+        }
         filteredCountries = DataTablePresentation.sorted(matches, descending: tableDescending) { country in
             let row = country.price
             switch tableSort {
@@ -66,68 +78,99 @@ struct CountryPricesView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            currentPrices
-            draftCard
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
+            if focusedStrategy == nil || focusedStrategy == .apple || compareApple { currentPrices }
+            if focusedStrategy == nil || !drafts.isEmpty { draftCard }
+            if focusedStrategy == nil {
             TransferCard(account: account, app: app, session: session, kind: .prices, title: "Import Country Drafts",
                          subtitle: "Country drafts from a CSV or JSON file, previewed before they are saved. Export Apple Prices… gives a file to edit. Protected countries cannot be imported.",
                          onImported: { await load() })
+            }
             if guideShown, let session {
-                NoSalesGuideView(account: account, app: app, session: session, profileId: guideProfileId, blocked: modelBlocked || working || refreshing || !pricingReadable, sourceVersion: sourceVersion,
+                NoSalesGuideView(account: account, app: app, session: session, profileId: guideProfileId, initialMethod: noSalesMethod, blocked: modelBlocked || working || refreshing || !pricingReadable, sourceVersion: sourceVersion,
                     onClose: { guideShown = false }, onSaved: { Task { await load() } }, onBusy: { guideBusy = $0 })
             } else {
-                Card(title: "Countries with no or few purchases", subtitle: "A guided review of prices where saved Sales reports show no or few purchases. Nothing changes until you save the reviewed drafts.", help: "overrides") {
-                    Text("Complete saved reports are required. Save pricing-model edits before opening the guide.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
-                    if session != nil && saved?.snapshot != nil && !guideProfileId.isEmpty && !modelBlocked && pricingReadable {
-                        StorebenchFormFooter {
-                            Button("Lower Prices…") { if !working, !refreshing { guideShown = true } }.help("Review Prices for No or Few Purchases").accessibilityLabel("Review Prices for No or Few Purchases").storebenchWorking(working || refreshing)
-                        }
+                Card(title: "Countries with No or Few Purchases", subtitle: "Review prices where complete saved Sales reports show no or few purchases. Missing reports remain unknown.", help: "overrides",
+                     actions: focusedStrategy == nil ? nil : AnyView(StorebenchReadButton("Refresh Prices") { await refresh() }.storebenchWorking(session == nil || working || guideBusy))) {
+                    Text(focusedStrategy == nil ? "Complete saved reports are required. Save pricing-model edits before opening the guide." : "Complete saved reports are required. Refresh Prices updates the current Apple prices used for this review.")
+                        .font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
+                    StorebenchFormFooter {
+                        let unavailable = session == nil ? "Connect the workspace first." : !pricingReadable || saved?.snapshot == nil ? "Refresh Prices to read the current country prices first."
+                            : guideProfileId.isEmpty || modelBlocked ? "Read the saved pricing profile before opening the guide." : nil
+                        StorebenchCommand(title: "Lower Prices…", busy: refreshing, unavailable: unavailable, primary: false) { if !working, !refreshing { guideShown = true } }
+                            .help(unavailable ?? "Review Prices for No or Few Purchases")
+                            .storebenchControlID("pricing.no-sales.open")
                     }
-                }
+                }.storebenchControlID("pricing.no-sales")
             }
+            if focusedStrategy == nil {
             if loaded { ModelCard(account: account, app: app, session: session, current: saved?.snapshot?.rows ?? [], onState: { id, blocked in guideProfileId = id; modelBlocked = blocked }, onPreview: { modelPreview = $0 }).storebenchWorking(guideBusy) }
             else if reading {
                 // The pricing model's own card, with a status line until its prices are read.
                 Card(title: "Pricing model", subtitle: "Plan prices across countries from one model.") { StorebenchLoadingStatus(message: "Reading saved prices…", surface: false) }
             }
             SalesReportsView(account: account, app: app, session: session, blocked: guideShown || guideBusy || working || refreshing, onChanged: { await load() })
+            }
         }
-        .task(id: account.id + "/" + app.id) { restoreTable(); await showRemembered(); guard !Task.isCancelled else { return }; await load() }
-        .onDisappear { saveTable(); loadTicket = UUID() }
+        .task(id: account.id + "/" + app.id) {
+            restoreTable(); await showRemembered(); guard !Task.isCancelled else { return }
+            await load(); guard !Task.isCancelled, session?.isSample != true else { return }
+            await refresh(onlyIfNeeded: true)
+        }
+        .task(id: account.id + "/" + app.id) {
+            guard let changes = try? await session?.pricingChanges(account: account, appId: app.id) else { return }
+            for await _ in changes { guard !Task.isCancelled else { return }; await load() }
+        }
+        .task(id: focusedStrategy?.key) { await loadGuideProfile() }
+        .onChange(of: guideShown) { onGuideState($0) }
+        .onDisappear { saveTable(); loadTicket = UUID(); onGuideState(false) }
         .onChange(of: query) { if restoredQuery == query { restoredQuery = nil } else { filterCountries() }; saveTable() }
         .onChange(of: tableSort) { if restoredSort == tableSort { restoredSort = nil } else { filterCountries() }; saveTable() }
         .onChange(of: tableDescending) { if restoredDescending == tableDescending { restoredDescending = nil } else { filterCountries() }; saveTable() }
         .onChange(of: countryPage) { saveTable() }
-        .onChange(of: selected) { saveTable() }
+        .onChange(of: selected) { if tableFilter == "selected" { filterCountries() }; saveTable() }
+        .onChange(of: tableFilter) { filterCountries(); saveTable() }
         .onChange(of: expanded) { saveTable() }
 
     }
 
+    private var noSalesMethod: PricingMethod? {
+        guard case .model(let method)? = focusedStrategy else { return nil }; return method
+    }
+    private func loadGuideProfile() async {
+        guard let focusedStrategy, let session else { return }
+        do {
+            let profiles = try await session.pricingProfiles()
+            guard self.focusedStrategy == focusedStrategy else { return }
+            if case .profile(let id) = focusedStrategy { guideProfileId = id }
+            else { guideProfileId = profiles.defaultId }
+            modelBlocked = !profiles.profiles.contains { $0.id == guideProfileId }
+        } catch { modelBlocked = true }
+    }
+
     private var currentPrices: some View {
-        Card(title: "Apple prices", subtitle: saved.map { "Checked \($0.checkedAt.prefix(16).replacingOccurrences(of: "T", with: " ")) UTC\($0.code != nil ? " · The last refresh failed; the prices shown are the last ones Apple returned." : "")" } ?? "Read the app's current prices from App Store Connect.", help: "protection") {
-                StorebenchActionGroup {
-                    StorebenchReadButton("Read Saved Prices") { await load(announce: true) }.storebenchWorking(refreshing || guideBusy || session == nil)
-                    Button(refreshing ? "Refreshing…" : "Refresh Prices") { Task { await refresh() } }.buttonStyle(StorebenchButtonStyle(.primary)).storebenchWorking(refreshing || guideBusy || session == nil)
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    StorebenchTableControls(query: $query, sort: $tableSort, descending: $tableDescending,
-                        options: [("country", "Country"), ("currency", "Currency"), ("price", "Price within currency"), ("units", "Paid units")],
-                        pageSize: Binding(get: { countryPage.pageSize }, set: { countryPage.chooseSize($0) }), searchTitle: "Search countries")
-                    Text(currentPage.summary + " countries · \(selected.count) selected across pages").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
+        Card(title: "Apple Prices", subtitle: saved.map { "Checked \($0.checkedAt.prefix(16).replacingOccurrences(of: "T", with: " ")) UTC\($0.code != nil ? " · The last refresh failed; the prices shown are the last ones Apple returned." : "")" } ?? "Read the app's current prices from App Store Connect.", help: "protection",
+             actions: AnyView(StorebenchReadButton("Refresh Prices") { await refresh() }.storebenchWorking(refreshing || guideBusy || session == nil))) {
                     StorebenchActionGroup {
                         if !selected.isEmpty && pricingReadable { Button("Keep Current Prices") { Task { await protect(Array(selected)) } }.storebenchWorking(working || guideBusy).help("Protected prices are never changed by drafts or models.") }
                         if !selected.isEmpty { Button("Clear Selection") { selected.removeAll() } }
                     }
-                }
-                if loaded && filteredCountries.isEmpty { Text(saved == nil ? "No prices read yet." : "No current prices match.").foregroundStyle(StorebenchTheme.muted) }
-                StorebenchTableFrame {
-                    StorebenchResizableTableViewport(key: "apple-prices", minimum: [84, 190, 132, 164, 112, 152, 112, 244], weights: [0, 2, 1, 2, 1, 1, 1, 0], height: DataTablePresentation.headerHeight + Double(reading ? 1 : current.count) * ComponentLayout.tableRowHeight(lines: 4) + (current.contains { $0.territory == expanded } ? 196 : 0), fixed: [0, 7]) { columns, resize in
+                if loaded && !refreshing && filteredCountries.isEmpty { Text(saved == nil ? "No prices read yet." : "No current prices match.").foregroundStyle(StorebenchTheme.muted) }
+                StorebenchDataTable {
+                    StorebenchTableControls(query: $query, sort: $tableSort, descending: $tableDescending,
+                        options: [("country", "Country"), ("currency", "Currency"), ("price", "Price within Currency"), ("units", "Paid Units")],
+                        pageSize: Binding(get: { countryPage.pageSize }, set: { countryPage.chooseSize($0) }), searchTitle: "Search Countries or Currencies",
+                        filter: $tableFilter, filters: [("all", "All Countries or Regions"), ("protected", "Protected Prices"), ("drafts", "With Country Drafts"), ("selected", "Selected Countries")])
+                } content: {
+                    StorebenchResizableTableViewport(key: "apple-prices", minimum: [44, 190, 132, 164, 112, 152, 100, 48], weights: [0, 2, 1, 2, 1, 1, 1, 0], height: DataTablePresentation.headerHeight + Double(reading ? 1 : current.count) * DataTablePresentation.rowHeight + (current.contains { $0.territory == expanded } ? overriding == expanded ? 300 : 196 : 0), fixed: [0, 7]) { columns, resize in
                         VStack(alignment: .leading, spacing: 0) {
-                            StorebenchTableHeader(columns: zip(["Select", "Country", "Apple price", "Proposed price", "Change", "Apple price in USD", "Paid units", "Actions"], columns).map { ($0.0, CGFloat($0.1)) }, resize: resize, fixed: [0, 7])
+                            StorebenchTableHeader(columns: zip(["", "Country", "Apple Price", "Proposed Price", "Change", "Price in USD", "Paid Units", ""], columns).map { ($0.0, CGFloat($0.1)) }, resize: resize, fixed: [0, 7], sortable: [1, 2, 6],
+                                sorted: tableSort == "country" ? (1, tableDescending) : tableSort == "price" ? (2, tableDescending) : tableSort == "units" ? (6, tableDescending) : nil,
+                                sort: { column in let next = column == 1 ? "country" : column == 2 ? "price" : "units"; if tableSort == next { tableDescending.toggle() } else { tableSort = next; tableDescending = false } })
                             ForEach(Array(current.enumerated()), id: \.element.id) { index, row in
                                 let locked = protection.contains { $0.territory == row.territory }
                                 let pending = drafts.filter { $0.territory == row.territory }
-                                let calculation = modelPreview.first { $0.territory == row.territory && $0.currency == row.currency }
+                                let calculation = (selectedPreview ?? modelPreview).first { $0.territory == row.territory && $0.currency == row.currency }
                                 let override = pending.first { $0.startDate == nil && $0.currency == row.currency }
                                 let proposed = locked ? row.customerPrice : override?.amount ?? calculation?.amount
                                 StorebenchTableRow(index: index) {
@@ -135,43 +178,48 @@ struct CountryPricesView: View {
                                         if locked { Color.clear.accessibilityHidden(true) }
                                         else { StorebenchCheckbox("Select " + WorkspaceSession.countryName(row.territory), isOn: Binding(get: { selected.contains(row.territory) }, set: { if $0 { selected.insert(row.territory) } else { selected.remove(row.territory) } })).labelsHidden()
                                             .storebenchWorking(guideBusy || working || !pricingReadable) }
-                                    }.frame(height: 52).frame(width: columns[0])
+                                    }.frame(height: DataTablePresentation.rowHeight).frame(width: columns[0])
                                     StorebenchTableCell(text: "\(WorkspaceSession.countryName(row.territory))\n\(row.territory)", width: columns[1], title: "Country")
                                     StorebenchTableCell(text: "\(row.customerPrice) \(row.currency)", width: columns[2], title: "Apple price")
                                     StorebenchTableCell(text: proposed.map { "\($0) \(row.currency)\n" + (locked ? "Protected" : override != nil ? "Saved country override" : "Model preview") } ?? "—\nNo preview", width: columns[3], title: "Proposed price")
                                     StorebenchTableCell(text: priceChange(proposed, row: row), width: columns[4], title: "Change")
                                     StorebenchTableCell(text: row.currency == "USD" ? "\(row.customerPrice) USD" : "Unknown", width: columns[5], title: "Apple price in USD")
                                     StorebenchTableCell(text: paidUnits(row.territory), width: columns[6], title: "Paid units")
-                                    HStack(spacing: 8) {
-                                        Group {
-                                            if locked { Color.clear.accessibilityHidden(true) }
-                                            else { Button("Override") { selected = [row.territory]; mode = "exact"; amount = row.customerPrice }.storebenchWorking(guideBusy || working || !pricingReadable) }
-                                        }.frame(width: 106)
-                                        Button(expanded == row.territory ? "Hide" : "Details") { expanded = expanded == row.territory ? nil : row.territory }
-                                            .buttonStyle(StorebenchButtonStyle(.quiet)).frame(width: 106)
-                                            .accessibilityLabel("Details for " + WorkspaceSession.countryName(row.territory))
-                                            .accessibilityValue(expanded == row.territory ? "Expanded" : "Collapsed")
-                                            .help(expanded == row.territory ? "Hide country details" : "Show country details")
-                                    }.environment(\.naturalActions, true).frame(height: 42).padding(.horizontal, 12).frame(width: columns[7])
+                                    CountryPriceActions(territory: row.territory, expanded: expanded == row.territory, canOverride: !locked,
+                                        unavailable: guideBusy || working || !pricingReadable,
+                                        overridePrice: { selected = [row.territory]; mode = "exact"; amount = row.customerPrice; temporary = false; expanded = row.territory; overriding = row.territory },
+                                        details: { expanded = expanded == row.territory ? nil : row.territory })
+                                        .frame(width: columns[7], height: DataTablePresentation.rowHeight)
                                 }
                                 if expanded == row.territory {
                                     VStack(alignment: .leading, spacing: 12) {
                                         StorebenchTextSlot(text: "Effective from: \(row.startDate ?? "Not provided")\nApple price type: \(row.source == "manual" ? "Manual" : "Apple generated")\nModel calculation: \(calculation?.problem ?? calculation?.detail ?? "No preview for this country.")\nUSD estimates require a saved currency rate. Paid units cover only complete saved reporting periods.\n" + (pending.isEmpty ? "No country drafts." : pending.map { draft in "Draft: \(draft.amount) \(draft.currency)\(draft.startDate.map { " · \($0) – \(draft.endDate ?? "")" } ?? "")" }.joined(separator: "\n")), height: 108, font: .sbCallout, color: StorebenchTheme.muted)
-                                        if locked { Button("Allow Price Changes") { Task { await unprotect(row.territory) } }.storebenchWorking(guideBusy || working || !pricingReadable) }
-                                    }.padding(12).frame(width: columns.reduce(0, +), height: 196, alignment: .leading).background(StorebenchTheme.color("color-surface-subtle"))
+                                        if locked { StorebenchActionGroup { Button("Allow Price Changes") { Task { await unprotect(row.territory) } }.storebenchWorking(guideBusy || working || !pricingReadable) } }
+                                        if overriding == row.territory && !locked {
+                                            StorebenchInputActions {
+                                                StorebenchTextField("Country Draft in " + row.currency, text: $amount, hint: "Saves on this Mac. Sync still requires a separate review.")
+                                            } actions: {
+                                                StorebenchCommand(title: "Save Country Draft", running: "Saving…", busy: working,
+                                                    unavailable: guideBusy || !pricingReadable || selected != [row.territory] ? "Choose this country alone before saving its override." : PricingMath.decimal(amount).map { $0 > 0 } != true ? "Enter a price above zero." : nil) {
+                                                        Task { await saveDrafts(); if !draftProblem { overriding = nil } }
+                                                    }
+                                            }
+                                        }
+                                    }.padding(12).frame(width: columns.reduce(0, +), height: overriding == row.territory ? 300 : 196, alignment: .leading).background(StorebenchTheme.color("color-surface-subtle"))
                                 }
                             }
                             // The real table with one status row while the first prices are read; no stand-in rows are drawn.
                             if reading {
                                 StorebenchLoadingStatus(message: "Reading saved prices…", surface: false)
-                                    .padding(.horizontal, 12).frame(width: columns.reduce(0, +), height: ComponentLayout.tableRowHeight(lines: 4), alignment: .leading)
+                                    .padding(.horizontal, 12).frame(width: columns.reduce(0, +), height: DataTablePresentation.rowHeight, alignment: .leading)
                             }
                         }.frame(width: columns.reduce(0, +), alignment: .leading)
                     }
+                } footer: {
+                    StorebenchTablePageFooter(summary: currentPage.summary + " Countries · \(selected.count) Selected", page: currentPage.number, count: currentPage.count) { countryPage.choosePage($0) }
                 }
-                if currentPage.count > 1 { StorebenchPagination(page: currentPage.number, count: currentPage.count) { countryPage.choosePage($0) } }
                 StorebenchFeedback(text: status, height: 32)
-            }
+            }.storebenchControlID("pricing.apple-prices")
     }
 
     private func restoreTable() {
@@ -180,16 +228,17 @@ struct CountryPricesView: View {
         restoredQuery = query == snapshot.query ? nil : snapshot.query
         restoredSort = tableSort == snapshot.sort ? nil : snapshot.sort
         restoredDescending = tableDescending == snapshot.descending ? nil : snapshot.descending
-        query = snapshot.query; tableSort = snapshot.sort; tableDescending = snapshot.descending; countryPage = snapshot.page; selected = snapshot.selected; expanded = snapshot.expanded
+        query = snapshot.query; tableSort = snapshot.sort; tableDescending = snapshot.descending; tableFilter = snapshot.filter; countryPage = snapshot.page; selected = snapshot.selected; expanded = snapshot.expanded
     }
     private func saveTable() {
         guard let historyOwner else { return }
-        historyOwner.store.saveCollection(TableSnapshot(query: query, sort: tableSort, descending: tableDescending, page: countryPage, selected: selected, expanded: expanded), key: "pricing-countries", entry: historyOwner.entry)
+        historyOwner.store.saveCollection(TableSnapshot(query: query, sort: tableSort, descending: tableDescending, filter: tableFilter, page: countryPage, selected: selected, expanded: expanded), key: "pricing-countries", entry: historyOwner.entry)
     }
 
     /// Country drafts for the selected countries; protected countries are refused while protection is held.
     private var draftCard: some View {
         Card(title: "Country drafts", subtitle: "Planned prices are saved on this Mac and published later in App Store changes.", help: "overrides") {
+            if focusedStrategy == nil {
             Text(selected.isEmpty ? "Select countries in Apple prices." : "\(selected.count) countries selected").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
             StorebenchCardSection(title: "Draft settings", help: "methods") {
             StorebenchChoicePicker("Change", selection: $mode, options: [("percent", "Percentage of current price"), ("exact", "Exact price")])
@@ -214,11 +263,12 @@ struct CountryPricesView: View {
                 }
             }
             StorebenchFeedback(text: draftStatus, height: 40, error: draftProblem)
+            }
             StorebenchCollection(items: drafts, title: { WorkspaceSession.countryName($0.territory) }, subtitle: { $0.amount + " " + $0.currency },
                                  empty: "No country drafts yet. Select countries in Apple prices, choose a change, then Save Country Drafts.") { draft in
-                HStack {
+                StorebenchActionRow {
                     Text("\(WorkspaceSession.countryName(draft.territory)) · \(draft.amount) \(draft.currency)\(draft.startDate.map { " · \($0) – \(draft.endDate ?? "")" } ?? "")")
-                    Spacer()
+                } actions: {
                     Button("Remove", role: .destructive) {
                         guard confirm(.removePriceDraft, title: "Remove the \(WorkspaceSession.countryName(draft.territory)) price draft?", message: "The draft is removed from this Mac. Prices at App Store Connect do not change.", action: "Remove") else { return }
                         Task { await remove(draft) }
@@ -258,6 +308,7 @@ struct CountryPricesView: View {
             guard loadTicket == ticket, !Task.isCancelled else { return }
             apply(value); history?.rememberRead(value, readKey)
             sourceVersion += 1; loaded = true; pricingReadable = true
+            if value.saved?.code == nil && !refreshing { status = "" }
             // Read Saved Prices always answers, also when nothing is saved yet.
             if announce { status = value.saved == nil ? "No prices are saved on this Mac yet. Refresh Prices reads them from App Store Connect." : "Saved prices read." }
         } catch {
@@ -266,10 +317,11 @@ struct CountryPricesView: View {
         }
     }
 
-    private func refresh() async {
+    private func refresh(onlyIfNeeded: Bool = false) async {
         guard let pricing else { return }
-        refreshing = true; defer { refreshing = false }
-        do { try await pricing.refresh(); status = "" }
+        refreshing = true; status = "Reading Prices from App Store Connect…"; defer { refreshing = false }
+        do { try await pricing.refresh(onlyIfNeeded: onlyIfNeeded); status = "" }
+        catch is CancellationError { if !Task.isCancelled { status = "" }; return }
         catch PricingFailure.access { status = PricingFailure.access.message }
         catch { status = "Prices could not be read. The last saved prices are kept." }
         await load()
@@ -369,10 +421,10 @@ struct ModelCard: View {
                 } else { Text("Enter a guide price to preview or save the model.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
                 LatestSaveReview(busy: working, reading: latestReading, hasEdits: editor?.dirty == true, available: editor != nil, changes: comparison, note: editor?.comparison != nil && !compatible ? "The shared profile now uses another guide country or currency. Your amounts remain in their original context. Load the updated context only after retaining any edits you need." : nil,
                     onRead: { Task { await readLatest() } }, onKeep: compatible ? { acceptLatest(useSaved: false) } : nil, onUse: compatible ? { acceptLatest(useSaved: true) } : nil)
-                if editor?.comparison != nil && !compatible { Button("Load Context…") { pendingProfile = profileId; confirmingSwitch = true }.help("Load Updated Context").accessibilityLabel("Load Updated Context").storebenchWorking(working) }
+                if editor?.comparison != nil && !compatible { StorebenchActionGroup { Button("Load Context…") { pendingProfile = profileId; confirmingSwitch = true }.help("Load Updated Context").accessibilityLabel("Load Updated Context").storebenchWorking(working) } }
                 Text(editor?.dirty == true ? "Your model edits are not saved." : "Model values match the chosen saved baseline.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
             } else if !profileId.isEmpty {
-                Button("Load Model") { Task { await load(profileId) } }.storebenchWorking(working)
+                StorebenchActionGroup { Button("Load Model") { Task { await load(profileId) } }.storebenchWorking(working) }
             }
             ForEach(warnings, id: \.self) { Text($0).font(.sbCallout).foregroundStyle(StorebenchTheme.color("color-warning")) }
             StorebenchFeedback(text: status, height: 34)
@@ -508,4 +560,24 @@ struct ModelCard: View {
 enum ReportDay {
     static var today: String { format(Date()) }
     static func format(_ date: Date) -> String { let format = DateFormatter(); format.dateFormat = "yyyy-MM-dd"; format.timeZone = TimeZone(identifier: "UTC"); format.locale = Locale(identifier: "en_US_POSIX"); return format.string(from: date) }
+}
+
+/// The menu's page anchor stays mounted while its native menu items are activated.
+private struct CountryPriceActions: View {
+    let territory: String
+    let expanded, canOverride, unavailable: Bool
+    let overridePrice, details: () -> Void
+    @State private var scrollFocus = StorebenchScrollFocus()
+    @Environment(\.pageFocusInteraction) private var interaction
+    var body: some View {
+        StorebenchIconMenu(title: "Price Actions for " + WorkspaceSession.countryName(territory)) {
+            if canOverride { Button("Override Price", action: overridePrice).storebenchWorking(unavailable) }
+            Button(expanded ? "Hide" : "Details") {
+                interaction?(); scrollFocus.preserving(details)
+            }
+            .accessibilityLabel("Details for " + WorkspaceSession.countryName(territory))
+            .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+            .help(expanded ? "Hide country details" : "Show country details")
+        }.background(StorebenchScrollFocusAnchor(focus: scrollFocus))
+    }
 }

@@ -36,6 +36,7 @@ struct PeriodSettings: View {
                 }
                 }
             }
+            .settingsSearchAnchor("periods-defaults")
         }.storebenchWorking(working)
             .trackUnsavedChanges(changed, busy: working, problem: { problem ? "Period defaults: " + status : nil }, onSave: { await save(); return !changed })
             .task { await load() }

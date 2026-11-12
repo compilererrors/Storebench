@@ -294,6 +294,7 @@ struct EditorWindowGuard: NSViewRepresentable {
     private var terminationTask: Task<Void, Never>?
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        StorebenchNestedScrolling.shared.install()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.reopenWorkspace() }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

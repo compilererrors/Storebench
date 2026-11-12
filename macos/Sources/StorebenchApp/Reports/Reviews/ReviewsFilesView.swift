@@ -22,7 +22,7 @@ import UniformTypeIdentifiers
     private var unavailable: Bool { blocked || working || session == nil }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             Card(title: "Import and export reviews", subtitle: "Choose one Storebench CSV or JSON export, optionally gzipped. Preview additions and updates before saving. Previously saved reviews are kept.", help: "imports") {
                 Text("Exports include all saved review text and this app's identity. Keep them private.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
                 StorebenchActionGroup { fileActions }

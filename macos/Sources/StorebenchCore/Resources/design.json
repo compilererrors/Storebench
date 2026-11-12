@@ -4,9 +4,9 @@
     "font-family-ui": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
     "font-size-body": "13px",
     "font-size-caption": "11px",
-    "font-size-section": "17px",
+    "font-size-section": "15px",
     "font-size-title": "20px",
-    "font-size-page": "28px",
+    "font-size-page": "24px",
     "font-size-value": "28px",
     "font-size-brand": "21px",
     "font-weight-medium": "500",
@@ -31,18 +31,18 @@
     "action-max-width": "220px",
     "action-gap": "var(--space-3)",
     "action-group-width": "calc(2 * var(--action-width) + var(--action-gap))",
-    "layout-gap": "16px",
+    "layout-gap": "12px",
     "panel-radius": "12px",
-    "panel-padding": "20px",
+    "panel-padding": "16px",
     "color-shadow": "#17243b",
-    "panel-shadow-radius": "8px",
-    "panel-shadow-offset": "2px",
-    "panel-shadow-opacity": "0.08",
-    "panel-shadow": "0 var(--panel-shadow-offset) var(--panel-shadow-radius) color-mix(in srgb, var(--color-shadow) 8%, transparent)",
+    "panel-shadow-radius": "2px",
+    "panel-shadow-offset": "1px",
+    "panel-shadow-opacity": "0.02",
+    "panel-shadow": "0 var(--panel-shadow-offset) var(--panel-shadow-radius) color-mix(in srgb, var(--color-shadow) 2%, transparent)",
     "text-track-limit": "8lh",
     "field-label-height": "18px",
-    "field-hint-height": "34px",
-    "status-height": "34px",
+    "field-hint-height": "18px",
+    "status-height": "32px",
     "focus-ring-room": "5px",
     "color-text": "#16213a",
     "color-text-secondary": "#43536b",
@@ -3076,31 +3076,31 @@
   "layout": {
     "statusColumn": 124,
     "fieldLabel": 18,
-    "fieldHint": 34,
+    "fieldHint": 18,
     "factLabel": 190,
     "factValue": 220,
-    "fieldGap": 7,
+    "fieldGap": 6,
     "inputFont": 13,
     "inputRadius": 8,
     "textareaPaddingY": 10,
     "textareaPaddingX": 11,
     "textareaLineHeight": 20.8,
     "formMinimumWidth": 250,
-    "formRowGap": 7,
-    "formBottomPadding": 8,
-    "choiceHeight": 60,
-    "choiceLabel": 36,
-    "pageTitle": 44,
+    "formRowGap": 12,
+    "formBottomPadding": 0,
+    "choiceHeight": 36,
+    "choiceLabel": 18,
+    "pageTitle": 32,
     "navigationTitle": 20,
     "navigationMinimumHeight": 112,
-    "pageTitleFont": 28,
-    "pageDescription": 44,
-    "sectionTitle": 22,
-    "sectionDescription": 38,
+    "pageTitleFont": 24,
+    "pageDescription": 18,
+    "sectionTitle": 20,
+    "sectionDescription": 18,
     "sectionGap": 4,
     "sectionSpacing": 12,
-    "metricHeight": 140,
-    "metricCompact": 104,
+    "metricHeight": 112,
+    "metricCompact": 84,
     "metricValueFont": 28,
     "disclosureControl": 32,
     "disclosureLabel": 24,
@@ -3117,13 +3117,13 @@
     "optionGroupPadding": 12,
     "tableLine": 18,
     "tablePadding": 4,
-    "tableRow": 53,
-    "tableHeader": 45,
+    "tableRow": 44,
+    "tableHeader": 32,
     "tableHeaderFont": 11,
     "dialogWidth": 480,
     "dialogWide": 1040,
     "dialogRadius": 14,
-    "dialogBodyPadding": 22,
+    "dialogBodyPadding": 16,
     "pillHeight": 32,
     "pillRadius": 8,
     "progressHeight": 6,
@@ -3148,6 +3148,46 @@
     "assetGridGap": 16
   },
   "icons": {
+    "minus": [
+      {
+        "tag": "path",
+        "attributes": {
+          "d": "M5 12h14"
+        }
+      }
+    ],
+    "center": [
+      {
+        "tag": "path",
+        "attributes": {
+          "d": "M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5"
+        }
+      },
+      {
+        "tag": "circle",
+        "attributes": {
+          "cx": "12",
+          "cy": "12",
+          "r": "3"
+        }
+      }
+    ],
+    "undo": [
+      {
+        "tag": "path",
+        "attributes": {
+          "d": "M3 10h11a7 7 0 0 1 7 7v3M3 10l6-6M3 10l6 6"
+        }
+      }
+    ],
+    "redo": [
+      {
+        "tag": "path",
+        "attributes": {
+          "d": "M21 10H10a7 7 0 0 0-7 7v3M21 10l-6-6M21 10l-6 6"
+        }
+      }
+    ],
     "keyboard": [
       {
         "tag": "path",
@@ -3932,6 +3972,14 @@
           "d": "m13 17 5-5-5-5"
         }
       }
+    ],
+    "more": [
+      { "tag": "circle", "attributes": { "cx": "5", "cy": "12", "r": "1" } },
+      { "tag": "circle", "attributes": { "cx": "12", "cy": "12", "r": "1" } },
+      { "tag": "circle", "attributes": { "cx": "19", "cy": "12", "r": "1" } }
+    ],
+    "filter": [
+      { "tag": "path", "attributes": { "d": "M3 4h18l-7 8v7l-4 2v-9Z" } }
     ],
     "sort": [
       {

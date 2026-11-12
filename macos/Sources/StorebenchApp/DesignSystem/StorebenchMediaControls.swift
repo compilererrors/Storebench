@@ -1,6 +1,31 @@
 import AppKit
 import SwiftUI
 
+/// Media that opens, plays or enlarges itself when clicked: the preview is its own target, with the shared focus ring.
+struct StorebenchMediaButton<Media: View>: View {
+    let title: String
+    /// Hover help when it says more than the accessible title, such as how selection works.
+    var help = ""
+    let action: () -> Void
+    @ViewBuilder let media: () -> Media
+    var body: some View {
+        Button(action: action) { media().overlay(StorebenchControlOutline(border: .clear)) }
+            .buttonStyle(StorebenchPressStyle()).help(help.isEmpty ? title : help).accessibilityLabel(title)
+    }
+}
+
+/// The frame of media that is not drawn yet: a spinner with its label while the file is read, otherwise a short reason.
+struct StorebenchMediaStatus: View {
+    let message: String
+    var loading = true
+    var body: some View {
+        Group {
+            if loading { ProgressView { if !message.isEmpty { Text(message) } }.progressViewStyle(StorebenchProgressStyle()) }
+            else { Text(message).font(.sbCaption).foregroundStyle(StorebenchTheme.muted).multilineTextAlignment(.center) }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity).accessibilityElement(children: .ignore).accessibilityLabel(message.isEmpty ? "Loading" : message)
+    }
+}
+
 struct StorebenchSlider: View {
     @Binding var value: Double
     let range: ClosedRange<Double>

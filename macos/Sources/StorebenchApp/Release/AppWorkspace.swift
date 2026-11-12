@@ -5,16 +5,19 @@ struct AppOverview: View {
     let account: Account, app: Account.App, session: WorkspaceSession?
     @Binding var section: Section
     @Binding var editorContext: AppNavigation.Context?
+    let refineEditorContext: (AppNavigation.Context?, Section) -> Void
     let accounts: [Account]
     let switchApp: (String?) -> Void
     @State private var continueRequests = 0
-    @State private var revealTask: Task<Void, Never>?
-    @State private var languageSummaries: [String: String] = [:]
+    @State private var scrollReveal = StorebenchScrollReveal()
+    @State private var scrollInteraction: UInt64 = 0
+    @State private var languageSummaries = LanguageSummaries()
     @State private var salesRequest: ReportNavigation.SalesRequest?
     let initialRecovery: RecoveryIntent?
-    init(account: Account, app: Account.App, session: WorkspaceSession?, section: Binding<Section>, editorContext: Binding<AppNavigation.Context?>, initialSalesRange: SalesPresentation.Range? = nil, initialAnalyticsKind: String? = nil, initialRecovery: RecoveryIntent? = nil, accounts: [Account], switchApp: @escaping (String?) -> Void) {
+    init(account: Account, app: Account.App, session: WorkspaceSession?, section: Binding<Section>, editorContext: Binding<AppNavigation.Context?>, refineEditorContext: @escaping (AppNavigation.Context?, Section) -> Void, initialSalesRange: SalesPresentation.Range? = nil, initialAnalyticsKind: String? = nil, initialRecovery: RecoveryIntent? = nil, accounts: [Account], switchApp: @escaping (String?) -> Void) {
         self.account = account; self.app = app; self.session = session
         _section = section; _editorContext = editorContext
+        self.refineEditorContext = refineEditorContext
         self.accounts = accounts; self.switchApp = switchApp
         _salesRequest = State(initialValue: (try? RecoveryGuidance.Scope(accountId: account.id, appId: app.id)).map { ReportNavigation.SalesRequest(scope: $0, range: initialSalesRange) })
         _syncAnalyticsKind = State(initialValue: initialAnalyticsKind == "engagement" ? "engagement" : "downloads")
@@ -80,6 +83,7 @@ struct AppOverview: View {
         guard action.allowed(current: recoveryScope, decision: .ready),
               destination == section ? protection?.policy.navigationDecision != .wait : protection?.allowLeaving() != false,
               let session, (try? session.validateAccess()) != nil else { return }
+        if action.target.area == .release { releaseStepHistory?.wrappedValue = "plan" }
         section = destination; recoveryIntent = RecoveryIntent(action: action)
     }
 
@@ -122,7 +126,7 @@ struct AppOverview: View {
 
     private func reload() async {
         guard let session else { return }
-        let identity = UUID(), requestedDraft = editDraft
+        let identity = UUID(), requestedDraft = editDraft, requestedSection = section
         if !loaded, let saved = presentation?.rememberedRead(editorReadKey, as: EditorRead.self), saved.draft == requestedDraft {
             revisions = saved.revisions; plan = saved.plan; workspace = saved.workspace; workspaceDraft = saved.draft; loaded = true
         }
@@ -130,73 +134,80 @@ struct AppOverview: View {
         defer { if readIdentity == identity { reading = false } }
         let savedRevisions = (try? await session.revisions(accountId: account.id, appId: app.id)) ?? []
         let savedPlan = try? await session.releasePlan(accountId: account.id, appId: app.id)
-        guard !Task.isCancelled, readIdentity == identity, requestedDraft == editDraft else { return }
+        guard !Task.isCancelled, readIdentity == identity, requestedDraft == editDraft, requestedSection == section else { return }
         // The version being prepared is what you work on, so its draft opens unless you chose the Apple version or a specific version.
         if savedPlan != nil, !requestedDraft, !editorChosen, editorContext?.version == nil, section.usesVersion, let scope = recoveryScope {
-            editorContext = try? AppNavigation.Context(scope: scope, locale: editorContext?.locale, draft: true)
+            refineEditorContext(try? AppNavigation.Context(scope: scope, locale: editorContext?.locale, draft: true), requestedSection)
             return
         }
         if savedPlan == nil, requestedDraft, let scope = recoveryScope {
-            editorContext = try? AppNavigation.Context(scope: scope, locale: editorContext?.locale, version: editorContext?.version)
+            refineEditorContext(try? AppNavigation.Context(scope: scope, locale: editorContext?.locale, version: editorContext?.version), requestedSection)
             return
         }
         let source = requestedDraft ? savedRevisions.first { $0.id == savedPlan?.sourceRevisionId } : savedRevisions.first { !$0.isLocalDraft }
         let savedWorkspace: Revision?
         if let source { savedWorkspace = try? await session.workspaceRevision(source, accountId: account.id, appId: app.id) } else { savedWorkspace = nil }
-        guard !Task.isCancelled, readIdentity == identity, requestedDraft == editDraft else { return }
+        guard !Task.isCancelled, readIdentity == identity, requestedDraft == editDraft, requestedSection == section else { return }
         revisions = savedRevisions; plan = savedPlan; workspace = savedWorkspace; workspaceDraft = requestedDraft; loaded = true
         presentation?.rememberRead(EditorRead(revisions: savedRevisions, plan: savedPlan, workspace: savedWorkspace, draft: requestedDraft), editorReadKey)
     }
 
-    /// Scrolls to `id` and again while the page settles: a restored scroll position and editors still laying out would otherwise move it away.
+    private func position(_ id: String, anchor: UnitPoint, scroll: ScrollViewProxy) {
+        presentation?.store.keepScroll?()
+        var transaction = Transaction(animation: nil); transaction.disablesAnimations = true
+        withTransaction(transaction) { scroll.scrollTo(id, anchor: anchor) }
+    }
+    private func interacted() {
+        scrollInteraction &+= 1
+        scrollReveal.cancel(); presentation?.store.keepScroll?()
+    }
+    /// Reveals after layout, then makes one bounded correction. Native text surfaces never animate through intermediate heights.
     private func reveal(_ id: String, scroll: ScrollViewProxy) {
-        revealTask?.cancel()
-        revealTask = Task { @MainActor in
-            // The first scroll animates; the later ones only correct the position after it has finished.
-            for (index, wait) in [120, 650, 450, 700].enumerated() {
-                try? await Task.sleep(for: .milliseconds(wait)); guard !Task.isCancelled else { return }
-                presentation?.store.keepScroll?()
-                if index == 0 { withAnimation(.easeInOut(duration: 0.5)) { scroll.scrollTo(id, anchor: .center) } } else { scroll.scrollTo(id, anchor: .center) }
-            }
-        }
+        scrollReveal.reveal(id, anchor: .center) { id, anchor in position(id, anchor: anchor, scroll: scroll) }
     }
 
     var body: some View {
         ScrollViewReader { scroll in
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
                 StorebenchPageHeader(title: section == .overview ? appTitle : section.title,
                     description: section == .overview ? "\(account.name) · Apple ID \(app.id)\(headerBundleId.isEmpty ? "" : " · \(headerBundleId)")" : section.purpose,
                     eyebrow: section == .overview ? "APP OVERVIEW" : appTitle.uppercased(), help: section.helpTopic)
                 workspaceNavigation
                 content(scroll)
-                    .environment(\.pageScroll, { id, anchor in withAnimation(.easeInOut(duration: 0.6)) { scroll.scrollTo(id, anchor: anchor) } })
+                    .environment(\.pageScroll, { id, anchor in scrollReveal.cancel(); position(id, anchor: anchor, scroll: scroll) })
                     .environment(\.pageReveal, { id in reveal(id, scroll: scroll) })
+                    .environment(\.pageDisclosureFocus, { id in
+                        scrollInteraction &+= 1
+                        presentation?.store.keepScroll?()
+                        scrollReveal.reveal(id, anchor: .top) { id, anchor in position(id, anchor: anchor, scroll: scroll) }
+                    })
             }
             .modifier(StorebenchPageContent())
+            .environment(\.pageFocusInteraction, interacted)
             .id("app-workspace-top")
         }
         .onChange(of: recoveryIntent?.id, initial: true) {
-            guard let intent = recoveryIntent else { return }; let target = intent.action.target
+            guard let intent = recoveryIntent else { return }; let target = intent.action.target, interaction = scrollInteraction
             Task { @MainActor in
                 await Task.yield()
-                guard recoveryIntent?.id == intent.id else { return }
+                guard recoveryIntent?.id == intent.id, scrollInteraction == interaction else { return }
                 if ReportNavigation.Tools.requested(intent.action, current: recoveryScope, area: target.area) { scroll.scrollTo("report-tools-\(target.area.rawValue)", anchor: .top) }
                 else if let anchor = target.anchor {
                     // The page restores its saved position and finishes loading after a section change; the card is scrolled to again
                     // until it settles, and its position is then kept for Back and Forward.
                     for wait in [0, 300, 700, 1_200] {
                         if wait > 0 { try? await Task.sleep(for: .milliseconds(wait)) }
-                        guard recoveryIntent?.id == intent.id else { return }
+                        guard recoveryIntent?.id == intent.id, scrollInteraction == interaction else { return }
                         presentation?.store.keepScroll?(); scroll.scrollTo(anchor, anchor: .top)
                     }
                 }
             }
         }
         .onChange(of: readinessFocus?.id) {
-            guard let focus = readinessFocus else { return }
+            guard let focus = readinessFocus else { return }; let interaction = scrollInteraction
             Task { @MainActor in
-                await Task.yield(); guard readinessFocus?.id == focus.id else { return }; scroll.scrollTo(focus.anchor, anchor: .top)
+                await Task.yield(); guard readinessFocus?.id == focus.id, scrollInteraction == interaction else { return }; scroll.scrollTo(focus.anchor, anchor: .top)
             }
         }
         }
@@ -210,6 +221,7 @@ struct AppOverview: View {
         .trackUnsavedChanges(false, busy: reading)
         .shortcutAction(.refresh, enabled: !reading && session != nil, priority: 5, identity: account.id + "/" + app.id) { await reload() }
         .onChange(of: section) { old, new in
+            scrollReveal.cancel()
             if old == .sales && new != .sales { salesRequest = nil }
             if old == .publish && new != .publish { publishingCancellation = nil; languagePublishReview = nil; readinessRequest = nil }
             if old == .reviewInfo && new != .reviewInfo { readinessReviewVersion = nil }
@@ -217,7 +229,8 @@ struct AppOverview: View {
             if old == .information && new != .information { readinessFocus = nil }
             if let scope = recoveryScope { editorContext = editorContext?.forSection(new, scope: scope) }
         }
-        .task(id: editDraft) { await reload() }
+        .task(id: section.key + (editDraft ? "/draft" : "/imported")) { await reload() }
+        .onDisappear { scrollInteraction &+= 1; scrollReveal.cancel() }
         // A plan whose version Apple has already released is closed in the background, so Continue Version never offers a finished release.
         .task(id: plan?.token) {
             guard let plan, let session, section != .release, await session.checkReleasePlan(account: account, plan: plan)?.released == true, !Task.isCancelled else { return }
@@ -254,12 +267,9 @@ struct AppOverview: View {
         }.frame(maxWidth: 440).frame(maxWidth: .infinity, alignment: .leading)
     }
     private var newVersion: some View {
-        Button {
-            // On the Release page itself, Continue Version opens the step that needs action instead of doing nothing.
-            if section == .release { continueRequests += 1 }
-            else if protection?.allowLeaving() != false { recoveryIntent = nil; editorContext = nil; section = .release }
-        } label: { StorebenchLabel(plan == nil ? "New Version" : "Continue Version", icon: plan == nil ? "plus" : "release", size: 16) }
-            .help(plan == nil ? "Create a new version step by step" : "A new version is in progress. Continue where you left off.")
+        ReleaseVersionButton(section: section, hasPlan: plan != nil, continueHere: { continueRequests += 1 }, openRelease: {
+            if protection?.allowLeaving() != false { recoveryIntent = nil; editorContext = nil; section = .release }
+        })
     }
 
     @ViewBuilder private func content(_ scroll: ScrollViewProxy) -> some View {
@@ -279,8 +289,8 @@ struct AppOverview: View {
         case .journal: ChangeJournalView(account: account, app: app, session: session, initialEventId: focusedJournalEvent)
         case .transfer: TransferView(account: account, app: app, session: session)
         case .release: ReleaseWizardView(account: account, app: app, session: session, changed: { Task { await reload() } }, openCancellation: openCancellation,
-            scrollTo: { id, anchor in withAnimation(.easeInOut(duration: 0.6)) { scroll.scrollTo(id, anchor: anchor) } }, continueRequests: continueRequests)
-        case .quickRelease: QuickReleaseView(account: account, app: app, session: session, changed: { Task { await reload() } }, openRelease: openRelease)
+            scrollTo: { id, anchor in scrollReveal.cancel(); position(id, anchor: anchor, scroll: scroll) }, continueRequests: continueRequests)
+        case .quickRelease: QuickReleaseView(account: account, app: app, session: session, changed: { Task { await reload() } }, continueRequests: continueRequests)
         case .localizations, .media: languageContent
         case .assetLibrary: AssetLibraryView(account: account, app: app, session: session, openReview: { review in
             guard review.request.scope == .assetLibrary, review.request.accountId == account.id, review.request.appId == app.id,
@@ -321,17 +331,15 @@ struct AppOverview: View {
             let scope = Editing(accountId: account.id, appId: app.id, revisionId: editing.id, local: false)
             let selection = AppNavigation.selection(scope: navigationScope, versions: editing.versions, appInfos: editing.appInfos, context: editorContext, section: section, planVersionId: plan?.baseVersionId)
             editorChooser(editing, selection: selection)
-            if section == .localizations {
-                LanguageLayoutControls(editor: languageLayout, accountId: account.id, appId: app.id, session: session)
-            }
             if let version = editing.versions.first(where: { $0.id == selection.versionId }) {
                 if section == .localizations {
                     AIListingTranslationView(account: account, appId: app.id, revisionId: editing.id, version: version, session: session, changed: { Task { await reload() } })
                         .id("\(scope.accountId)/\(scope.appId)/\(scope.revisionId)/ai/\(version.id)")
                     StorebenchCollection(items: selection.locales.map { StorebenchCollectionEntry(id: $0, value: $0) },
-                        title: { StoreLocales.name($0.value) }, subtitle: { $0.value + " · " + (languageSummaries[scope.revisionId + "/" + version.id + "/" + $0.value] ?? "Open to read saved text") },
+                        title: { StoreLocales.name($0.value) }, subtitle: { $0.value + " · " + (languageSummaries.values[scope.revisionId + "/" + version.id + "/" + $0.value] ?? "Open to read saved text") },
+                        headerActions: { language in AnyView(LanguageLayoutControls(editor: languageLayout, accountId: account.id, appId: app.id, session: session, locale: language.value)) },
                         focusedID: selection.locale, empty: "No languages in this version yet. Add a language to start editing its text.", onOpen: { chooseEditor(version: version.id, locale: $0.value) }) { language in
-                        LanguageEditor(account: account, revision: editing, version: version, scope: scope, locale: language.value, targetMode: editDraft ? "release-plan" : "apple-version", session: session, openReview: openLanguageReview, contained: true, onSummary: { languageSummaries[scope.revisionId + "/" + version.id + "/" + language.value] = $0 })
+                        LanguageEditor(account: account, revision: editing, version: version, scope: scope, locale: language.value, targetMode: editDraft ? "release-plan" : "apple-version", session: session, openReview: openLanguageReview, contained: true, onSummary: { [languageSummaries] in languageSummaries.set($0, for: scope.revisionId + "/" + version.id + "/" + language.value) })
                     }.id("\(scope.accountId)/\(scope.appId)/\(scope.revisionId)/languages/\(version.id)/\(editDraft)")
                 }
                 if section == .media { mediaChosenInRelease }
@@ -361,8 +369,10 @@ struct AppOverview: View {
                 Button(editDraft ? "Edit Apple Version" : "Open Version Draft") {
                 guard protection?.allowLeaving() != false, let scope = recoveryScope else { return }
                 editorChosen = true
-                editorContext = try? AppNavigation.Context(scope: scope, locale: editorContext?.locale, draft: !editDraft)
+                editorContext = try? AppNavigation.Context(scope: scope, locale: editorContext?.locale,
+                    version: editDraft ? imported?.versions.first?.id : plan?.baseVersionId, draft: !editDraft)
             }.help(editDraft ? "Edit Imported Apple Version" : "Open Version Draft").accessibilityLabel(editDraft ? "Edit Imported Apple Version" : "Open Version Draft")
+                .storebenchControlID("workspace.version-source." + (editDraft ? "draft" : "imported"))
             }
         }
     }
@@ -397,4 +407,11 @@ struct AppOverview: View {
 
 extension ISO8601DateFormatter {
     static var fractional: ISO8601DateFormatter { let format = ISO8601DateFormatter(); format.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return format }
+}
+
+/// Each language card's one-line summary. Only the list headings read it, so a language reporting its summary
+/// does not rebuild the rest of the workspace.
+@MainActor @Observable final class LanguageSummaries {
+    private(set) var values: [String: String] = [:]
+    func set(_ summary: String, for key: String) { if values[key] != summary { values[key] = summary } }
 }

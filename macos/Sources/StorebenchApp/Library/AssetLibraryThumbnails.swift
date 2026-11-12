@@ -60,12 +60,13 @@ private struct AssetThumbnailSurface: View {
         ZStack {
             if let image { Image(decorative: image.image, scale: 1).resizable().aspectRatio(contentMode: .fit) }
             else if height != nil {
-                Group { if loading { StorebenchSpinner() } else { StorebenchIcon(name: "screenshots", size: 20).foregroundStyle(StorebenchTheme.muted) } }
+                Group { if loading { StorebenchMediaStatus(message: "") } else { StorebenchIcon(name: "screenshots", size: 20).foregroundStyle(StorebenchTheme.muted) } }
                     .help(message).accessibilityLabel(message)
+            } else if loading {
+                StorebenchMediaStatus(message: message)
             } else {
                 VStack(spacing: StorebenchTheme.space(2)) {
-                    if loading { StorebenchSpinner() }
-                    else { StorebenchIcon(name: "screenshots", size: 28).foregroundStyle(StorebenchTheme.muted) }
+                    StorebenchIcon(name: "screenshots", size: 28).foregroundStyle(StorebenchTheme.muted)
                     Text(message).font(.sbCaption).foregroundStyle(StorebenchTheme.muted).multilineTextAlignment(.center)
                 }
             }

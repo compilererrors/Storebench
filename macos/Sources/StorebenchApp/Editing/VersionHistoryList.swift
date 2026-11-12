@@ -55,9 +55,9 @@ struct VersionHistoryList: View {
                     HStack(alignment: .top, spacing: StorebenchTheme.space(3)) {
                         ForEach(Array(language.screenshots.enumerated()), id: \.element.id) { index, shot in
                             let label = "Screenshot \(index + 1)"
-                            Button { showGallery(language.screenshots, shot) } label: {
+                            StorebenchMediaButton(title: "Enlarge " + label, action: { showGallery(language.screenshots, shot) }) {
                                 ArchivedScreenshotThumbnail(shot: shot, session: available ? session : nil, imageHeight: 140, caption: label).frame(width: 224)
-                            }.buttonStyle(StorebenchPressStyle()).storebenchWorking(!available).accessibilityLabel("Enlarge " + label)
+                            }.storebenchWorking(!available)
                         }
                     }
                 }.frame(height: 238)

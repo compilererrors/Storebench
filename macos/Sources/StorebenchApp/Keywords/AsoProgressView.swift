@@ -1,17 +1,6 @@
 import StorebenchCore
 import SwiftUI
 
-/// Word-level diff text: additions highlighted, removals struck through.
-func diffText(_ segments: [AsoTextSegment]) -> Text {
-    segments.reduce(Text("")) { text, segment in
-        switch segment.kind {
-        case .same: text + Text(segment.text)
-        case .added: text + Text(segment.text).foregroundColor(StorebenchTheme.color("color-success")).bold()
-        case .removed: text + Text(segment.text).foregroundColor(StorebenchTheme.color("color-danger")).strikethrough()
-        }
-    }
-}
-
 struct AsoProgressView: View {
     let account: Account, app: Account.App, session: WorkspaceSession?
     @State private var baseRows: [AsoProgressRow] = [] { didSet { dataRevision += 1 } }
@@ -73,7 +62,7 @@ struct AsoProgressView: View {
 
     var body: some View {
         ScrollViewReader { reader in
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
                 Card(title: "Version comparison", subtitle: "Only released versions are included. Dates mark when Storebench observed the released listing, not its creation or exact release. Each listing change compared with the \(days) days before it. Full windows compare totals; gaps compare the average per reported day. Missing reports are not zero.", help: "aso-progress") {
                     StorebenchFormGrid(maximumColumns: 3) {
                         StorebenchPicker("Language", selection: $locale) { SelectionOption("All languages", value: ""); selectionOptions(locales) { SelectionOption(StoreLocales.name($0), value: $0) } }
@@ -100,13 +89,13 @@ struct AsoProgressView: View {
                         ChartScalePicker(indexed: $indexed)
                     }
                     SavedReportChart(series: series, markers: markers, format: format, markerKinds: Self.markerKinds) { target in
-                        if target.hasPrefix("note:") { withAnimation { reader.scrollTo("chart-notes", anchor: .top) } } else { reveal = .init(id: target) }
+                        if target.hasPrefix("note:") { reader.scrollTo("chart-notes", anchor: .top) } else { reveal = .init(id: target) }
                     }
                 }
                 notesCard.id("chart-notes")
                 Text("Versions in detail").font(.sbTitle3)
                 StorebenchCollection(items: changed.enumerated().map { StorebenchCollectionEntry(id: $0.element.id, value: ($0.offset, $0.element)) }, title: { $0.value.1.version }, subtitle: { $0.value.1.date }, empty: "No versions with listing changes yet. Changes appear after a later sync reads a new version.",
-                                     reveal: reveal, onRevealed: { id in withAnimation { reader.scrollTo(id, anchor: .top) } }) { entry in
+                                     reveal: reveal, onRevealed: { id in reader.scrollTo(id, anchor: .top) }) { entry in
                     let (_, row) = entry.value
                     version(row).id(row.id)
                 }
@@ -208,9 +197,12 @@ struct AsoProgressView: View {
             else {
                 VStack(alignment: .leading, spacing: StorebenchTheme.space(2)) {
                     ForEach(notes.reversed()) { note in
-                        HStack(alignment: .firstTextBaseline, spacing: StorebenchTheme.space(2)) {
-                            Text(note.date).font(.sbCallout.monospacedDigit()).foregroundStyle(StorebenchTheme.muted)
-                            Text(note.text).font(.sbCallout).textSelection(.enabled).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+                        StorebenchActionRow {
+                            HStack(alignment: .firstTextBaseline, spacing: StorebenchTheme.space(2)) {
+                                Text(note.date).font(.sbCallout.monospacedDigit()).foregroundStyle(StorebenchTheme.muted)
+                                Text(note.text).font(.sbCallout).textSelection(.enabled).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        } actions: {
                             Button { Task { await removeNote(note) } } label: { StorebenchIcon(name: "close", size: 14) }
                                 .buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).help("Remove Note").accessibilityLabel("Remove note from \(note.date)").storebenchWorking(savingNote)
                         }

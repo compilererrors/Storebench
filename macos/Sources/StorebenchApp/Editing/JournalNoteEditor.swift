@@ -25,11 +25,11 @@ struct JournalNoteEditor: View {
             if let binding = Binding($note) {
                 if binding.wrappedValue.basis != event.basis {
                     Text("The recorded change set has changed. Compare its current before and after values with your note.").font(.sbCallout).foregroundStyle(StorebenchTheme.color("color-warning")).fixedSize(horizontal: false, vertical: true)
-                    Button("Use Change Set") { do { note = try JournalNoteBaseline.usingCurrentChanges(binding.wrappedValue, event: event) } catch { status = JournalFailure.invalid.message } }.help("Use Current Change Set").accessibilityLabel("Use Current Change Set").storebenchWorking(working)
+                    StorebenchActionGroup { Button("Use Change Set") { do { note = try JournalNoteBaseline.usingCurrentChanges(binding.wrappedValue, event: event) } catch { status = JournalFailure.invalid.message } }.help("Use Current Change Set").accessibilityLabel("Use Current Change Set").storebenchWorking(working) }
                 }
                 if let evidence, binding.wrappedValue.evidenceFingerprint != evidence {
                     Text("The selected report evidence has changed. Compare dates, revisions and other events above with the saved conclusion.").font(.sbCallout).foregroundStyle(StorebenchTheme.color("color-warning")).fixedSize(horizontal: false, vertical: true)
-                    Button("Use Current Reports") { do { note = try JournalNoteBaseline.usingCurrentEvidence(binding.wrappedValue, fingerprint: evidence) } catch { status = JournalFailure.invalid.message } }.storebenchWorking(working)
+                    StorebenchActionGroup { Button("Use Current Reports") { do { note = try JournalNoteBaseline.usingCurrentEvidence(binding.wrappedValue, fingerprint: evidence) } catch { status = JournalFailure.invalid.message } }.storebenchWorking(working) }
                 } else if evidence == nil && binding.wrappedValue.evidenceFingerprint != nil {
                     Text("This note includes a report baseline. Open ASO Diff → Outcome to compare the current reports with the saved evidence.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
                 }
@@ -46,7 +46,7 @@ struct JournalNoteEditor: View {
                                  onKeep: latest == nil ? nil : { chooseLatest(useSaved: false) }, onUse: latest == nil ? nil : { chooseLatest(useSaved: true) })
                 Text(binding.wrappedValue.updatedAt.isEmpty ? "No note has been saved yet." : "Previous save: \(binding.wrappedValue.updatedAt)").font(.sbCaption).foregroundStyle(StorebenchTheme.muted).textSelection(.enabled)
                 if working || dirty || JournalNoteBaseline.canSave(binding.wrappedValue, event: event, evidence: evidence) {
-                    Button(working ? "Saving…" : "Save Journal Note") { Task { await save() } }.buttonStyle(StorebenchButtonStyle(.primary)).storebenchWorking(working)
+                    StorebenchFormFooter { Button(working ? "Saving…" : "Save Journal Note") { Task { await save() } }.buttonStyle(StorebenchButtonStyle(.primary)).storebenchWorking(working) }
                 }
             } else if working { StorebenchLoadingStatus(message: "Reading the saved journal note…", surface: false) }
             StorebenchFeedback(text: status, height: 34, error: problem)

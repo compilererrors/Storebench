@@ -18,7 +18,7 @@ struct ConnectedAppsView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 20) {
+            LazyVStack(alignment: .leading, spacing: StorebenchTheme.gap) {
                 StorebenchPageHeader(title: "Apps", description: "Saved revisions and download progress across your configured apps. Missing reports remain unknown.", eyebrow: "YOUR WORKSPACE", feedback: AnyView(StorebenchFeedback(text: model.appRefreshMessage, height: 34, error: model.appRefreshFailed)), help: "sync")
                 SampleDataNotice(model: model)
                 actions
@@ -66,7 +66,10 @@ struct ConnectedAppsView: View {
         }
     }
     private var refreshButton: some View {
-        LibraryAppRefreshButton(model: model, identity: "connected-apps") { await load(context, wait: true) }
+        LibraryAppRefreshButton(model: model, identity: "connected-apps") {
+            await model.session?.refreshReleaseOverviews(maxAge: 0)
+            await load(context, wait: true)
+        }
     }
     private func load(_ id: UUID, wait: Bool = false) async {
         while wait && readGate.active {
@@ -107,7 +110,7 @@ struct ConnectedAppCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            StorebenchMetricGrid(maximumColumns: 3, minimumWidth: 260, workflow: true, spacing: 12) {
+            StorebenchMetricGrid(maximumColumns: 4, minimumWidth: 300, spacing: 12) {
                 StorebenchWorkflowCard(description: "\(row.account.name) · Apple ID \(row.app.id)\n\(row.historyLabel)", feedback: "", heading: {
                     StorebenchWorkflowHeading(title: row.name)
                 }, action: {
@@ -136,6 +139,8 @@ struct ConnectedAppCard: View {
                 }, action: {
                     StorebenchDisclosureButton(isExpanded: $materialExpanded) { Text("App material tools") }
                 })
+                ReleaseOverviewCard(title: "Release", overview: row.release, unavailable: unavailable || session == nil, compact: true,
+                                    identifier: "app.release." + row.id, open: { openApp("release") })
             }
             if syncMounted || expanded {
                 AppSyncCard(account: row.account, app: row.app, session: unavailable ? nil : session, changed: changed, openSource: { openApp($0) })

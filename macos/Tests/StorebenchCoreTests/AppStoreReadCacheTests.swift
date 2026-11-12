@@ -214,6 +214,23 @@ import Testing
         #expect(try await first.value == second.value)
         #expect(await held.calls == 1)
     }
+    @Test func oneExplicitPageRefreshSharesItsFreshnessBoundaryAcrossCards() async throws {
+        let cache = AppStoreReadCache(), reader = Reader()
+        _ = try await cache.read("synthetic/page-refresh") { try await reader.load() }
+        try await ScreenReads.reading(fresh: true) {
+            let boundary = AppStoreReadCache.refreshedSince
+            #expect(boundary != nil)
+            for _ in 0..<3 {
+                try await ScreenReads.reading(fresh: true) {
+                    #expect(AppStoreReadCache.refreshedSince == boundary)
+                    _ = try await cache.read("synthetic/page-refresh") { try await reader.load() }
+                }
+            }
+        }
+        #expect(await reader.calls == 2)
+        try await ScreenReads.reading(fresh: true) { _ = try await cache.read("synthetic/page-refresh") { try await reader.load() } }
+        #expect(await reader.calls == 3)
+    }
     @Test func cachedClientsSeparateAccountsAndFreshClientsAlwaysReadApple() async throws {
         let host = "release-read-cache.synthetic.test", cache = AppStoreReadCache()
         StubProtocol.handle(host) { _ in

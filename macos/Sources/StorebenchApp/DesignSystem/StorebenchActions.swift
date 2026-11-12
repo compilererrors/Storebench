@@ -1,6 +1,8 @@
 import StorebenchCore
 import SwiftUI
 
+struct StorebenchFullWidthAction: LayoutValueKey { static let defaultValue = false }
+
 /// Related controls wrap into complete rows while retaining the shared button footprint. The button rules are in docs/design-components.md.
 struct StorebenchActionGroup<Content: View>: View {
     var alignment: StorebenchFlow.Alignment = .leading
@@ -23,11 +25,28 @@ struct StorebenchDivider: View {
 struct StorebenchFormFooter<Content: View>: View {
     @ViewBuilder let content: () -> Content
     var body: some View {
-        VStack(spacing: StorebenchTheme.space(3)) {
+        VStack(spacing: StorebenchTheme.space(2)) {
             StorebenchDivider()
             StorebenchActionGroup(alignment: .trailing) { content() }
         }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
             .layoutValue(key: StorebenchCardFooterKey.self, value: true)
+    }
+}
+
+/// Choice chips, such as date presets: natural-width buttons in one row that wraps when narrow.
+struct StorebenchChipGroup<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    var body: some View { StorebenchFlow(spacing: 8) { content() }.environment(\.naturalActions, true) }
+}
+
+/// A record line: its copy on the leading track and its commands on the trailing row action track, under the copy
+/// when the row is narrow, so commands in a list line up on one edge.
+struct StorebenchActionRow<Copy: View, Actions: View>: View {
+    var stackAt: CGFloat = 480
+    @ViewBuilder let copy: () -> Copy
+    @ViewBuilder let actions: () -> Actions
+    var body: some View {
+        StorebenchHeader(stackAt: stackAt) { copy() } actions: { StorebenchActionGroup(alignment: .trailing) { actions() } }
     }
 }
 
@@ -67,7 +86,10 @@ private struct StorebenchActionLayout: Layout {
     /// Every command in every group takes the one shared button width, so groups line up with each other on the grid.
     private func geometry(_ width: CGFloat, subviews: Subviews) -> ComponentLayout.ActionGrid {
         let cell = min(max(0, width), StorebenchTheme.actionWidth)
-        return ComponentLayout.actionGrid(width: width, heights: subviews.map { $0.sizeThatFits(ProposedViewSize(width: cell, height: nil)).height }, trailing: trailing, cell: cell)
+        let fullWidth = Set(subviews.indices.filter { subviews[$0][StorebenchFullWidthAction.self] })
+        return ComponentLayout.actionGrid(width: width, heights: subviews.indices.map {
+            subviews[$0].sizeThatFits(ProposedViewSize(width: fullWidth.contains($0) ? width : cell, height: nil)).height
+        }, trailing: trailing, cell: cell, fullWidth: fullWidth)
     }
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
         let width = proposal.usableWidth()

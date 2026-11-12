@@ -35,7 +35,7 @@ struct KeywordsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             Card(title: "1. Collect keyword ideas", subtitle: "Your shortlist of words to test in App Store keywords. Save research, mark promising words Ready to try, then use them in Localizations.", help: "keywords") {
                 StorebenchMetricGrid(maximumColumns: 3) {
                     Fact(title: "Your ideas", value: "\(notebook?.items.count ?? 0)", hint: "A private shortlist for this app")
@@ -52,7 +52,9 @@ struct KeywordsView: View {
                     Text("Your shortlist holds the maximum of \(Keywords.limit) ideas. Remove ideas to add new ones.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
                 }
             }
-            Card(title: "2. Organize and select", subtitle: "Choose a listing language, inspect your ideas and select the terms you want to use. Selections are kept when you filter or change pages.") {
+            Card(title: "2. Organize and select", subtitle: "Choose a listing language, inspect your ideas and select the terms you want to use. Selections are kept when you filter or change pages.", accessory: AnyView(
+                StorebenchIconButton(title: "Clear Keyword Filters", icon: "refresh") { query = ""; locale = ""; territory = ""; status = ""; source = "" }
+            )) {
                 StorebenchFilterBar {
                     StorebenchTextField("Find an idea", text: $query, hint: "Search a term, source note or reference.")
                     StorebenchPicker("Listing language", selection: $locale, hint: "Use one language when composing listing keywords.") { SelectionOption("All listing languages", value: ""); selectionOptions(StoreLocales.codes) { SelectionOption("\(StoreLocales.name($0)) · \($0)", value: $0) } }
@@ -66,7 +68,6 @@ struct KeywordsView: View {
                         StorebenchPicker("Status", selection: $status, hint: "You assign each idea's status.") { SelectionOption("All statuses", value: ""); selectionOptions(KeywordIdea.statuses) { SelectionOption($0.1, value: $0.0) } }
                         StorebenchPicker("Source", selection: $source, hint: "Where you found the idea.") { SelectionOption("All sources", value: ""); selectionOptions(KeywordIdea.sources) { SelectionOption($0.1, value: $0.0) } }
                     }
-                    Button("Clear Filters") { query = ""; locale = ""; territory = ""; status = ""; source = "" }
                 }
                 StorebenchCollection(items: filtered, title: { $0.term }, subtitle: { ideaSummary($0) },
                     sorts: [.init(id: "location", label: "Language / territory", less: { ($0.locale + $0.territory) < ($1.locale + $1.territory) }),
@@ -280,8 +281,7 @@ struct KeywordRows: View {
                                         }
                                         StorebenchTableCell(text: "\(KeywordIdea.sources.first { $0.0 == row.source }?.1 ?? row.source)\n\(row.observedOn)\n\(row.reference.isEmpty ? "No source reference" : row.reference)\n\(row.notes)", width: widths[picker ? 2 : 4], lines: picker ? 3 : 4)
                                         if !picker {
-                                            Group { if let edit { Button("Edit Idea") { edit(row) } } }
-                                                .frame(height: 42).padding(.horizontal, 12).frame(width: widths[5])
+                                            StorebenchTableActions(width: widths[5]) { if let edit { Button("Edit Idea") { edit(row) } } }
                                         }
                                     }
                                 }

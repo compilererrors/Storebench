@@ -38,7 +38,7 @@ import Testing
         #expect(throws: MediaCardFailure.invalid) { try MediaCardTranslation.translated(set, to: "xx", translations: ["a", "b", "c"]) }
         let long = String(repeating: "n", count: MediaCards.nameLimit)
         let name = MediaCardTranslation.name(long, language: "pt-BR")
-        #expect(name.utf16.count <= MediaCards.nameLimit && name.hasSuffix(" · Brazilian Portuguese"))
+        #expect(name.utf16.count <= MediaCards.nameLimit && name.hasSuffix(" · Portuguese (Brazil)"))
     }
 
     @Test func languageIsSavedAndSetsWithoutOneStillOpen() async throws {

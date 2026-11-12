@@ -15,7 +15,7 @@ struct TestFlightGuideView: View {
     private var readKey: String { Self.readKey(accountId: account.id, appId: app.id) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             if let facts {
                 // A failed refresh is said here, above the steps it leaves as they were, in a track kept for it.
                 StorebenchFeedback(text: Self.refreshStatus(problem: problem, reading: reading), height: 40, error: !problem.isEmpty)

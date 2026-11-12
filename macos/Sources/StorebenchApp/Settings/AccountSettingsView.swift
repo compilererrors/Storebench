@@ -25,7 +25,7 @@ struct AccountSettings: View {
                     }
                 }
                 if case .unlocked(let accounts) = model.state {
-                    StorebenchCollection(items: accounts, title: { $0.name }, empty: "No Apple account connected yet. Choose Connect Account… to add one.") { account in
+                    StorebenchCollection(items: accounts, title: { $0.name }, headerActions: { AnyView(accountOptions($0)) }, empty: "No Apple account connected yet. Choose Connect Account… to add one.") { account in
                         VStack(alignment: .leading, spacing: 10) {
                             StorebenchTextSlot(text: account.name, height: StorebenchTheme.measure("sectionTitle"), font: .sbHeadline)
                             StorebenchTextSlot(text: "\(account.keyType == "team" ? "Team API key" : "Individual key") · Key ID \(account.keyId) · \(account.appIds.count) apps", height: 36, font: .sbCaption, color: StorebenchTheme.muted)
@@ -42,13 +42,14 @@ struct AccountSettings: View {
                     }
                 }
             }
+            .settingsSearchAnchor("accounts-connected")
             StorebenchFormSection("Credential storage and connection help") {
                 if model.writer.usesKeychain { Text("If macOS asks to access Storebench credentials, choose Always Allow. After a failed Keychain request, unlock your login keychain and choose Retry Keychain Access for the affected account.") }
                 else { Text("Credentials are encrypted with your Storebench password. Storebench does not access Keychain. Sign out and unlock again if storage protection changed in another session.") }
                 Text("Reconnect This Key verifies the original Key ID and issuer, then replaces its saved private key. Saved app history and drafts remain available. To use a different Key ID, connect another account.")
                 Text("An individual key uses your app access. A team key needs its Issuer ID. If Apple refuses the connection, check in App Store Connect: the key's role and active status under Users and Access → Integrations (an individual key under your name → Edit Profile), app access under Users and Access → People and agreements under Business → Agreements.")
                 StorebenchActionLink("Open in Browser", destination: URL(string: "https://appstoreconnect.apple.com")!, help: "Open App Store Connect")
-            }.font(.sbCallout)
+            }.font(.sbCallout).settingsSearchAnchor("accounts-help")
         }.storebenchWorking(working != nil)
             .task(id: recoveryRequest?.id) {
                 guard let accountId = recoveryRequest?.action.scope?.accountId,
@@ -56,7 +57,7 @@ struct AccountSettings: View {
                 await Task.yield(); guard !Task.isCancelled else { return }; scroll.scrollTo("account-\(accountId)", anchor: .top)
             }
             .trackUnsavedChanges(false, busy: working != nil)
-            .sheet(isPresented: $connecting) {
+        .sheet(isPresented: $connecting) {
                 ConnectAccountView(model: model, canCancel: true, asDialog: true) { connecting = false }
             }
             .sheet(item: $reconnecting) { account in
@@ -69,7 +70,9 @@ struct AccountSettings: View {
             .help("Checks the key with Apple and updates the list of apps it can reach.")
         Button("Reconnect This Key") { if working == nil { reconnecting = account } }
             .storebenchWorking(working != nil)
-        StorebenchMenu("More", icon: "settings") {
+    }
+    private func accountOptions(_ account: Account) -> some View {
+        StorebenchIconMenu(title: "Account Options · " + account.name) {
             Button("Test Connection") { Task { await run(account, action: "test") } }.help("Verify the key with Apple without changing the app list.")
             Button("Refresh Apps") { Task { await run(account, action: "refresh") } }.help("Update the list of apps this key can reach. Saved app history stays available.")
             if model.writer.usesKeychain { Button("Retry Keychain Access") { Task { await run(account, action: "retry") } }.help("Ask macOS again for access to this key in Keychain.") }
@@ -116,9 +119,10 @@ struct ReconnectAccountView: View {
                 StorebenchTextSlot(text: "Key ID \(account.keyId)\(account.issuerId.map { " · Issuer ID \($0)" } ?? "")", height: 54, font: .sbCallout)
                 Text("Choose the original downloaded P-256 .p8 file for this key. Storebench verifies app access before replacing the private key in your selected encrypted credential storage. Saved app selections, history and drafts remain available.")
                     .font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
-                HStack {
-                    Button("Choose File…") { if !working { choosing = true } }.storebenchWorking(working)
+                StorebenchActionRow {
                     Text(fileName.isEmpty ? "No private key selected" : fileName).lineLimit(1).truncationMode(.middle).help(fileName.isEmpty ? "Choose the original App Store Connect API key file" : fileName)
+                } actions: {
+                    Button("Choose File…") { if !working { choosing = true } }.storebenchWorking(working)
                 }
                 StorebenchFeedback(text: status, height: 64)
                 RecoveryActions(code: issueCode)

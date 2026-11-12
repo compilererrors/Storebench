@@ -8,7 +8,7 @@ struct TransferView: View {
     let account: Account, app: Account.App, session: WorkspaceSession?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             TransferCard(account: account, app: app, session: session, kind: .languages, title: "Language text",
                          subtitle: "Every language's version and app information text. Importing adds missing languages and saves the text as drafts.")
             FastlaneMetadataCard(account: account, app: app, session: session)
@@ -54,10 +54,7 @@ struct TransferCard: View {
     private func content(_ model: TransferEditor) -> AnyView {
         AnyView(VStack(alignment: .leading, spacing: 16) {
             StorebenchChoicePicker("Export format", selection: Binding(get: { model.format }, set: { model.setFormat($0) }), options: [(TransferFormat.csv, "CSV"), (TransferFormat.json, "JSON")]).storebenchFormColumn().storebenchWorking(!model.ready)
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) { exportButtons(model); importButton(model) }
-                VStack(alignment: .trailing, spacing: 12) { exportButtons(model); StorebenchActionGroup { importButton(model) } }
-            }
+            StorebenchActionGroup(alignment: .trailing) { exportButtons(model); importButton(model) }
             StorebenchTextSlot(text: model.status, height: 64, font: .sbCallout, color: StorebenchTheme.muted, live: true)
             if let preview = model.preview {
                 ImportChangesReview(title: "Unsaved import · \(preview.changes.count) changes from \(preview.totalRows) rows\(preview.added > 0 ? " · \(preview.added) new languages" : "")", preview: preview, savedAt: nil)
@@ -71,7 +68,7 @@ struct TransferCard: View {
                 }
                 if model.saveBlocked {
                     Text("Read the latest saved values and preview this file again. Review the new comparisons before importing.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
-                    Button("Preview Again") { operation = Task { _ = await model.recheck() } }.help("Preview This File Again").accessibilityLabel("Preview This File Again").storebenchWorking(!model.ready)
+                    StorebenchActionGroup { Button("Preview Again") { operation = Task { _ = await model.recheck() } }.help("Preview This File Again").accessibilityLabel("Preview This File Again").storebenchWorking(!model.ready) }
                 }
             }
             if let receipt = model.lastSave {
@@ -82,7 +79,7 @@ struct TransferCard: View {
         })
     }
     private func exportButtons(_ model: TransferEditor) -> some View {
-        StorebenchActionGroup(alignment: .trailing) {
+        Group {
             Button("Export…") { export(model, template: false, apple: false) }
             if kind == .prices { Button("Export Apple Prices…") { export(model, template: false, apple: true) } }
             Button("Template…") { export(model, template: true, apple: false) }
@@ -137,11 +134,7 @@ private struct ImportChangesReview: View {
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }.frame(height: 420)
-                HStack(spacing: 12) {
-                    if selection.current > 1 { Button("Previous") { page = max(1, selection.current - 1) } }
-                    Text("Page \(selection.current) of \(selection.pages)").font(.sbCaption).frame(minWidth: 110)
-                    if selection.current < selection.pages { Button("Next") { page = min(selection.pages, selection.current + 1) } }
-                }
+                if selection.pages > 1 { StorebenchPagination(page: selection.current, count: selection.pages) { page = $0 } }
             }
         }
     }

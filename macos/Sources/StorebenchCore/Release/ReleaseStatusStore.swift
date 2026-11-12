@@ -105,6 +105,7 @@ extension WorkspaceSession {
                   let plan = try? releasePlan(accountId: candidate.accountId, appId: candidate.appId), plan.token == candidate.token else { continue }
             if let saved = rememberedReleaseReadiness(accountId: plan.accountId, appId: plan.appId, planToken: plan.token), now().timeIntervalSince(saved.checkedAt) < maxAge { continue }
             do { try await Task.sleep(for: spacing) } catch { return }
+            guard AppleRequestBudget.allowsReadingAhead(keyId: account.keyId) else { continue }
             do {
                 let client = try readClient(for: account)
                 let value = try await releaseReadiness(account: account, appId: plan.appId, revisionId: plan.sourceRevisionId, planToken: plan.token, client: client)

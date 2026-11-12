@@ -31,7 +31,7 @@ private struct SavedVersionDetailCard: View {
         Group {
                 VStack(alignment: .leading, spacing: 12) {
                     StorebenchTextSlot(text: status.isEmpty ? detail == nil ? "Loading saved version material…" : "\(summary.languages) saved languages. Text and media belong to this snapshot." : status, height: 48, font: .sbCallout, color: StorebenchTheme.muted, live: true)
-                    if !status.isEmpty && available && session != nil { Button("Retry Version Details") { if !reading { attempt += 1 } }.storebenchWorking(reading) }
+                    if !status.isEmpty && available && session != nil { StorebenchActionGroup { Button("Retry Version Details") { if !reading { attempt += 1 } }.storebenchWorking(reading) } }
                     if let detail {
                         StorebenchCollection(items: detail.languages.map { StorebenchCollectionEntry(id: $0.id, value: $0) }, title: { $0.value.label }, empty: "No saved languages in this version.") { entry in
                             SavedVersionLanguageView(language: entry.value, session: session, available: available && !reading, enlarge: showGallery)
@@ -80,9 +80,9 @@ private struct SavedVersionLanguageView: View {
                             ForEach(Array(set.screenshots.enumerated()), id: \.element.id) { index, shot in
                                 let label = "Screenshot \(index + 1)"
                                 if available {
-                                    Button { enlarge(set.screenshots, shot) } label: {
+                                    StorebenchMediaButton(title: "Enlarge " + label, action: { enlarge(set.screenshots, shot) }) {
                                         ArchivedScreenshotThumbnail(shot: shot, session: session, imageHeight: 160, caption: label).frame(width: 256)
-                                    }.buttonStyle(StorebenchPressStyle()).accessibilityLabel("Enlarge " + label)
+                                    }
                                 } else { ArchivedScreenshotThumbnail(shot: shot, session: nil, imageHeight: 160, caption: label).frame(width: 256) }
                             }
                         }

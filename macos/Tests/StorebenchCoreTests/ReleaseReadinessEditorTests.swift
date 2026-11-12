@@ -58,6 +58,25 @@ import Testing
         // Once Apple shows the change, the frequent checks after it stop.
         state = "WAITING_FOR_REVIEW"; #expect(await model.refresh()); #expect(model.sinceWrite == nil && model.nextCheck == .seconds(60))
     }
+    @Test func aPublishedSectionRefreshesTheChecklistEvenWhenTheVersionStateIsUnchanged() async throws {
+        let owner = try await owner(), plan = try #require(owner.plan), base = try snapshot(plan, state: "PREPARE_FOR_SUBMISSION")
+        var published = false, reads = 0, probes = 0
+        let model = ReleaseReadinessEditor(planEditor: owner, read: { _ in
+            reads += 1
+            let steps = base.steps.map { step in
+                step.id == "privacy" ? ReleaseReadiness.Step(id: step.id, label: step.label, detail: published ? "Published" : "Not checked", href: step.href, action: step.action, state: published ? .ready : .manual, territories: nil, guideHref: nil) : step
+            }
+            return ReleaseReadinessSnapshot(scope: base.scope, plan: plan, steps: steps, materialSignature: published ? "synthetic-published" : "synthetic-unchecked", targetVersionId: base.targetVersionId, targetState: base.targetState)
+        }, probe: { _ in probes += 1; return "PREPARE_FOR_SUBMISSION" }, materialSignature: { _ in published ? "synthetic-published" : "synthetic-unchecked" })
+        #expect(await model.refresh())
+        #expect(model.snapshot?.steps.first { $0.id == "privacy" }?.state == .manual)
+        published = true
+        #expect(await model.sync())
+        #expect(reads == 2 && probes == 0 && model.snapshot?.steps.first { $0.id == "privacy" }?.state == .ready)
+        #expect(await model.sync() == false)
+        #expect(reads == 2 && probes == 1, "A stable answer and version should reuse the saved checklist")
+        model.retire()
+    }
     @Test func duplicateStartsHaveOneReadAndNeverChangeThePlanInputs() async throws {
         let plan = try await owner(), value = try snapshot(#require(plan.plan)), gate = Gate(); var reads = 0
         let model = ReleaseReadinessEditor(planEditor: plan, read: { _ in reads += 1; await gate.hold(); return value })

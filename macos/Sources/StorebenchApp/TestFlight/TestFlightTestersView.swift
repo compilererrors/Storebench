@@ -24,21 +24,22 @@ struct TestFlightTestersView: View {
     private var busy: Bool { working || preparing || publishing }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             ReviewPanel(account: account, app: app, session: session, review: $review, done: { if review?.state == "complete" { Task { await load(cursor: currentCursor) } } }, busyChanged: { publishing = $0 }, syncConfirmation: true).storebenchWorking(!confirmed || working || preparing)
             Card(title: "Find a tester", subtitle: "Search Apple's testers within this app by exact email, or clear the filter to see all app testers.") {
                 StorebenchInputActions {
                     StorebenchTextField("Tester email", text: $email)
                 } actions: {
-                    StorebenchFlow(spacing: 8) {
-                    Button("Find Tester") { Task { await load(emailFilter: email) } }.fixedSize()
-                    if !email.isEmpty || !activeEmail.isEmpty { Button("Clear Filter") { email = ""; Task { await load(emailFilter: "") } }.fixedSize() }
-                    Button("Refresh") { Task { await load(cursor: currentCursor) } }.fixedSize()
+                    StorebenchActionGroup {
+                        Button("Find Tester") { Task { await load(emailFilter: email) } }
+                        if !email.isEmpty || !activeEmail.isEmpty { Button("Clear Filter") { email = ""; Task { await load(emailFilter: "") } } }
                     }
                 }
             }
             .storebenchWorking(busy)
-            Card(title: "All Testers", subtitle: state == "ready" ? "\(testers.count) testers on this page. Each change requires a separate Publish review." : "Testers in this app, including group and direct build access.") {
+            Card(title: "All Testers", subtitle: state == "ready" ? "\(testers.count) testers on this page. Each change requires a separate Publish review." : "Testers in this app, including group and direct build access.", accessory: AnyView(
+                StorebenchIconButton(title: "Refresh Testers", icon: "refresh") { Task { await load(cursor: currentCursor) } }.storebenchWorking(busy)
+            )) {
                 StorebenchFeedback(text: status, height: 40)
                 switch state {
                 case "failed": EmptyView()
@@ -57,10 +58,9 @@ struct TestFlightTestersView: View {
                 default: StorebenchCollectionPlaceholder()
                 }
                 if currentCursor != nil || (state == "ready" && nextCursor != nil) {
-                    HStack(spacing: 12) {
-                        if currentCursor != nil { Button("First Page") { Task { await load() } }.fixedSize() }
-                        if state == "ready", let nextCursor { Button("Next Page") { Task { await load(cursor: nextCursor) } }.fixedSize() }
-                        Spacer()
+                    StorebenchActionGroup {
+                        if currentCursor != nil { Button("First Page") { Task { await load() } } }
+                        if state == "ready", let nextCursor { Button("Next Page") { Task { await load(cursor: nextCursor) } } }
                     }
                 }
             }

@@ -13,7 +13,7 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if model.isTerminating { ProgressView("Finishing work before quitting…") }
+            if model.isTerminating { StorebenchLoadingStatus(message: "Finishing work before quitting…").frame(maxWidth: .infinity, maxHeight: .infinity) }
             else { content }
         }.id(model.session.map(ObjectIdentifier.init))
             .trackUnsavedChanges(false, busy: model.state == .closing)
@@ -26,7 +26,12 @@ struct RootView: View {
             .environment(\.shortcutActions, shortcutActions)
             .focusedSceneValue(\.shortcutActions, shortcutActions).focusedSceneValue(\.shortcutProtection, protection)
             .modifier(AISetupIntroduction(model: model, recovery: recovery))
-            .onChange(of: scenePhase) { if scenePhase == .active { Task { await model.reloadEditingPreferences() } } }
+            .onChange(of: scenePhase) {
+                if scenePhase == .active { Task { await model.reloadEditingPreferences(); await model.refreshBackgroundReads() } }
+            }
+            .onChange(of: protection.policy.navigationDecision) {
+                if protection.policy.navigationDecision == .ready { Task { await model.reloadAccounts(automatically: true) } }
+            }
     }
 
     private func recover(_ action: RecoveryGuidance.Action) {
@@ -41,17 +46,19 @@ struct RootView: View {
 
     @ViewBuilder private var content: some View {
         switch model.state {
-        case .loading: ProgressView("Opening Storebench…")
-        case .unlocking: ProgressView(model.loadingSampleData ? "Loading sample data…" : "Unlocking saved data…")
-        case .closing: ProgressView("Signing out after active work finishes…")
+        case .loading: StorebenchLoadingStatus(message: "Opening Storebench…").frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .unlocking: StorebenchLoadingStatus(message: model.loadingSampleData ? "Loading sample data…" : "Unlocking saved data…").frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .closing: StorebenchLoadingStatus(message: "Signing out after active work finishes…").frame(maxWidth: .infinity, maxHeight: .infinity)
         case .chooseStorage: StorageChoiceView(model: model)
         case .migrateStorage: PasswordStorageMigrationView(model: model)
         case .notSetUp: SetupView(model: model)
         case .failed(let message):
             StorebenchAuthScreen {
                 StorebenchAuthCard(title: "Saved data could not be opened", message: message) {
-                    Button("Try Again") { Task { await model.retryStart() } }.buttonStyle(StorebenchButtonStyle(.primary))
-                    if model.storageMode == .keychain { Button("Choose Protection") { model.reviewStorageChoice() }.help("Choose Storage Protection").accessibilityLabel("Choose Storage Protection") }
+                    StorebenchActionGroup {
+                        Button("Try Again") { Task { await model.retryStart() } }.buttonStyle(StorebenchButtonStyle(.primary))
+                        if model.storageMode == .keychain { Button("Choose Protection") { model.reviewStorageChoice() }.help("Choose Storage Protection").accessibilityLabel("Choose Storage Protection") }
+                    }
                 }
             }
         case .locked: UnlockView(model: model)

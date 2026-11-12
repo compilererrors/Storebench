@@ -1,6 +1,18 @@
 import StorebenchCore
 import SwiftUI
 
+/// The current Apple state replaces submission commands once Apple has the version.
+struct ReleaseSubmittedStatus: View {
+    let version, state: String
+    var body: some View {
+        Card(title: AppStoreNames.state(state), subtitle: version) {
+            StorebenchNotice(title: "Submitted to App Review", description: "This version has already been submitted. You do not need to add it for review again.", icon: "check") { EmptyView() }
+            StorebenchFact(label: "App Store Connect", value: AppStoreNames.state(state), done: true)
+            StorebenchStepLink(sentence: "Your submission is with Apple. Continue to see how this version will be released in", phaseNumber: 7, phaseTitle: "App Store Version Release")
+        }.storebenchControlID("release.submitted-status")
+    }
+}
+
 /// The planned version's release status per part and language, from the last check, with the step that opens each fix.
 /// It only reads what is saved on this Mac; Release and Quick Release check App Store Connect again.
 struct ReleaseStatusCard: View {
@@ -38,11 +50,10 @@ struct ReleaseStatusCard: View {
         }
     }
 
-    private func row(_ title: String, detail: String, state: ReleaseReadiness.State, separator: Bool, @ViewBuilder action: () -> some View) -> some View {
-        let command = action()
-        return StorebenchStatusRow(title: title, detail: detail, separator: separator) {
+    private func row(_ title: String, detail: String, state: ReleaseReadiness.State, separator: Bool, @ViewBuilder action: @escaping () -> some View) -> some View {
+        StorebenchStatusRow(title: title, detail: detail, separator: separator) {
             StorebenchTextSlot(text: state.label, height: StorebenchTheme.controlHeight, font: .sbCaption.weight(.semibold),
                                color: state == .blocked ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted, centered: true)
-        } action: { command } details: { EmptyView() }
+        } action: { action() } details: { EmptyView() }
     }
 }

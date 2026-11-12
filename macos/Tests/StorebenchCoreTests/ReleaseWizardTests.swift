@@ -17,6 +17,27 @@ struct ReleaseWizardTests {
         #expect(ReleaseWizard.neighbors("release").previous == "submit" && ReleaseWizard.neighbors("release").next == nil)
         #expect(ReleaseWizard.neighbors("unknown").previous == nil && ReleaseWizard.neighbors("unknown").next == nil)
     }
+    @Test func submissionListsEarlierConfirmedProblemsAndDoesNotInventMissingManualAnswers() {
+        let checks = [step("plan", .ready), step("local:sv", .blocked), step("copyright", .blocked), step("build", .ready),
+                      step("review-info", .blocked), step("age-rating", .unknown), step("privacy", .manual), step("tax", .manual),
+                      step("submission", .review), step("release", .blocked)]
+        let guide = ReleaseGuide.guide(checks, appleState: "PREPARE_FOR_SUBMISSION")
+        #expect(ReleaseWizard.submissionProblems(guide).map(\.id) == ["local:sv", "copyright", "review-info"])
+        let submitted = ReleaseGuide.guide(checks, appleState: "WAITING_FOR_REVIEW")
+        #expect(submitted.submitted && ReleaseWizard.submissionProblems(submitted).isEmpty)
+        #expect(submitted.phases.first { $0.id == "submit" }?.locked == true)
+        #expect(ReleaseWizard.initialPhase(submitted) == "submit")
+    }
+    @Test func theFirstMissingReviewContactSelectsItsActualInput() {
+        var check = step("review-info", .blocked)
+        for (label, field) in [("User name", "demoAccountName"), ("Password", "demoAccountPassword"), ("First name", "contactFirstName"), ("Last name", "contactLastName"), ("Phone number", "contactPhone"), ("Email", "contactEmail")] {
+            check.issues = [.init(field: "review", message: label, section: "missing")]
+            #expect(ReleaseWizard.reviewInformationField(check) == field)
+        }
+        check.issues = [.init(field: "review", message: "Attachment (still processing at Apple)", section: "missing")]
+        #expect(ReleaseWizard.reviewInformationField(check) == nil)
+        #expect(ReleaseWizard.reviewInformationField(nil) == nil)
+    }
 
     @Test func theWizardOpensWhereActionIsNeeded() {
         #expect(ReleaseWizard.initialPhase(ReleaseGuide.guide(nil)) == "plan")
@@ -59,6 +80,18 @@ struct ReleaseWizardTests {
         #expect(scope([step("version", .ready), step("copyright", .ready)]) == .metadata)
     }
 
+    @Test func aCompletedTextSyncCannotKeepTheRemainingCopyrightFormHidden() throws {
+        let guide = ReleaseGuide.guide([step("version", .ready), step("apple-text:en-GB", .ready), step("apple-info:en-GB", .ready),
+                                        step("media:en-GB", .review), step("copyright", .blocked)])
+        let phase = try #require(guide.phases.first { $0.id == "send" })
+        #expect(ReleaseWizard.sendScope(phase, preferred: .metadata) == .versionCopyright)
+        #expect(ReleaseWizard.sendScope(phase, preferred: .release) == .versionCopyright)
+        let pending = ReleaseGuide.guide([step("version", .ready), step("apple-text:en-GB", .blocked), step("copyright", .blocked)])
+        #expect(ReleaseWizard.sendScope(try #require(pending.phases.first { $0.id == "send" }), preferred: .versionCopyright) == .versionCopyright)
+        let complete = ReleaseGuide.guide([step("version", .ready), step("apple-text:en-GB", .ready), step("media:en-GB", .ready), step("copyright", .ready)])
+        #expect(complete.phases.first { $0.id == "send" }?.status == .done)
+    }
+
     @Test func guidesComeFirstAndEveryAppStoreConnectPageHasItsOwnMenu() {
         #expect(AppNavigation.Section.release.title == "Release")
         #expect(AppNavigation.Section.release.rawValue == "Version setup")
@@ -83,7 +116,7 @@ struct ReleaseWizardTests {
         local.issues = [.init(field: "whatsNew", message: "What's new: add text", section: "text"), .init(field: "keywords", message: "Keywords: 3 bytes over the limit", section: "text"),
                         .init(field: "screenshots", message: "No screenshots selected locally. Reuse images or check inherited screenshots in Apple.", section: "screenshots")]
         let shown = ReleaseWizard.presented(local)
-        #expect(shown.label == "British English (en-GB) · Text and Screenshots" && shown.action == "Edit Language" && shown.issues.map(\.field) == ["whatsNew", "keywords", "screenshots"])
+        #expect(shown.label == "English (U.K.) (en-GB) · Text and Screenshots" && shown.action == "Edit Language" && shown.issues.map(\.field) == ["whatsNew", "keywords", "screenshots"])
         #expect(shown.issues.map(\.message) == ["What’s New in This Version is empty. Add text.", "Keywords is 3 bytes over Apple’s limit. Shorten it.", "No screenshots yet. Add screenshots for this language."])
         #expect(ReleaseReadiness.fieldAnchor("en-GB", "whatsNew") != ReleaseReadiness.fieldAnchor("en-GB", "screenshots"))
     }
@@ -92,7 +125,7 @@ struct ReleaseWizardTests {
         var text = step("apple-text:en-GB", .blocked)
         text.issues = [.init(field: "promotionalText", message: "Promotional Text", section: "missing"), .init(field: "keywords", message: "Keywords", section: "missing")]
         let shown = ReleaseWizard.presented(text)
-        #expect(shown.label == "British English (en-GB) · Version text" && shown.issues.isEmpty)
+        #expect(shown.label == "English (U.K.) (en-GB) · Version text" && shown.issues.isEmpty)
         #expect(shown.detail == "Only on this Mac, not in App Store Connect yet: Promotional Text, Keywords. Prepare Review below lists the changes, and Save uploads them.")
         var media = step("media:en-GB", .blocked)
         media.issues = [.init(field: "screenshots", message: "Mac screenshots are 2000 × 1220 px. Apple accepts 2880 × 1800 px.", section: "rejected"),

@@ -20,8 +20,8 @@ public struct PricingService: Sendable {
     }
 
     /// Reads Apple's price schedule and saves it; Apple refusing the key is `PricingFailure.access`.
-    public func refresh() async throws {
-        do { _ = try await store.refreshPricing(account: account, appId: appId, client: try await client(account), now: Date()) }
+    public func refresh(onlyIfNeeded: Bool = false) async throws {
+        do { try await store.refreshCountryPrices(account: account, appId: appId, client: try await client(account), force: !onlyIfNeeded, now: Date()) }
         catch AppStoreConnectClient.Failure.status(let code) where code == 401 || code == 403 { throw PricingFailure.access }
     }
 

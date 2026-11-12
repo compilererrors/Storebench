@@ -7,7 +7,7 @@ struct MessageView: View {
     var body: some View {
         StorebenchAuthScreen {
             StorebenchAuthCard(title: title, message: message) {
-                Button(action.0, action: action.1).buttonStyle(StorebenchButtonStyle(.primary))
+                StorebenchActionGroup { Button(action.0, action: action.1).buttonStyle(StorebenchButtonStyle(.primary)) }
             }
         }
     }
@@ -23,7 +23,7 @@ struct UnlockView: View {
                 if model.lockMode != .device { StorebenchSecureField("Storebench password", text: $password).onSubmit(unlock) }
                 StorebenchFeedback(text: model.lastError, error: true)
                 if model.lockMode == .device || password.utf16.count >= 12 {
-                    Button(model.requiresDeviceAuthentication ? "Unlock with Your Mac" : model.lockMode == .device ? "Open Saved Data" : "Unlock", action: unlock).buttonStyle(StorebenchButtonStyle(.primary))
+                    StorebenchActionGroup { Button(model.requiresDeviceAuthentication ? "Unlock with Your Mac" : model.lockMode == .device ? "Open Saved Data" : "Unlock", action: unlock).buttonStyle(StorebenchButtonStyle(.primary)) }
                 } else { Text("Your Storebench password has at least 12 characters.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
             }
         }

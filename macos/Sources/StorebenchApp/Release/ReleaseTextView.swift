@@ -125,6 +125,12 @@ struct ReleaseTextView: View {
         .onAppear { active = true }
         .onDisappear { active = false; operation?.cancel() }
         .trackUnsavedChanges(dirty, busy: working, problem: { problem ? "Release text across languages: " + status : nil }, onSave: { await save() })
+        .pageRefreshParticipant("release-text/" + plan.token, priority: -5,
+            state: { .init(dirty: dirty, busy: working, signature: JSONText.object(values.keys.sorted().map { key in
+                (key, .object(ReleaseText.fields.map { ($0, .string(values[key]?[$0] ?? "")) }))
+            }).sha256) }, save: { await save() }, discard: {
+                guard !working else { return false }; resetValues(); resetReview(); return !dirty
+            }, refresh: { await load(); return !failed })
     }
     private func resetReview() { latest = nil; latestPlan = nil; status = ""; problem = false }
     private func resetValues() { values = Dictionary(uniqueKeysWithValues: rows.map { ($0.locale, $0.values) }); targets = Set(destinations.map(\.locale)); copied = [:] }

@@ -44,8 +44,9 @@ struct PricingStrategyPicker: View {
     @Binding var selection: PriceStrategy
     let profiles: [PricingProfile]
     var body: some View {
+        StorebenchOptionGroup(title: "Price Model", description: "Choose the model here. Only its settings and country preview are shown below.") {
         HStack(alignment: .top, spacing: StorebenchTheme.space(1)) {
-            StorebenchPicker("Price Strategy", selection: $selection, hint: selection.explanation(saved: profiles)) {
+            StorebenchPicker("Price Strategy", selection: $selection) {
                 SelectionOption(PricingStrategyText.appleName, value: PriceStrategy.apple).help(PricingStrategyText.appleExplanation)
                 selectionOptions(PricingMethod.builtIn) { SelectionOption($0.name, value: PriceStrategy.model($0)).help($0.explanation) }
                 SelectionOption(PricingStrategyText.manualName, value: PriceStrategy.manual).help(PricingStrategyText.manualExplanation)
@@ -53,7 +54,10 @@ struct PricingStrategyPicker: View {
                     SelectionOption("Profile: \(item.name) · \(PricingMethod.name(item.method))", value: PriceStrategy.profile(item.id)).help(PriceStrategy.profile(item.id).explanation(saved: profiles))
                 }
             }
+            .storebenchControlID("pricing.strategy")
             StorebenchInfoTip(title: "Price Strategy", text: PriceStrategy.guide).padding(.top, 22)
+        }
+        StorebenchAdaptiveText(text: selection.explanation(saved: profiles), font: .sbCaption, color: StorebenchTheme.muted)
         }
     }
 }
@@ -68,9 +72,11 @@ struct PricingStrategyPicker: View {
     private(set) var preview: (rows: [ModelPrice], warnings: [String], points: [String: String])?
     private(set) var previewing = false
     private(set) var problem = ""
+    private(set) var progress = ""
+    @ObservationIgnored private var calculation: Task<(rows: [ModelPrice], warnings: [String], points: [String: String])?, Error>?
     /// The inputs a calculation started from: any change to the strategy, profiles, prices, product or country makes a new generation,
     /// so an answer that arrives later can neither bring back an old preview nor replace the current feedback.
-    struct Ticket: Equatable { let generation: Int, owner: PriceOwner, base: String }
+    struct Ticket: Equatable, Sendable { let generation: Int, owner: PriceOwner, base: String }
     private var generation = 0
     /// The inputs the shown preview was calculated for.
     private(set) var previewed: Ticket?
@@ -81,7 +87,9 @@ struct PricingStrategyPicker: View {
     func model(base: String) -> PricingProfile? { strategy.profile(saved: profiles, base: base) }
     /// The country whose price anchors the change: a saved profile's guide country, else `base`.
     func anchor(base: String) -> String { model(base: base)?.guideTerritory ?? base }
-    func invalidate() { generation += 1; preview = nil; previewed = nil; problem = "" }
+    func invalidate() { calculation?.cancel(); calculation = nil; generation += 1; previewing = false; progress = ""; preview = nil; previewed = nil; problem = "" }
+    func cancel() { invalidate(); progress = "Calculation Cancelled. No Prices Were Changed." }
+    deinit { calculation?.cancel() }
 
     func loadProfiles(_ session: WorkspaceSession?) async { profiles = (try? await session?.pricingProfiles().profiles) ?? profiles }
 
@@ -105,15 +113,31 @@ struct PricingStrategyPicker: View {
 
     func calculate(_ owner: PriceOwner, base: String, territories: [Territory], account: Account, session: WorkspaceSession?) async {
         guard let session, !previewing else { return }
-        previewing = true; defer { previewing = false }
         let ticket = ticket(owner, base: base), strategy = strategy, typed = typed, guide = guide, model = model(base: base)
-        do {
-            let value: (rows: [ModelPrice], warnings: [String], points: [String: String])?
-            if strategy == .manual { value = try await session.manualPrices(owner, amounts: typed, countries: territories, account: account) }
-            else if let model {
+        await perform(ticket) { [weak self] in
+            let progress: @Sendable (String) async -> Void = { [weak self] message in
+                await MainActor.run { if let self, self.current(ticket) { self.progress = message } }
+            }
+            if strategy == .manual { return try await session.manualPrices(owner, amounts: typed, countries: territories, account: account, progress: progress) }
+            if let model {
                 let currency = territories.first { $0.code == model.guideTerritory }?.currency ?? ""
-                value = try await session.modelPrices(owner, profile: model.validated(), base: guide, countries: territories, guideCurrency: currency, account: account)
-            } else { value = nil }
+                return try await session.modelPrices(owner, profile: model.validated(), base: guide, countries: territories, guideCurrency: currency, account: account, progress: progress, estimated: { [weak self] rows in
+                    await MainActor.run { if let self, self.current(ticket) { self.preview = (rows, [], [:]); self.previewed = nil } }
+                })
+            }
+            return nil
+        }
+    }
+
+    func perform(_ ticket: Ticket, timeout: Duration = .seconds(60), operation: @escaping @Sendable () async throws -> (rows: [ModelPrice], warnings: [String], points: [String: String])?) async {
+        guard current(ticket), !previewing else { return }
+        previewing = true; problem = ""; progress = "Preparing Prices…"
+        let task = Task { try await PricingCalculation.run(timeout: timeout, operation: operation) }
+        calculation = task
+        defer { if current(ticket) { calculation = nil; previewing = false; if problem.isEmpty { progress = "" } } }
+        do {
+            let value = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+            try Task.checkCancellation()
             accept(value, for: ticket)
         } catch let failure as PricingFailure { if current(ticket) { problem = failure.message } }
         catch is CancellationError {}
@@ -138,12 +162,20 @@ struct PriceStrategyFields: View {
     /// Commands placed beside Preview Prices, such as Save as Country Drafts.
     var extra: AnyView? = nil
     private var currency: String { territories.first { $0.code == model.anchor(base: base) }?.currency ?? "" }
+    private var calculationSummary: String {
+        if !model.problem.isEmpty { return model.problem }
+        if !model.progress.isEmpty { return model.progress }
+        guard let preview = model.preview else { return "Preview Prices shows each country's price, rounded to Apple's prices, before anything is sent." }
+        guard model.previewed != nil else { return "Model amounts are shown below. Retry Preview Prices to finish checking Apple's price points." }
+        return "\(preview.points.count) of \(preview.rows.count) countries or regions have a matching Apple price; the others keep what Apple has."
+            + (preview.warnings.isEmpty ? "" : " " + preview.warnings.joined(separator: " "))
+    }
 
     var body: some View {
-        StorebenchCardSection(title: "Prices from a CSV File", description: model.strategy == .manual
-                              ? "Fill in your prices from a CSV file. Rows replace what is typed for those countries or regions."
-                              : "Importing a CSV file switches to \(PricingStrategyText.manualName) and fills in its prices. Nothing is sent until you review it.") {
+        if model.strategy == .manual {
+        StorebenchCardSection(title: "Prices from a CSV File", description: "Fill in your prices from a CSV file. Rows replace what is typed for those countries or regions.") {
             PricingCSVButtons(kind: .prices, territories: territories) { values in model.strategy = .manual; model.typed.merge(values) { _, imported in imported } }
+        }.storebenchControlID("pricing.csv")
         }
         if model.strategy != .apple {
             StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 230) {
@@ -152,13 +184,19 @@ struct PriceStrategyFields: View {
                     StorebenchTextField("Guide Price in \(WorkspaceSession.countryName(model.anchor(base: base)))\(currency.isEmpty ? "" : " (\(currency))")", text: Binding(get: { model.guide }, set: { model.guide = $0 }),
                                         hint: "The price the model starts from, such as 4.99.")
                         .storebenchNeeded(owner != nil && PricingMath.decimal(model.guide).map { $0 > 0 } != true ? "Enter the guide price." : nil)
+                        .storebenchControlID("pricing.guide-price")
                 }
                 StorebenchFieldCommands {
                     let unavailable = owner == nil ? "Choose what to price first." : model.previewUnavailable(base: base, territories: territories)
-                    StorebenchCommand(title: "Preview Prices", running: "Calculating…", busy: model.previewing, unavailable: unavailable, primary: model.preview == nil && unavailable == nil) {
-                        guard let owner else { return }
-                        Task { await model.calculate(owner, base: base, territories: territories, account: account, session: session) }
-                    }
+                    Button {
+                        if model.previewing { model.cancel() }
+                        else if let owner, unavailable == nil { Task { await model.calculate(owner, base: base, territories: territories, account: account, session: session) } }
+                    } label: { StorebenchBusyLabel("Preview Prices", loading: "Cancel Calculation", busy: model.previewing) }
+                        .buttonStyle(StorebenchButtonStyle(model.previewing ? .secondary : model.preview == nil && unavailable == nil ? .primary : .secondary))
+                        .disabled(!model.previewing && unavailable != nil)
+                        .help(model.previewing ? "Stop this calculation. No prices will be changed." : unavailable ?? "Calculate Country Prices")
+                        .accessibilityLabel(model.previewing ? "Cancel Calculation" : "Preview Prices")
+                        .storebenchControlID(model.previewing ? "pricing.cancel-calculation" : "pricing.preview-calculation")
                     if let extra { extra }
                 }
             }
@@ -171,11 +209,10 @@ struct PriceStrategyFields: View {
                     }
                 }
             }
-            StorebenchCardSection(title: "Prices by Country or Region", description: model.preview.map { "\($0.points.count) of \($0.rows.count) countries or regions have a matching Apple price; the others keep what Apple has." + ($0.warnings.isEmpty ? "" : " " + $0.warnings.joined(separator: " ")) }
-                                  ?? (model.problem.isEmpty ? "Preview Prices shows each country's price, rounded to Apple's prices, before anything is sent." : model.problem)) {
-                ForEach(model.preview?.rows ?? []) { row in
-                    StorebenchFact(label: WorkspaceSession.countryName(row.territory), value: row.amount.map { "\($0) \(row.currency)" } ?? (row.problem ?? "No price"), problem: model.preview?.points[row.territory] == nil)
-                }
+            StorebenchCardSection(title: "Prices by Country or Region") {
+                StorebenchFeedback(text: calculationSummary, height: 40, error: !model.problem.isEmpty)
+                    .storebenchControlID("pricing.calculation-status")
+                if let preview = model.preview { PricePreviewTable(rows: preview.rows, matching: model.previewing, unverified: model.previewed == nil) }
             }
         }
     }

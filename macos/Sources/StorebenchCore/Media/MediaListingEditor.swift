@@ -63,6 +63,7 @@ import Observation
         screenshots.contains { $0.editor.dirty } || previews.contains { $0.editor.dirty } ||
         screenshotSelections.contains { $0.dirty } || previewSelections.contains { $0.pending }
     }
+    public var partReady: Bool { workflow.ready(only: Set(registrations)) }
     public var canRemoveScreenshots: Bool { active && !busy && !catalogFailed && screenshots.allSatisfy { $0.editor.canEditScreenshots } }
     /// Clears every display size of this language without changing previews or deleting originals.
     public func removeAllScreenshots() {
@@ -131,6 +132,25 @@ import Observation
     public func retryCatalog() async {
         guard active, !busy, catalogFailed, !Task.isCancelled else { return }
         loading = true; await load()
+    }
+    /// Discards only unsaved layout inputs and pending selections; stored originals and drafts are untouched.
+    public func discardUnsaved() -> Bool {
+        guard active, !busy else { return false }
+        for editor in screenshots.map(\.editor) + previews.map(\.editor) { editor.autosave.cancelPending(); editor.revert() }
+        screenshotSelections.forEach { $0.clear() }; previewSelections.forEach { $0.remove() }
+        return !dirty
+    }
+    /// An explicit page refresh adopts saved layouts only after its Save/Discard choice settled the inputs.
+    public func refreshSaved() async -> Bool {
+        guard active, !busy, !dirty, !Task.isCancelled else { return false }
+        loading = true; await load()
+        guard active, !catalogFailed, !dirty, !Task.isCancelled else { return false }
+        for editor in screenshots.map(\.editor) + previews.map(\.editor) {
+            await editor.readLatest()
+            guard active, editor.latest != nil, !editor.dirty, !Task.isCancelled else { return false }
+            editor.acceptLatest(keepEdits: false)
+        }
+        return active && !dirty && !busy
     }
     public func retire() {
         guard active else { return }; active = false
@@ -213,11 +233,11 @@ import Observation
         return selection
     }
     /// Saves are local. The optional preparation only creates a review for the guarded Publish UI.
-    public func run(prepare: (@MainActor () async throws -> Void)? = nil) async -> ListingSaveWorkflow.Result {
+    public func run(onlyThisPart: Bool = false, prepare: (@MainActor () async throws -> Void)? = nil) async -> ListingSaveWorkflow.Result {
         guard active, !Task.isCancelled else { return .init(id: UUID(), saves: 0, prepared: false, failure: .cancelled) }
         for model in screenshots.map(\.editor) + previews.map(\.editor) { model.autosave.cancelPending() }
-        let result = await workflow.run(prepare: prepare)
-        guard active, workflow.owns(result) else { return result }
+        let result = await workflow.run(only: onlyThisPart ? Set(registrations) : nil, prepare: prepare)
+        guard active else { return result }
         switch result.failure {
         case nil: status = prepare == nil ? "Media draft saved on this Mac." : "Confirm the changes in Sync to Apple."
         case .blocked: status = "Finish selecting files and correct or compare the blocked editor before continuing."

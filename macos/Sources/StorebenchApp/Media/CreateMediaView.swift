@@ -55,7 +55,7 @@ struct CreateMediaView: View {
 
     var body: some View {
         ScrollViewReader { scroll in
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             Card(title: "Create Media", subtitle: "Choose how to start your App Store cards.") {
                 StorebenchActionGroup {
                     Button("Create Cards") { chooseMode("manual") }
@@ -138,7 +138,7 @@ struct CreateMediaView: View {
 
     private var setsCard: some View {
         Card(title: "Create Media", subtitle: "Make App Store screenshot cards from your app's screenshots: a background, a screenshot and short text. Card sets are saved on this Mac as you edit. Nothing is uploaded to Apple.", help: "media") {
-            if loading { ProgressView("Opening card sets…") }
+            if loading { StorebenchLoadingStatus(message: "Opening card sets…", surface: false) }
             else {
                 if !saved.isEmpty, !creating {
                     StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 260) {
@@ -186,29 +186,35 @@ struct CreateMediaView: View {
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: StorebenchTheme.space(3)) {
                     ForEach(Array(set.cards.enumerated()), id: \.element.id) { position, card in
-                        Button { select(card.id) } label: {
+                        StorebenchMediaButton(title: "Edit card \(position + 1)", action: { select(card.id) }) {
                             VStack(spacing: StorebenchTheme.space(1)) {
                                 MediaCardThumbnail(card: card, width: set.width, height: set.height, screenshot: card.screenshot.flatMap { images.thumbnail($0.hash) }, font: font(card))
                                     .frame(height: 150)
                                     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(card.id == current?.id ? StorebenchTheme.accent : StorebenchTheme.border, lineWidth: card.id == current?.id ? 3 : 1))
                                 Text("\(position + 1)").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
                             }
-                        }.buttonStyle(StorebenchPressStyle()).help("Edit card \(position + 1)").accessibilityLabel("Edit card \(position + 1)")
+                        }
                     }
                 }.padding(StorebenchTheme.space(1))
             }
             StorebenchActionGroup {
                 Button("Add Card") { let after = current?.id; operate("add") { selectedId = try $0.addCard(after: after).id } }
-                Button("Duplicate") { if let id = current?.id { operate("duplicate") { selectedId = try $0.duplicateCard(id).id } } }.help("Duplicate the selected card")
-                Button("Move Earlier") { if let id = current?.id { operate("move") { $0.moveCard(id, by: -1) } } }
-                    .storebenchWorking((index ?? 0) == 0).help((index ?? 0) == 0 ? "The selected card is already first" : "Move the selected card one place earlier")
-                Button("Move Later") { if let id = current?.id { operate("move") { $0.moveCard(id, by: 1) } } }
-                    .storebenchWorking(index.map { $0 >= set.cards.count - 1 } ?? true).help(index.map { $0 >= set.cards.count - 1 } ?? true ? "The selected card is already last" : "Move the selected card one place later")
-                Button("Delete Card", role: .destructive) {
-                    if confirm(.deleteCreatedMedia, title: "Delete the selected card?", message: "Undo restores it until you leave this card set.", action: "Delete Card") { deleteCard() }
-                }.storebenchWorking(set.cards.count <= 1).help(set.cards.count <= 1 ? "A card set keeps at least one card" : "Delete the selected card. Undo restores it.")
-                Button("Undo") { undo() }.keyboardShortcut("z", modifiers: .command).storebenchWorking(history?.canUndo != true).help(history?.canUndo == true ? "Undo the last change in this card set" : "Nothing to undo")
-                Button("Redo") { redo() }.keyboardShortcut("z", modifiers: [.command, .shift]).storebenchWorking(history?.canRedo != true).help(history?.canRedo == true ? "Redo the last undone change" : "Nothing to redo")
+                HStack(spacing: StorebenchTheme.space(1)) {
+                    StorebenchIconButton(title: "Move Card Earlier", icon: "previous") { if let id = current?.id { operate("move") { $0.moveCard(id, by: -1) } } }
+                        .disabled((index ?? 0) == 0)
+                    StorebenchIconButton(title: "Move Card Later", icon: "next") { if let id = current?.id { operate("move") { $0.moveCard(id, by: 1) } } }
+                        .disabled(index.map { $0 >= set.cards.count - 1 } ?? true)
+                    StorebenchIconButton(title: "Duplicate Selected Card", icon: "copy") { if let id = current?.id { operate("duplicate") { selectedId = try $0.duplicateCard(id).id } } }
+                    StorebenchIconMenu(title: "Selected Card Options") {
+                        Button("Delete Card", role: .destructive) {
+                            if confirm(.deleteCreatedMedia, title: "Delete the selected card?", message: "Undo restores it until you leave this card set.", action: "Delete Card") { deleteCard() }
+                        }.disabled(set.cards.count <= 1)
+                    }
+                }
+                HStack(spacing: StorebenchTheme.space(1)) {
+                    StorebenchIconButton(title: "Undo", icon: "undo") { undo() }.keyboardShortcut("z", modifiers: .command).disabled(history?.canUndo != true)
+                    StorebenchIconButton(title: "Redo", icon: "redo") { redo() }.keyboardShortcut("z", modifiers: [.command, .shift]).disabled(history?.canRedo != true)
+                }
             }.storebenchWorking(busy)
         }
     }
@@ -253,7 +259,7 @@ struct CreateMediaView: View {
             let ratio = min(bounds.size.width / Double(set.width), bounds.size.height / Double(set.height))
             ZStack {
                 if let preview { Image(decorative: preview.image, scale: 1).resizable().interpolation(.high) }
-                else { Rectangle().fill(StorebenchTheme.color("color-surface-sunken")); ProgressView() }
+                else { Rectangle().fill(StorebenchTheme.color("color-surface-sunken")); StorebenchMediaStatus(message: "") }
             }
             .frame(width: Double(set.width) * ratio, height: Double(set.height) * ratio)
             .contentShape(Rectangle()).focusable(!busy, interactions: .edit).focused($canvasFocused)
@@ -305,18 +311,24 @@ struct CreateMediaView: View {
                 StorebenchTextSlot(text: card.screenshot.map { "\($0.name) · \($0.width) × \($0.height) px" } ?? "No screenshot chosen.", height: 34, font: .sbCallout, color: card.screenshot == nil ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted)
                 StorebenchActionGroup {
                     Button(card.screenshot == nil ? "Choose Screenshot" : "Replace Screenshot") { chooseScreenshot() }
-                    if card.screenshot != nil { Button("Remove Screenshot", role: .destructive) { change("screenshot") { $0.screenshot = nil; $0.zoom = 1; $0.x = 0.5; $0.y = 0.5 } } }
+                    if card.screenshot != nil {
+                        StorebenchIconMenu(title: "Screenshot Options") {
+                            Button("Remove Screenshot", role: .destructive) { change("screenshot") { $0.screenshot = nil; $0.zoom = 1; $0.x = 0.5; $0.y = 0.5 } }
+                        }
+                    }
                 }
-                StorebenchSliderField(title: "Zoom", value: field(\.zoom, "zoom"), range: 1...4, step: 0.01, percentage: true)
-                StorebenchSliderField(title: "Screenshot width", value: style(\.screenshotWidth, "screenshotWidth"), range: 0.4...1, step: 0.01, percentage: true)
+                StorebenchCropControls(zoom: field(\.zoom, "zoom")) { change("crop") { $0.zoom = 1; $0.x = 0.5; $0.y = 0.5 } }
+                    .disabled(card.screenshot == nil)
+                StorebenchSliderField(title: "Screenshot Width", value: style(\.screenshotWidth, "screenshotWidth"), range: 0.4...1, step: 0.01, percentage: true)
                 StorebenchTextSlot(text: opened.map { MediaCards.placement(card, width: $0.width, height: $0.height).limited } == true
                                    ? "The screenshot is as tall as its space allows, so a larger width does not make it bigger. Lower Space for text or the margin to give it more room." : "",
                                    height: 34, font: .sbCaption, color: StorebenchTheme.muted, live: true)
-                StorebenchSliderField(title: "Corner radius (%)", value: style(\.cornerRadius, "cornerRadius"), range: 0...20, step: 0.5)
-                StorebenchSliderField(title: "Border width (%)", value: style(\.borderWidth, "borderWidth"), range: 0...6, step: 0.1)
-                StorebenchColorField("Border Color", selection: color(\.borderColor, "borderColor"))
-                StorebenchToggle("Shadow", isOn: style(\.shadow, "shadow"))
-                StorebenchActionGroup { Button("Recenter Crop") { change("crop") { $0.zoom = 1; $0.x = 0.5; $0.y = 0.5 } } }
+                StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 214) {
+                    StorebenchSliderField(title: "Corner Radius (%)", value: style(\.cornerRadius, "cornerRadius"), range: 0...20, step: 0.5)
+                    StorebenchSliderField(title: "Border Width (%)", value: style(\.borderWidth, "borderWidth"), range: 0...6, step: 0.1)
+                    StorebenchColorField("Border Color", selection: color(\.borderColor, "borderColor"))
+                    StorebenchToggle("Shadow", isOn: style(\.shadow, "shadow"))
+                }
             }.padding(.top, 8)
         }
     }
@@ -409,19 +421,21 @@ struct CreateMediaView: View {
                 Button("Export PNG") { Task { await exportPNG() } }.help("Save the selected card as a PNG file on this Mac")
             }.storebenchWorking(busy)
             if let openReleaseStep {
-                Button("Open Apple Sync") {
-                    Task {
-                        if await saveToLibrary(all: true) { openReleaseStep("listing") }
-                    }
-                }.help("Save the cards to Asset Library, then choose their language and version in Release before Sync to Apple")
-                    .storebenchWorking(busy || saving || stale)
+                StorebenchActionGroup {
+                    Button("Open Apple Sync") {
+                        Task {
+                            if await saveToLibrary(all: true) { openReleaseStep("listing") }
+                        }
+                    }.help("Save the cards to Asset Library, then choose their language and version in Release before Sync to Apple")
+                        .storebenchWorking(busy || saving || stale)
+                }
             }
         }
     }
 
     // MARK: Other languages
 
-    /// The language the open set's text is written in. Sets made before a language was chosen are treated as American English.
+    /// The language the open set's text is written in. Sets made before a language was chosen are treated as English (U.S.).
     private var textLanguage: String { opened?.language ?? "en-US" }
 
     private func translateCard(_ set: MediaCardSet) -> some View {

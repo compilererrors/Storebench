@@ -9,7 +9,7 @@ struct TestFlightMetricsView: View {
 
     var body: some View {
         Card(title: "Build \(build.version) metrics", subtitle: "Apple's reported TestFlight usage. Missing counts are unavailable.") {
-            if loading { ProgressView("Reading usage…") }
+            if loading { StorebenchLoadingStatus(message: "Reading usage…", surface: false) }
             else if !message.isEmpty { Text(message).foregroundStyle(StorebenchTheme.muted) }
             else if let metrics, !metrics.points.isEmpty {
                 ScrollView {

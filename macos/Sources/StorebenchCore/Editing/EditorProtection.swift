@@ -1,5 +1,5 @@
 /// Pure navigation/close policy. Busy owners remain protected until their exact lease is released.
-public struct EditorProtectionPolicy: Sendable {
+public struct EditorProtectionPolicy: Sendable, Equatable {
     public enum Decision: Equatable, Sendable { case ready, confirmDiscard, wait }
     private struct State: Sendable, Equatable { let dirty, busy: Bool }
     private var editors: [String: State] = [:]

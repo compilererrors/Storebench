@@ -1,355 +1,10 @@
 import CryptoKit
 import Foundation
 import Testing
+import StorebenchTestSupport
 @testable import StorebenchCore
 
-/// A small stateful App Store Connect double for publishing tests: synthetic resources only.
-final class SyntheticApple: @unchecked Sendable {
-    let lock = NSLock()
-    var versions: [[String: Any]] = [["type": "appStoreVersions", "id": "version-1", "attributes": ["platform": "IOS", "versionString": "1.0", "appVersionState": "PREPARE_FOR_SUBMISSION", "releaseType": "MANUAL"], "relationships": ["app": ["data": ["type": "apps", "id": "1000000001"]]]]]
-    var locales: [[String: Any]] = [["type": "appStoreVersionLocalizations", "id": "version-locale-1", "attributes": ["locale": "en-US", "description": "Second synthetic description", "keywords": "sample,test"], "relationships": ["appStoreVersion": ["data": ["type": "appStoreVersions", "id": "version-1"]]]]]
-    var sets: [[String: Any]] = [["type": "appScreenshotSets", "id": "set-1", "attributes": ["screenshotDisplayType": "APP_IPHONE_67"], "relationships": ["appStoreVersionLocalization": ["data": ["type": "appStoreVersionLocalizations", "id": "version-locale-1"]]]]]
-    var shots: [[String: Any]] = [["type": "appScreenshots", "id": "shot-1", "attributes": ["fileName": "sample.png", "assetDeliveryState": ["state": "COMPLETE"]], "relationships": ["appScreenshotSet": ["data": ["type": "appScreenshotSets", "id": "set-1"]]]]]
-    /// The App Asset Library: the imported synthetic screenshot placed on the version, plus Apple's catalog for one iPhone group.
-    var library = true
-    /// Apple documents upload operations on the reservation response; a later read need not repeat them.
-    var readsOmitUploadOperations = false
-    /// Apple keeps a committed file in processing, and reading it then fails, so a review stops at its verification.
-    var processingAfterCommit = false, failProcessingReads = false, finishProcessingOnRead = false
-    /// Apple can leave the version link out of a read of one language.
-    var localeReadsOmitOwner = false
-    /// Apple adds the next file to the version but its answer is lost, as with a dropped connection.
-    var losePlacementAnswers = 0
-    var libraryImages: [[String: Any]] = [["type": "appAssetLibraryImages", "id": "image-1", "attributes": ["fileName": "sample.png", "fileSize": 1000, "category": "APP_SCREENSHOTS_AND_PREVIEWS", "state": "PREPARE_FOR_SUBMISSION", "specId": "spec-iphone",
-        "imageAsset": ["templateUrl": "https://is1-ssl.mzstatic.com/image/thumb/synthetic/{w}x{h}bb.{f}", "width": 1290, "height": 2796]], "relationships": ["assetLibrary": ["data": ["type": "appAssetLibraries", "id": "library-1"]]]]]
-    var placements: [[String: Any]] = [["type": "appAssetLibraryPlacements", "id": "shot-1", "attributes": ["mediaType": "IMAGE", "placementType": "APP_SCREENSHOT", "placementGroup": "IPHONE_SYNTHETIC_PROFILE", "state": "PARENT_PREPARE_FOR_SUBMISSION"],
-        "relationships": ["image": ["data": ["type": "appAssetLibraryImages", "id": "image-1"]], "appStoreVersionLocalization": ["data": ["type": "appStoreVersionLocalizations", "id": "version-locale-1"]]]]]
-    nonisolated(unsafe) static let catalog: [String: Any] = ["type": "appAssetLibraryRefData", "id": "catalog-synthetic", "attributes": [
-        "features": [["featureId": "APP_STORE_VERSIONS", "placementPolicies": [["placementType": "APP_SCREENSHOT", "groupLimits": [["groupIds": ["IPHONE_SYNTHETIC_PROFILE"], "maxCount": 10]]]]]],
-        "placementProfileGroups": [["placementProfileGroupId": "IPHONE_SYNTHETIC_PROFILE", "platform": "IPHONE_APP_STORE", "displayClassId": "SYNTHETIC_DISPLAY"]],
-        "imageSpecs": [["specId": "spec-iphone", "shortName": "i1290x2796", "dimensions": ["minWidth": 1290, "maxWidth": 1290, "minHeight": 2796, "maxHeight": 2796], "fileExtensions": [".png", ".jpg"], "maxFileSize": 52428800, "alphaAllowed": false]],
-        "videoSpecs": [], "displayClasses": [],
-        "placementTypes": [["placementTypeId": "APP_SCREENSHOT", "acceptsAssetCategories": ["APP_SCREENSHOTS_AND_PREVIEWS"], "specMappings": [["placementGroupId": "IPHONE_SYNTHETIC_PROFILE", "specs": ["spec-iphone"]]]]]]]
-    var builds: [[String: Any]] = [["type": "builds", "id": "build-7", "attributes": ["version": "7", "processingState": "VALID", "expired": false, "uploadedDate": "2026-03-01T10:00:00Z", "buildAudienceType": "APP_STORE_ELIGIBLE"],
-                                    "relationships": ["app": ["data": ["type": "apps", "id": "1000000001"]], "preReleaseVersion": ["data": ["type": "preReleaseVersions", "id": "pre-1"]], "buildBetaDetail": ["data": ["type": "buildBetaDetails", "id": "detail-7"]]]]]
-    var groupBuilds: [String] = []
-    /// Apple's app name for the imported language; the synthetic import has "Sample App Updated".
-    var appInfoName = "Sample App Updated"
-    var groups: [[String: Any]] = [["type": "betaGroups", "id": "group-1", "attributes": ["name": "Synthetic testers", "isInternalGroup": true], "relationships": ["app": ["data": ["type": "apps", "id": "1000000001"]]]]]
-    var testers: [[String: Any]] = [["type": "betaTesters", "id": "tester-1", "attributes": ["email": "tester@example.com", "firstName": "Synthetic", "lastName": "Tester", "state": "INSTALLED"]]]
-    var groupTesters: [String: [String]] = ["group-1": ["tester-1"]]
-    var directTesters: [String] = []
-    var betaExternalState = "READY_FOR_BETA_TESTING"
-    var automaticNotification = false
-    var license = "Synthetic beta terms."
-    var betaAppLocales: [[String: Any]] = []
-    var betaBuildLocales: [[String: Any]] = []
-    var betaSubmissions: [[String: Any]] = []
-    var betaReviewDetails: [[String: Any]] = [["type": "betaAppReviewDetails", "id": "beta-detail-synthetic", "attributes": ["contactFirstName": "Synthetic", "contactLastName": "Reviewer", "contactPhone": "0000000000", "contactEmail": "review@example.com", "demoAccountRequired": false], "relationships": ["app": ["data": ["type": "apps", "id": "1000000001"]]]]]
-    var iapManual: [[String: Any]] = []
-    var subscriptionPrices: [[String: Any]] = [["type": "subscriptionPrices", "id": "sub-price-1", "attributes": ["startDate": NSNull(), "preserved": false],
-                                                "relationships": ["subscriptionPricePoint": ["data": ["type": "subscriptionPricePoints", "id": "sub-pp-usa-499"]], "territory": ["data": ["type": "territories", "id": "USA"]]]]]
-    var reviewDetails: [[String: Any]] = []
-    var rights: Any = NSNull()
-    var primary = "GAMES"
-    var sweden = true
-    var accessibility: [[String: Any]] = []
-    var declarations: [[String: Any]] = []
-    var documents: [[String: Any]] = []
-    /// A complete declaration: Apple adds a version for review only when every Age Ratings question is answered.
-    var ageAnswers: [String: Any] = Dictionary(uniqueKeysWithValues: AgeRating.frequency.map { ($0.0, "NONE" as Any) } + AgeRating.boolean.map { ($0.0, false as Any) })
-    var attachments: [[String: Any]] = []
-    var writes: [(String, String, [String: Any]?)] = []
-    var uploaded = Data()
-    var counter = 0
-
-    func page(_ data: Any) -> (Int, [String: String], Data) { (200, [:], try! JSONSerialization.data(withJSONObject: ["data": data, "links": [:]])) }
-    func body(_ request: URLRequest) -> Data {
-        if let body = request.httpBody { return body }
-        guard let stream = request.httpBodyStream else { return Data() }
-        stream.open(); defer { stream.close() }
-        var data = Data(), buffer = [UInt8](repeating: 0, count: 65536)
-        while stream.hasBytesAvailable { let n = stream.read(&buffer, maxLength: buffer.count); if n <= 0 { break }; data.append(buffer, count: n) }
-        return data
-    }
-
-    func handle(_ request: URLRequest) -> (Int, [String: String], Data) {
-        lock.lock(); defer { lock.unlock() }
-        let path = request.url!.path, method = request.httpMethod ?? "GET"
-        if method != "GET" {
-            let json = (try? JSONSerialization.jsonObject(with: body(request))) as? [String: Any]
-            writes.append((method, path, json))
-            let data = json?["data"] as? [String: Any]
-            switch (method, path) {
-            case ("POST", "/v1/appStoreVersions"):
-                counter += 1
-                var created = data!; created["id"] = "version-new-\(counter)"
-                var attributes = created["attributes"] as! [String: Any]; attributes["appVersionState"] = "PREPARE_FOR_SUBMISSION"; created["attributes"] = attributes
-                versions.append(created); return (201, [:], try! JSONSerialization.data(withJSONObject: ["data": created]))
-            case ("POST", "/v1/appAssetLibraryImages"):
-                counter += 1
-                let attributes = data!["attributes"] as! [String: Any], size = attributes["fileSize"] as! Int
-                let created: [String: Any] = ["type": "appAssetLibraryImages", "id": "image-new-\(counter)", "attributes": ["fileName": attributes["fileName"]!, "fileSize": size, "category": attributes["category"]!, "state": "AWAITING_UPLOAD",
-                    "uploadOperations": [["method": "PUT", "url": "https://synthetic.blobstore.apple.com/part1", "offset": 0, "length": size, "requestHeaders": [["name": "Content-Type", "value": "image/png"]]]]],
-                    "relationships": ["assetLibrary": ["data": ["type": "appAssetLibraries", "id": "library-1"]]]]
-                libraryImages.append(created); return (201, [:], try! JSONSerialization.data(withJSONObject: ["data": created]))
-            case ("PATCH", let target) where target.hasPrefix("/v1/appAssetLibraryImages/image-new-"):
-                guard let index = libraryImages.firstIndex(where: { "/v1/appAssetLibraryImages/\($0["id"] as! String)" == target }) else { return (404, [:], Data()) }
-                var attributes = libraryImages[index]["attributes"] as! [String: Any]; attributes["state"] = processingAfterCommit ? "UPLOAD_COMPLETE" : "PREPARE_FOR_SUBMISSION"; attributes["specId"] = "spec-iphone"; attributes["uploadOperations"] = nil
-                attributes["imageAsset"] = ["templateUrl": "https://is1-ssl.mzstatic.com/image/thumb/synthetic-new/{w}x{h}bb.{f}", "width": 1290, "height": 2796]; libraryImages[index]["attributes"] = attributes
-                return (200, [:], try! JSONSerialization.data(withJSONObject: ["data": libraryImages[index]]))
-            case ("POST", "/v1/appAssetLibraryPlacements"):
-                counter += 1
-                var attributes = data!["attributes"] as! [String: Any]; attributes["mediaType"] = "IMAGE"; attributes["state"] = "PARENT_PREPARE_FOR_SUBMISSION"
-                let created: [String: Any] = ["type": "appAssetLibraryPlacements", "id": "placement-new-\(counter)", "attributes": attributes, "relationships": data!["relationships"]!]
-                placements.append(created)
-                if losePlacementAnswers > 0 { losePlacementAnswers -= 1; return (502, [:], Data()) }
-                return (201, [:], try! JSONSerialization.data(withJSONObject: ["data": created]))
-            case ("DELETE", let target) where target.hasPrefix("/v1/appAssetLibraryImages/"):
-                libraryImages.removeAll { "/v1/appAssetLibraryImages/\($0["id"] as! String)" == target }; return (204, [:], Data())
-            case ("DELETE", let target) where target.hasPrefix("/v1/appAssetLibraryPlacements/"):
-                placements.removeAll { "/v1/appAssetLibraryPlacements/\($0["id"] as! String)" == target }; return (204, [:], Data())
-            case ("POST", "/v1/appAssetLibraryPlacementOrderingRequests"):
-                let ids = ((((data?["relationships"] as? [String: Any])?["orderedPlacements"] as? [String: Any])?["data"] as? [[String: Any]]) ?? []).compactMap { $0["id"] as? String }
-                placements.sort { (ids.firstIndex(of: $0["id"] as! String) ?? Int.max) < (ids.firstIndex(of: $1["id"] as! String) ?? Int.max) }
-                return (201, [:], try! JSONSerialization.data(withJSONObject: ["data": ["type": "appAssetLibraryPlacementOrderingRequests", "id": "ordering-\(counter)"]]))
-            case ("PATCH", let target) where target.hasPrefix("/v1/appStoreVersionLocalizations/"):
-                return (200, [:], try! JSONSerialization.data(withJSONObject: ["data": locales[0]]))
-            case ("PATCH", "/v1/appStoreVersions/version-1"):
-                var attributes = versions[0]["attributes"] as! [String: Any]
-                for (key, value) in (data?["attributes"] as? [String: Any]) ?? [:] { attributes[key] = value }
-                versions[0]["attributes"] = attributes; return (200, [:], try! JSONSerialization.data(withJSONObject: ["data": versions[0]]))
-            case ("PATCH", "/v1/builds/build-7"):
-                var attributes = builds[0]["attributes"] as! [String: Any]
-                for (key, value) in (data?["attributes"] as? [String: Any]) ?? [:] { attributes[key] = value }
-                builds[0]["attributes"] = attributes; return (200, [:], try! JSONSerialization.data(withJSONObject: ["data": builds[0]]))
-            case ("POST", "/v1/betaGroups/group-1/relationships/builds"):
-                groupBuilds += ((json?["data"] as? [[String: Any]]) ?? []).compactMap { $0["id"] as? String }; return (204, [:], Data())
-            case ("PATCH", "/v1/apps/1000000001"):
-                rights = ((data?["attributes"] as? [String: Any])?["contentRightsDeclaration"]) ?? NSNull(); return (200, [:], try! JSONSerialization.data(withJSONObject: ["data": ["type": "apps", "id": "1000000001"]]))
-            case ("PATCH", "/v1/appInfos/info-1"):
-                if let value = (((data?["relationships"] as? [String: Any])?["primaryCategory"] as? [String: Any])?["data"] as? [String: Any])?["id"] as? String { primary = value }
-                return (200, [:], try! JSONSerialization.data(withJSONObject: ["data": ["type": "appInfos", "id": "info-1"]]))
-            case ("POST", "/v1/appEncryptionDeclarations"):
-                var attributes = data!["attributes"] as! [String: Any]; attributes["appEncryptionDeclarationState"] = "CREATED"; attributes["platform"] = "IOS"
-                let created: [String: Any] = ["type": "appEncryptionDeclarations", "id": "decl-1", "attributes": attributes]; declarations = [created]
-                return (201, [:], try! JSONSerialization.data(withJSONObject: ["data": created]))
-            case ("POST", "/v1/appEncryptionDeclarationDocuments"):
-                let attributes = data!["attributes"] as! [String: Any], size = attributes["fileSize"] as! Int
-                let created: [String: Any] = ["type": "appEncryptionDeclarationDocuments", "id": "doc-1", "attributes": ["fileName": attributes["fileName"]!, "fileSize": size, "assetDeliveryState": ["state": "AWAITING_UPLOAD"],
-                    "uploadOperations": [["method": "PUT", "url": "https://synthetic.blobstore.apple.com/document", "offset": 0, "length": size, "requestHeaders": []]]],
-                    "relationships": ["appEncryptionDeclaration": ["data": ["type": "appEncryptionDeclarations", "id": "decl-1"]]]]
-                documents = [created]; return (201, [:], try! JSONSerialization.data(withJSONObject: ["data": created]))
-            case ("PATCH", "/v1/appEncryptionDeclarationDocuments/doc-1"):
-                var attributes = documents[0]["attributes"] as! [String: Any]; attributes["assetDeliveryState"] = ["state": "COMPLETE"]; documents[0]["attributes"] = attributes
-                return (200, [:], try! JSONSerialization.data(withJSONObject: ["data": documents[0]]))
-            case ("POST", "/v1/accessibilityDeclarations"):
-                var attributes = data!["attributes"] as! [String: Any]; attributes["state"] = "DRAFT"
-                let created: [String: Any] = ["type": "accessibilityDeclarations", "id": "access-1", "attributes": attributes]; accessibility = [created]
-                return (201, [:], try! JSONSerialization.data(withJSONObject: ["data": created]))
-            case ("PATCH", "/v1/accessibilityDeclarations/access-1"):
-                var attributes = accessibility[0]["attributes"] as! [String: Any]
-                if (data?["attributes"] as? [String: Any])?["publish"] as? Bool == true { attributes["state"] = "PUBLISHED" }
-                accessibility[0]["attributes"] = attributes; return (200, [:], try! JSONSerialization.data(withJSONObject: ["data": accessibility[0]]))
-            case ("PATCH", "/v1/ageRatingDeclarations/age-1"):
-                for (key, value) in (data?["attributes"] as? [String: Any]) ?? [:] { ageAnswers[key] = value }
-                return (200, [:], try! JSONSerialization.data(withJSONObject: ["data": ["type": "ageRatingDeclarations", "id": "age-1"]]))
-            case ("PATCH", "/v1/territoryAvailabilities/ta-swe"):
-                sweden = ((data?["attributes"] as? [String: Any])?["available"] as? Bool) ?? sweden; return (200, [:], try! JSONSerialization.data(withJSONObject: ["data": ["type": "territoryAvailabilities", "id": "ta-swe"]]))
-            case ("POST", "/v1/appStoreReviewDetails"):
-                var created = data!; created["id"] = "detail-1"; reviewDetails = [created]
-                return (201, [:], try! JSONSerialization.data(withJSONObject: ["data": created]))
-            case ("POST", "/v1/appStoreReviewAttachments"):
-                let attributes = data!["attributes"] as! [String: Any], size = attributes["fileSize"] as! Int
-                let created: [String: Any] = ["type": "appStoreReviewAttachments", "id": "attachment-1", "attributes": ["fileName": attributes["fileName"]!, "fileSize": size, "assetDeliveryState": ["state": "AWAITING_UPLOAD"],
-                    "uploadOperations": [["method": "PUT", "url": "https://synthetic.blobstore.apple.com/attachment", "offset": 0, "length": size, "requestHeaders": []]]],
-                    "relationships": ["appStoreReviewDetail": ["data": ["type": "appStoreReviewDetails", "id": "detail-1"]]]]
-                attachments = [created]; return (201, [:], try! JSONSerialization.data(withJSONObject: ["data": created]))
-            case ("PATCH", "/v1/appStoreReviewAttachments/attachment-1"):
-                var attributes = attachments[0]["attributes"] as! [String: Any]; attributes["assetDeliveryState"] = ["state": "COMPLETE"]; attributes["sourceFileChecksum"] = (data?["attributes"] as? [String: Any])?["sourceFileChecksum"]
-                attachments[0]["attributes"] = attributes; return (200, [:], try! JSONSerialization.data(withJSONObject: ["data": attachments[0]]))
-            case ("DELETE", let target) where target.hasPrefix("/v1/appStoreReviewAttachments/"):
-                attachments.removeAll { "/v1/appStoreReviewAttachments/\($0["id"] as! String)" == target }; return (204, [:], Data())
-            case ("POST", "/v1/analyticsReportRequests"): return (201, [:], try! JSONSerialization.data(withJSONObject: ["data": ["type": "analyticsReportRequests", "id": "request-1", "attributes": ["accessType": "ONGOING"]]]))
-            case ("POST", "/v1/appPriceSchedules"): return (201, [:], try! JSONSerialization.data(withJSONObject: ["data": ["type": "appPriceSchedules", "id": "schedule-2"]]))
-            case ("POST", "/v1/betaGroups"):
-                counter += 1; let id = "group-\(counter + 1)"
-                groups.append(["type": "betaGroups", "id": id, "attributes": data?["attributes"] ?? [:], "relationships": ["app": ["data": ["type": "apps", "id": "1000000001"]]]]); groupTesters[id] = []
-                return (201, [:], try! JSONSerialization.data(withJSONObject: ["data": groups.last!]))
-            case ("POST", let target) where target.hasPrefix("/v1/betaGroups/") && target.hasSuffix("/relationships/betaTesters"),
-                 ("DELETE", let target) where target.hasPrefix("/v1/betaGroups/") && target.hasSuffix("/relationships/betaTesters"):
-                let id = target.split(separator: "/")[2].description, ids = (json?["data"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
-                groupTesters[id] = method == "POST" ? (groupTesters[id] ?? []) + ids : (groupTesters[id] ?? []).filter { !ids.contains($0) }
-                return (204, [:], Data())
-            case ("PATCH", let target) where target.hasPrefix("/v1/betaGroups/"):
-                guard let index = groups.firstIndex(where: { "/v1/betaGroups/\($0["id"] as! String)" == target }) else { return (404, [:], Data()) }
-                var attributes = groups[index]["attributes"] as! [String: Any]; for (key, value) in data?["attributes"] as? [String: Any] ?? [:] { attributes[key] = value }
-                groups[index]["attributes"] = attributes; return (200, [:], try! JSONSerialization.data(withJSONObject: ["data": groups[index]]))
-            case ("DELETE", let target) where target.hasPrefix("/v1/betaGroups/"):
-                groups.removeAll { "/v1/betaGroups/\($0["id"] as! String)" == target }; return (204, [:], Data())
-            case ("POST", "/v1/betaTesters"):
-                counter += 1; let id = "tester-\(counter + 1)", email = (data?["attributes"] as? [String: Any])?["email"] as? String ?? ""
-                testers.append(["type": "betaTesters", "id": id, "attributes": ["email": email, "state": "INVITED"]])
-                for group in ((data?["relationships"] as? [String: Any])?["betaGroups"] as? [String: Any])?["data"] as? [[String: Any]] ?? [] { groupTesters[group["id"] as! String, default: []].append(id) }
-                return (201, [:], try! JSONSerialization.data(withJSONObject: ["data": testers.last!]))
-            case ("POST", "/v1/betaTesterInvitations"): return (201, [:], try! JSONSerialization.data(withJSONObject: ["data": ["type": "betaTesterInvitations", "id": "invitation-1"]]))
-            case ("DELETE", "/v1/apps/1000000001/relationships/betaTesters"):
-                let ids = (json?["data"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }
-                testers.removeAll { ids.contains($0["id"] as! String) }; for key in groupTesters.keys { groupTesters[key]!.removeAll { ids.contains($0) } }
-                return (204, [:], Data())
-            case ("PATCH", "/v1/betaLicenseAgreements/license-1"):
-                license = (data?["attributes"] as? [String: Any])?["agreementText"] as? String ?? license
-                return (200, [:], try! JSONSerialization.data(withJSONObject: ["data": ["type": "betaLicenseAgreements", "id": "license-1"]]))
-            case ("POST", "/v1/betaAppLocalizations"), ("POST", "/v1/betaBuildLocalizations"):
-                let type = path.hasSuffix("betaAppLocalizations") ? "betaAppLocalizations" : "betaBuildLocalizations"
-                let item: [String: Any] = ["type": type, "id": "\(type)-1", "attributes": data?["attributes"] ?? [:], "relationships": data?["relationships"] ?? [:]]
-                if type == "betaAppLocalizations" { betaAppLocales.append(item) } else { betaBuildLocales.append(item) }
-                return (201, [:], try! JSONSerialization.data(withJSONObject: ["data": item]))
-            case ("PATCH", "/v1/betaBuildLocalizations/betaBuildLocalizations-1"):
-                var attributes = betaBuildLocales[0]["attributes"] as! [String: Any]; for (key, value) in data?["attributes"] as? [String: Any] ?? [:] { attributes[key] = value }
-                betaBuildLocales[0]["attributes"] = attributes; return (200, [:], try! JSONSerialization.data(withJSONObject: ["data": betaBuildLocales[0]]))
-            case ("POST", "/v1/betaAppReviewSubmissions"):
-                betaSubmissions.append(["type": "betaAppReviewSubmissions", "id": "beta-review-1", "attributes": ["betaReviewState": "WAITING_FOR_REVIEW"], "relationships": data?["relationships"] ?? [:]])
-                return (201, [:], try! JSONSerialization.data(withJSONObject: ["data": betaSubmissions[0]]))
-            case ("POST", "/v1/inAppPurchasePriceSchedules"):
-                iapManual = (json?["included"] as? [[String: Any]] ?? []).enumerated().map { index, item in
-                    ["type": "inAppPurchasePrices", "id": "iap-price-\(index + 1)", "attributes": item["attributes"] ?? [:], "relationships": ["inAppPurchasePricePoint": (item["relationships"] as! [String: Any])["inAppPurchasePricePoint"]!]]
-                }
-                return (201, [:], try! JSONSerialization.data(withJSONObject: ["data": ["type": "inAppPurchasePriceSchedules", "id": "iap-schedule-1"]]))
-            case ("POST", "/v1/subscriptionPrices"):
-                let relationships = data?["relationships"] as! [String: Any]
-                subscriptionPrices.append(["type": "subscriptionPrices", "id": "sub-price-\(subscriptionPrices.count + 1)", "attributes": ["startDate": (data?["attributes"] as! [String: Any])["startDate"] ?? NSNull(), "preserved": false],
-                                           "relationships": ["subscriptionPricePoint": relationships["subscriptionPricePoint"]!, "territory": ["data": ["type": "territories", "id": "USA"]]]])
-                return (201, [:], try! JSONSerialization.data(withJSONObject: ["data": subscriptionPrices.last!]))
-            case ("POST", "/v1/buildBetaNotifications"): return (201, [:], try! JSONSerialization.data(withJSONObject: ["data": ["type": "buildBetaNotifications", "id": "notice-1"]]))
-            default: return (409, [:], Data())
-            }
-        }
-        switch path {
-        case "/v1/apps/1000000001": return page(["type": "apps", "id": "1000000001", "attributes": ["name": "Sample App", "contentRightsDeclaration": rights]])
-        case "/v1/apps/1000000001/appInfos": return page([["type": "appInfos", "id": "info-1", "attributes": ["state": "PREPARE_FOR_SUBMISSION"], "relationships": ["app": ["data": ["type": "apps", "id": "1000000001"]]]]])
-        case "/v1/appInfos/info-1": return page(["type": "appInfos", "id": "info-1", "attributes": ["state": "PREPARE_FOR_SUBMISSION"], "relationships": ["app": ["data": ["type": "apps", "id": "1000000001"]], "primaryCategory": ["data": ["type": "appCategories", "id": primary]],
-            "primarySubcategoryOne": ["data": NSNull()], "primarySubcategoryTwo": ["data": NSNull()], "secondaryCategory": ["data": NSNull()], "secondarySubcategoryOne": ["data": NSNull()], "secondarySubcategoryTwo": ["data": NSNull()]]])
-        case "/v1/apps/1000000001/accessibilityDeclarations": return page(accessibility)
-        case "/v1/apps/1000000001/appEncryptionDeclarations": return page(declarations)
-        case "/v1/appEncryptionDeclarations/decl-1/appEncryptionDeclarationDocument": return documents.isEmpty ? (404, [:], Data()) : page(documents[0])
-        case "/v1/appEncryptionDeclarationDocuments/doc-1": return documents.isEmpty ? (404, [:], Data()) : page(documents[0])
-        // Apple's app information for the imported language, the same as the synthetic import, so a Save changes it only when a test edits it.
-        case "/v1/appInfos/info-1/appInfoLocalizations": return page([["type": "appInfoLocalizations", "id": "info-locale-1", "attributes": ["locale": "en-US", "name": appInfoName, "subtitle": "Sample subtitle"],
-                                                                        "relationships": ["appInfo": ["data": ["type": "appInfos", "id": "info-1"]]]]])
-        case "/v1/appInfos/info-1/ageRatingDeclaration": return page(["type": "ageRatingDeclarations", "id": "age-1", "attributes": ageAnswers])
-        case "/v1/appCategories": return page([["type": "appCategories", "id": "GAMES", "attributes": ["platforms": ["IOS", "MAC_OS"]]], ["type": "appCategories", "id": "PRODUCTIVITY", "attributes": ["platforms": ["IOS", "MAC_OS"]]]])
-        case "/v1/apps/1000000001/appAvailabilityV2": return page(["type": "appAvailabilities", "id": "availability-1", "attributes": ["availableInNewTerritories": true]])
-        case "/v2/appAvailabilities/availability-1/territoryAvailabilities":
-            return page([["type": "territoryAvailabilities", "id": "ta-swe", "attributes": ["available": sweden, "preOrderEnabled": false, "contentStatuses": ["AVAILABLE"]], "relationships": ["territory": ["data": ["type": "territories", "id": "SWE"]]]],
-                         ["type": "territoryAvailabilities", "id": "ta-usa", "attributes": ["available": true, "preOrderEnabled": false, "contentStatuses": ["AVAILABLE"]], "relationships": ["territory": ["data": ["type": "territories", "id": "USA"]]]]])
-        case "/v1/apps/1000000001/appStoreVersions": return page(versions)
-        case "/v1/appStoreVersions/version-1/appStoreVersionLocalizations": return page(locales)
-        case "/v1/apps/1000000001/assetLibrary": return library ? page(["type": "appAssetLibraries", "id": "library-1"]) : (404, [:], Data())
-        case "/v1/appAssetLibraryRefData": return library ? page([Self.catalog]) : (404, [:], Data())
-        case "/v1/appAssetLibraries/library-1/images": return page(libraryImages)
-        case "/v1/appAssetLibraries/library-1/videos": return page([])
-        case let target where target.hasPrefix("/v1/appStoreVersionLocalizations/") && target.hasSuffix("/placements"):
-            guard library else { return (404, [:], Data()) }
-            func link(_ item: [String: Any], _ name: String) -> String? { (((item["relationships"] as? [String: Any])?[name] as? [String: Any])?["data"] as? [String: Any])?["id"] as? String }
-            let locale = target.split(separator: "/")[2].description, placed = placements.filter { link($0, "appStoreVersionLocalization") == locale }
-            return (200, [:], try! JSONSerialization.data(withJSONObject: ["data": placed, "included": libraryImages.filter { image in placed.contains { link($0, "image") == image["id"] as? String } }, "links": [:]]))
-        case "/v1/appStoreVersionLocalizations/version-locale-1/appScreenshotSets": return page(sets)
-        case "/v1/appScreenshotSets/set-1/appScreenshots": return page(shots)
-        case "/v1/apps/1000000001/analyticsReportRequests": return page([])
-        case "/v1/apps/1000000001/builds": return page(builds)
-        case "/v1/appStoreVersions/version-1/appStoreReviewDetail": return reviewDetails.isEmpty ? (404, [:], Data()) : page(reviewDetails[0])
-        case "/v1/appStoreReviewDetails/detail-1": return reviewDetails.isEmpty ? (404, [:], Data()) : page(reviewDetails[0])
-        case "/v1/appStoreReviewDetails/detail-1/appStoreReviewAttachments": return page(attachments)
-        case "/v1/appStoreReviewAttachments/attachment-1": return attachments.isEmpty ? (404, [:], Data()) : page(attachments[0])
-        case "/v1/builds":
-            if let state = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "filter[betaAppReviewSubmission.betaReviewState]" })?.value {
-                return page(betaSubmissions.contains { ($0["attributes"] as? [String: Any])?["betaReviewState"] as? String == state } ? builds : [])
-            }
-            let detailState = (builds[0]["attributes"] as! [String: Any])["usesNonExemptEncryption"] == nil ? "MISSING_EXPORT_COMPLIANCE" : "READY_FOR_BETA_SUBMISSION"
-            return (200, [:], try! JSONSerialization.data(withJSONObject: ["data": builds, "included": [["type": "preReleaseVersions", "id": "pre-1", "attributes": ["version": "2.0", "platform": "IOS"]],
-                ["type": "buildBetaDetails", "id": "detail-7", "attributes": ["externalBuildState": detailState, "internalBuildState": detailState, "autoNotifyEnabled": automaticNotification]]], "links": [:]]))
-        case "/v1/betaGroups":
-            let build = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "filter[builds]" }?.value
-            return page(build == nil ? groups : groups.filter { $0["id"] as? String == "group-1" && groupBuilds.contains(build!) })
-        case "/v1/builds/build-7/individualTesters": return page(testers.filter { directTesters.contains($0["id"] as! String) })
-        case "/v1/builds/build-7/buildBetaDetail": return page(["type": "buildBetaDetails", "id": "detail-7", "attributes": ["externalBuildState": betaExternalState, "autoNotifyEnabled": automaticNotification], "relationships": ["build": ["data": ["type": "builds", "id": "build-7"]]]])
-        case "/v1/betaGroups/group-1/builds": return page(builds.filter { groupBuilds.contains($0["id"] as! String) })
-        case let target where target.hasPrefix("/v1/betaGroups/") && target.hasSuffix("/builds"): return page([])
-        case let target where target.hasPrefix("/v1/betaGroups/") && target.hasSuffix("/betaTesters"):
-            let ids = groupTesters[target.split(separator: "/")[2].description] ?? []
-            return page(testers.filter { ids.contains($0["id"] as! String) })
-        case "/v1/betaTesters":
-            let email = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "filter[email]" }?.value
-            return page(email == nil ? testers : testers.filter { (($0["attributes"] as? [String: Any])?["email"] as? String)?.lowercased() == email!.lowercased() })
-        case let target where target.hasPrefix("/v1/betaTesters/") && target.hasSuffix("/betaGroups"):
-            let id = target.split(separator: "/")[2].description
-            return page(groups.filter { groupTesters[$0["id"] as! String]?.contains(id) == true })
-        case let target where target.hasPrefix("/v1/betaTesters/") && target.hasSuffix("/builds"):
-            let id = target.split(separator: "/")[2].description
-            return page(directTesters.contains(id) ? builds.filter { $0["id"] as? String == "build-7" } : [])
-        case let target where target.hasPrefix("/v1/betaTesters/") && target.hasSuffix("/relationships/apps"):
-            return page([["type": "apps", "id": "1000000001"]])
-        case "/v1/apps/1000000001/betaLicenseAgreement": return page(["type": "betaLicenseAgreements", "id": "license-1", "attributes": ["agreementText": license]])
-        case "/v1/betaLicenseAgreements/license-1/relationships/app", "/v1/betaAppLocalizations/betaAppLocalizations-1/relationships/app": return page(["type": "apps", "id": "1000000001"])
-        case "/v1/betaBuildLocalizations/betaBuildLocalizations-1/relationships/build": return page(["type": "builds", "id": "build-7"])
-        case "/v1/betaAppLocalizations": return page(betaAppLocales)
-        case "/v1/builds/build-7/betaBuildLocalizations": return page(betaBuildLocales)
-        case "/v1/betaAppReviewSubmissions": return page(betaSubmissions)
-        case "/v1/apps/1000000001/betaAppReviewDetail": return page(betaReviewDetails)
-        case "/v1/apps/1000000001/inAppPurchasesV2": return page([["type": "inAppPurchases", "id": "iap-1", "attributes": ["productId": "com.example.coins", "name": "Coins", "state": "READY_TO_SUBMIT", "inAppPurchaseType": "CONSUMABLE"]]])
-        case "/v1/apps/1000000001/subscriptionGroups": return page([["type": "subscriptionGroups", "id": "sg-1", "attributes": ["referenceName": "Premium"]]])
-        case "/v1/subscriptionGroups/sg-1/subscriptions":
-            return page([["type": "subscriptions", "id": "sub-1", "attributes": ["productId": "com.example.monthly", "name": "Monthly", "state": "APPROVED", "subscriptionPeriod": "ONE_MONTH"], "relationships": ["group": ["data": ["type": "subscriptionGroups", "id": "sg-1"]]]]])
-        case "/v2/inAppPurchases/iap-1/iapPriceSchedule": return iapManual.isEmpty ? (404, [:], Data()) : page(["type": "inAppPurchasePriceSchedules", "id": "iap-schedule-1"])
-        case "/v1/inAppPurchasePriceSchedules/iap-schedule-1/baseTerritory": return page(["type": "territories", "id": "USA", "attributes": ["currency": "USD"]])
-        case "/v1/inAppPurchasePriceSchedules/iap-schedule-1/manualPrices", "/v1/inAppPurchasePriceSchedules/iap-schedule-1/automaticPrices", "/v1/subscriptions/sub-1/prices":
-            let rows = path.hasSuffix("manualPrices") ? iapManual : path.hasSuffix("automaticPrices") ? [] : subscriptionPrices
-            let kind = path.hasSuffix("/prices") ? "subscriptionPricePoints" : "inAppPurchasePricePoints"
-            let points = Set(rows.compactMap { (($0["relationships"] as? [String: Any])?.values.compactMap { ($0 as? [String: Any])?["data"] as? [String: Any] }.first { $0["type"] as? String == kind })?["id"] as? String })
-            return (200, [:], try! JSONSerialization.data(withJSONObject: ["data": rows, "links": [:], "included": points.sorted().map { ["type": kind, "id": $0, "attributes": ["customerPrice": $0.hasSuffix("099") ? "0.99" : $0.hasSuffix("199") ? "1.99" : $0.hasSuffix("499") ? "4.99" : "5.99", "proceeds": "0.70"],
-                "relationships": ["territory": ["data": ["type": "territories", "id": "USA"]]]] } + [["type": "territories", "id": "USA", "attributes": ["currency": "USD"]]]]))
-        // The purchase and the subscription are already available in the United States and Sweden.
-        case "/v2/inAppPurchases/iap-1/inAppPurchaseAvailability": return page(["type": "inAppPurchaseAvailabilities", "id": "iap-availability-1", "attributes": ["availableInNewTerritories": true]])
-        case "/v1/subscriptions/sub-1/subscriptionAvailability": return page(["type": "subscriptionAvailabilities", "id": "sub-availability-1", "attributes": ["availableInNewTerritories": true]])
-        case "/v1/inAppPurchaseAvailabilities/iap-availability-1/availableTerritories", "/v1/subscriptionAvailabilities/sub-availability-1/availableTerritories":
-            return page([["type": "territories", "id": "USA", "attributes": ["currency": "USD"]], ["type": "territories", "id": "SWE", "attributes": ["currency": "SEK"]]])
-        case "/v2/inAppPurchases/iap-1/pricePoints", "/v1/subscriptions/sub-1/pricePoints":
-            let kind = path.hasPrefix("/v2") ? "inAppPurchasePricePoints" : "subscriptionPricePoints", ids = path.hasPrefix("/v2") ? ["iap-pp-usa-099", "iap-pp-usa-199"] : ["sub-pp-usa-499", "sub-pp-usa-599"]
-            // A request for Sweden also gets the purchase's Swedish price point.
-            let filter = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "filter[territory]" }?.value ?? "USA"
-            let swedish: [[String: Any]] = path.hasPrefix("/v2") && filter.contains("SWE") ? [["type": kind, "id": "iap-pp-swe-10", "attributes": ["customerPrice": "10"], "relationships": ["territory": ["data": ["type": "territories", "id": "SWE"]]]]] : []
-            return (200, [:], try! JSONSerialization.data(withJSONObject: ["data": (filter.contains("USA") ? ids.map { ["type": kind, "id": $0, "attributes": ["customerPrice": $0.hasSuffix("099") ? "0.99" : $0.hasSuffix("199") ? "1.99" : $0.hasSuffix("499") ? "4.99" : "5.99"],
-                "relationships": ["territory": ["data": ["type": "territories", "id": "USA"]]]] } : []) + swedish, "included": [["type": "territories", "id": "USA", "attributes": ["currency": "USD"]]], "links": [:]]))
-        case "/v1/apps/1000000001/appPriceSchedule": return page(["type": "appPriceSchedules", "id": "schedule-1", "relationships": ["app": ["data": ["type": "apps", "id": "1000000001"]]]])
-        case "/v1/appPriceSchedules/schedule-1/baseTerritory": return page(["type": "territories", "id": "USA", "attributes": ["currency": "USD"]])
-        case "/v1/appPriceSchedules/schedule-1/manualPrices":
-            return (200, [:], try! JSONSerialization.data(withJSONObject: ["data": [["type": "appPrices", "id": "price-usa", "attributes": ["startDate": NSNull(), "endDate": NSNull()], "relationships": ["territory": ["data": ["type": "territories", "id": "USA"]], "appPricePoint": ["data": ["type": "appPricePoints", "id": "pp-usa-499"]]]]],
-                "included": [["type": "territories", "id": "USA", "attributes": ["currency": "USD"]], ["type": "appPricePoints", "id": "pp-usa-499", "attributes": ["customerPrice": "4.99", "proceeds": "3.49"]]], "links": [:]]))
-        case "/v1/appPriceSchedules/schedule-1/automaticPrices":
-            return (200, [:], try! JSONSerialization.data(withJSONObject: ["data": [["type": "appPrices", "id": "price-swe", "attributes": [:], "relationships": ["territory": ["data": ["type": "territories", "id": "SWE"]], "appPricePoint": ["data": ["type": "appPricePoints", "id": "pp-swe-55"]]]]],
-                "included": [["type": "territories", "id": "SWE", "attributes": ["currency": "SEK"]], ["type": "appPricePoints", "id": "pp-swe-55", "attributes": ["customerPrice": "55", "proceeds": "33"]]], "links": [:]]))
-        case "/v1/territories": return page([["type": "territories", "id": "USA", "attributes": ["currency": "USD"]], ["type": "territories", "id": "SWE", "attributes": ["currency": "SEK"]]])
-        case "/v1/apps/1000000001/appPricePoints":
-            return page([["type": "appPricePoints", "id": "pp-swe-49", "attributes": ["customerPrice": "49"], "relationships": ["territory": ["data": ["type": "territories", "id": "SWE"]]]],
-                         ["type": "appPricePoints", "id": "pp-swe-45", "attributes": ["customerPrice": "45"], "relationships": ["territory": ["data": ["type": "territories", "id": "SWE"]]]]])
-        default:
-            for (prefix, items) in [("/v1/appStoreVersions/", versions), ("/v1/appStoreVersionLocalizations/", locales), ("/v1/appScreenshotSets/", sets), ("/v1/appScreenshots/", shots), ("/v1/appAssetLibraryImages/", libraryImages), ("/v1/appAssetLibraryPlacements/", placements)] where path.hasPrefix(prefix) {
-                if var item = items.first(where: { prefix + ($0["id"] as! String) == path }) {
-                    if failProcessingReads, (item["attributes"] as? [String: Any])?["state"] as? String == "UPLOAD_COMPLETE" { return (500, [:], Data()) }
-                    if finishProcessingOnRead, prefix == "/v1/appAssetLibraryImages/", var attributes = item["attributes"] as? [String: Any], attributes["state"] as? String == "UPLOAD_COMPLETE",
-                       let index = libraryImages.firstIndex(where: { $0["id"] as? String == item["id"] as? String }) {
-                        attributes["state"] = "PREPARE_FOR_SUBMISSION"; item["attributes"] = attributes; libraryImages[index] = item
-                    }
-                    if localeReadsOmitOwner, prefix == "/v1/appStoreVersionLocalizations/" { item["relationships"] = [:] }
-                    if readsOmitUploadOperations, var attributes = item["attributes"] as? [String: Any] { attributes["uploadOperations"] = nil; item["attributes"] = attributes }
-                    return page(item)
-                }
-            }
-            return (404, [:], Data())
-        }
-    }
-}
+typealias SyntheticApple = StorebenchTestSupport.SyntheticApple
 
 extension WorkspaceSession {
     func waitForLibraryProcessing(_ wait: LibraryProcessingWait) { libraryProcessingWait = wait }
@@ -365,6 +20,7 @@ extension WorkspaceSession {
     @Test func agreementFailureAfterApprovalRetainsOnlyPublicGuidanceAndConsumesReview() async throws {
         let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
         let account = try #require(try await session.accounts().first), apple = SyntheticApple(), host = "agreement-publishing.appstoreconnect.test", app = "1000000001"
+        apple.setVersionState("READY_FOR_DISTRIBUTION")
         let body = JSONText.object([("errors", .array([.object([("code", .string("FORBIDDEN.REQUIRED_AGREEMENTS_MISSING_OR_EXPIRED")), ("detail", .string("Synthetic upstream text must not be saved"))])]))]).data
         StubProtocol.handle(host) { request in
             if request.httpMethod == "GET" { return apple.handle(request) }
@@ -410,6 +66,7 @@ extension WorkspaceSession {
     @Test func aPlannedVersionIsCreatedOnlyAfterOneApproval() async throws {
         let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
         let account = try #require(try await session.accounts().first), apple = SyntheticApple(), host = "release.appstoreconnect.test"
+        apple.setVersionState("READY_FOR_DISTRIBUTION")
         StubProtocol.handle(host) { apple.handle($0) }
         _ = try await session.saveReleasePlan(account: account, appId: "1000000001", start: .empty(platform: "IOS", locale: "en-US"), sourceRevisionId: nil, baseVersionId: nil, targetVersion: "2.0", releaseType: "MANUAL", earliestReleaseDate: nil, expected: "null")
         let client = try client(account, host: host)
@@ -587,10 +244,22 @@ extension WorkspaceSession {
         #expect(AgeRating.unanswered(.object(answers)).contains("socialMediaAgeRestricted"))
     }
 
-    @Test func step2SavesOnlyScreenshotsAndStep3OnlyText() async throws {
+    @Test func independentMediaAndTextSyncsLeaveNoDuplicateChangesForStep3() async throws {
         let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
         let account = try #require(try await session.accounts().first), apple = SyntheticApple(), host = "split-stages.appstoreconnect.test", revision = "00000000-0000-4000-8000-000000000002"
-        StubProtocol.handle(host) { apple.handle($0) }
+        StubProtocol.handle(host) { request in
+            let response = apple.handle(request)
+            // This journey observes Apple's saved text on the next read, just as it observes completed media placements.
+            if request.httpMethod == "PATCH", request.url?.path.hasPrefix("/v1/appStoreVersionLocalizations/") == true {
+                apple.lock.withLock {
+                    let data = apple.writes.last?.2?["data"] as? [String: Any]
+                    var attributes = apple.locales[0]["attributes"] as! [String: Any]
+                    for (key, value) in (data?["attributes"] as? [String: Any]) ?? [:] { attributes[key] = value }
+                    apple.locales[0]["attributes"] = attributes
+                }
+            }
+            return response
+        }
         let png = syntheticPNG(width: 1290, height: 2796, seed: 46)
         StubProtocol.handle("synthetic.blobstore.apple.com") { request in apple.lock.withLock { apple.uploaded = apple.body(request) }; return (200, [:], Data()) }
         let text = try await session.textDraft(accountId: account.id, appId: "1000000001", revisionId: revision, localizationId: "version-locale-1", scope: .version)
@@ -605,7 +274,7 @@ extension WorkspaceSession {
         let screenshots = try await session.preparePublishing(account: account, request: request(PublishRequest.screenshotsStage), client: client)
         #expect(screenshots.title.hasPrefix("Save to App Previews and Screenshots") && screenshots.steps.contains { $0.label == "Add screenshot · en-US" })
         #expect(!screenshots.steps.contains { $0.label.hasPrefix("Update version text") })
-        #expect(screenshots.notes.contains { $0.hasSuffix("Text and copyright are saved in step 3.") })
+        #expect(screenshots.notes.contains { $0.hasSuffix("Any remaining text and Copyright can be synced individually or in step 3; matching content is not sent again.") })
         let texts = try await session.preparePublishing(account: account, request: request(PublishRequest.textStage), client: client)
         #expect(texts.steps.contains { $0.label == "Update version text · en-US" })
         #expect(!texts.steps.contains { $0.path.first?.text?.hasPrefix("appAssetLibrary") == true || $0.kind == .upload || $0.kind == .verify })
@@ -615,6 +284,33 @@ extension WorkspaceSession {
         #expect(!apple.writes.contains { $0.1.hasPrefix("/v1/appStoreVersionLocalizations") })
         // Saved again with nothing new, the screenshots Save has nothing to send.
         await #expect(throws: PublishFailure.noChanges) { try await session.preparePublishing(account: account, request: request(PublishRequest.screenshotsStage), client: client) }
+        #expect(try await session.approvePublishing(account: account, appId: "1000000001", id: texts.id, fingerprint: texts.fingerprint, client: client).state == "complete")
+        let writes = apple.lock.withLock { apple.writes.count }
+        var combined = request(PublishRequest.textStage); combined.mediaStage = nil
+        let remaining = try await session.preparePublishing(account: account, request: combined, client: client)
+        #expect(remaining.steps.isEmpty, "Step 3 must not send text or screenshots already synced individually")
+        #expect(apple.lock.withLock { apple.writes.count } == writes, "Comparing completed syncs only reads Apple")
+    }
+
+    @Test func missingCopyrightHasAnInAppFixAndSyncsWithoutResendingTheListing() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let account = try #require(try await session.accounts().first), apple = SyntheticApple(), host = "copyright-fix.appstoreconnect.test", app = "1000000001"
+        StubProtocol.handle(host) { apple.handle($0) }
+        let client = try client(account, host: host)
+        do {
+            _ = try await session.preparePublishing(account: account, request: .init(accountId: account.id, appId: app, scope: .submit, versionId: "version-1"), client: client)
+            Issue.record("Missing Copyright must block submission")
+        } catch PublishFailure.refused(_, let problems) {
+            #expect(problems.map(\.area) == [.copyright] && problems.first?.area.action == "Open Copyright")
+        }
+        #expect(apple.lock.withLock { apple.writes.isEmpty })
+        let copyright = try await session.preparePublishing(account: account, request: .init(accountId: account.id, appId: app, scope: .versionCopyright,
+            versionId: "version-1", copyright: "2026 Synthetic Studio"), client: client)
+        #expect(copyright.steps.count == 1 && copyright.steps.first?.path == [.string("appStoreVersions"), .string("version-1")])
+        #expect(apple.lock.withLock { apple.writes.isEmpty }, "Preparing a fix must still require explicit approval")
+        #expect(try await session.approvePublishing(account: account, appId: app, id: copyright.id, fingerprint: copyright.fingerprint, client: client).state == "complete")
+        let saved = apple.lock.withLock { (apple.writes.count, (apple.versions[0]["attributes"] as? [String: Any])?["copyright"] as? String) }
+        #expect(saved.0 == 1 && saved.1 == "2026 Synthetic Studio")
     }
 
     @Test func step3SendsANameOnlyOnThisMacEvenWithoutADraftAsItsCheckReportsIt() async throws {
@@ -638,7 +334,7 @@ extension WorkspaceSession {
         let review = try await session.preparePublishing(account: account, request: request, client: try client(account, host: host))
         let added = try #require(review.steps.first { $0.label == "Add language · sv" })
         #expect(added.body?["data"]?["attributes"]?["description"]?.text?.isEmpty == false)
-        #expect(review.notes.contains { $0.contains("also adds sv with its text") && $0.hasSuffix("Copyright and other text changes are saved in step 3.") })
+        #expect(review.notes.contains { $0.contains("also adds sv with its text") && $0.hasSuffix("Only remaining text and Copyright changes need another review; matching content is not sent again.") })
     }
 
     /// Uploaded in App Store Connect, so no Save from this Mac knows it: Apple lists it with the same name and size as `png`.
@@ -950,6 +646,79 @@ extension WorkspaceSession {
         #expect((created?["attributes"] as? [String: Any])?["contactFirstName"] as? String == "Synthetic")
     }
 
+    @Test func existingReviewInformationAndAttachmentAcceptScopedProofWithoutReverseLinks() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let account = try #require(try await session.accounts().first), apple = SyntheticApple(), host = "review-links.appstoreconnect.test", app = "1000000001"
+        var fields = ReviewInformation()
+        fields.contactFirstName = "Synthetic"; fields.contactLastName = "Reviewer"; fields.contactPhone = "+1 555 0100"; fields.contactEmail = "review@example.com"; fields.notes = "Earlier synthetic notes"
+        apple.reviewDetails = [["type": "appStoreReviewDetails", "id": "detail-1", "attributes": try JSONSerialization.jsonObject(with: fields.json.data),
+                                "relationships": ["appStoreVersion": ["data": ["type": "appStoreVersions", "id": "version-1"]]]]]
+        apple.reviewReadsOmitOwner = true
+        StubProtocol.handle(host) { apple.handle($0) }
+        StubProtocol.handle("synthetic.blobstore.apple.com") { request in apple.lock.withLock { apple.uploaded = apple.body(request) }; return (200, [:], Data()) }
+        fields.notes = "Updated synthetic notes"
+        let pdf = Data("%PDF-1.4 synthetic review links".utf8)
+        _ = try await session.saveReviewInformationDraft(accountId: account.id, appId: app, versionId: "version-1", fields: fields, attachment: ("guide.pdf", pdf), keepAttachment: false, expectedRevision: 0)
+        let client = try client(account, host: host)
+        let review = try await session.preparePublishing(account: account, request: .init(accountId: account.id, appId: app, scope: .reviewInfo, versionId: "version-1"), client: client)
+        #expect(apple.writes.isEmpty)
+        #expect(review.steps.first?.method == "PATCH")
+        let done = try await session.approvePublishing(account: account, appId: app, id: review.id, fingerprint: review.fingerprint, client: client)
+        #expect(done.state == "complete", "\(done.error ?? "")")
+        #expect(done.errorCode == nil && apple.uploaded == pdf)
+        #expect((apple.reviewDetails.first?["attributes"] as? [String: Any])?["notes"] as? String == fields.notes)
+        #expect(apple.writes.contains { $0.0 == "PATCH" && $0.1 == "/v1/appStoreReviewDetails/detail-1" })
+        #expect(apple.writes.contains { $0.0 == "PATCH" && $0.1 == "/v1/appStoreReviewAttachments/attachment-1" })
+        #expect(StubProtocol.requests(host).contains { $0.url?.query?.contains("include=appStoreVersion") == true })
+    }
+
+    @Test func reviewOwnershipGuardStopsConflictingLinksAndPersistsItsSpecificFailure() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let account = try #require(try await session.accounts().first), apple = SyntheticApple(), host = "review-scope.appstoreconnect.test", app = "1000000001"
+        var fields = ReviewInformation()
+        fields.contactFirstName = "Synthetic"; fields.contactLastName = "Reviewer"; fields.contactPhone = "+1 555 0100"; fields.contactEmail = "review@example.com"
+        apple.reviewDetails = [["type": "appStoreReviewDetails", "id": "detail-1", "attributes": try JSONSerialization.jsonObject(with: fields.json.data)]]
+        StubProtocol.handle(host) { apple.handle($0) }
+        fields.notes = "Updated synthetic notes"
+        _ = try await session.saveReviewInformationDraft(accountId: account.id, appId: app, versionId: "version-1", fields: fields, attachment: nil, keepAttachment: true, expectedRevision: 0)
+        let client = try client(account, host: host)
+        let prepared = try await session.preparePublishing(account: account, request: .init(accountId: account.id, appId: app, scope: .reviewInfo, versionId: "version-1"), client: client)
+        // The version's forward read remains unchanged; only the direct read now contradicts the app-scoped proof.
+        var other = apple.reviewDetails[0]
+        other["relationships"] = ["appStoreVersion": ["data": ["type": "apps", "id": "1000000002"]]]
+        apple.reviewDirectResource = other
+        let stopped = try await session.approvePublishing(account: account, appId: app, id: prepared.id, fingerprint: prepared.fingerprint, client: client)
+        #expect(stopped.state == "failed" && stopped.errorCode == "SB-PUBLISH-SCOPE")
+        #expect(stopped.error == PublishFailure.ownership.message && apple.writes.isEmpty)
+        let saved = try await session.publishReview(accountId: account.id, appId: app, id: prepared.id)
+        #expect(saved.errorCode == stopped.errorCode && PublishReview(stopped.json)?.errorCode == stopped.errorCode)
+        await #expect(throws: PublishFailure.used) { try await session.approvePublishing(account: account, appId: app, id: prepared.id, fingerprint: prepared.fingerprint, client: client) }
+    }
+
+    @Test func reviewOwnershipRequiresTheExactResourceUnderAnApprovedApp() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let account = try #require(try await session.accounts().first), app = "1000000001"
+        for variant in ["unlisted", "malformed", "foreign", "foreign-attachment", "unlisted-attachment"] {
+            let apple = SyntheticApple(), host = "review-\(variant).appstoreconnect.test"
+            let type = variant.hasSuffix("attachment") ? "appStoreReviewAttachments" : "appStoreReviewDetails"
+            apple.reviewDetails = [["type": "appStoreReviewDetails", "id": "detail-1", "attributes": [:]]]
+            var item: [String: Any] = ["type": type, "id": "unlisted-1", "attributes": [:]]
+            if variant == "malformed" { item["relationships"] = ["appStoreVersion": ["data": ["id": "version-1"]]] }
+            if variant == "foreign" { item["relationships"] = ["appStoreVersion": ["data": ["type": "appStoreVersions", "id": "foreign-version"]]] }
+            if variant == "foreign-attachment" { item["relationships"] = ["appStoreReviewDetail": ["data": ["type": "apps", "id": "1000000002"]]] }
+            let direct = item
+            StubProtocol.handle(host) { request in
+                if request.url?.path == "/v1/\(type)/unlisted-1" { return apple.page(direct) }
+                if request.url?.path == "/v1/appStoreVersions/foreign-version" {
+                    return apple.page(["type": "appStoreVersions", "id": "foreign-version", "relationships": ["app": ["data": ["type": "apps", "id": "1000000002"]]]])
+                }
+                return apple.handle(request)
+            }
+            await #expect(throws: PublishFailure.ownership) { try await session.ownedResource(type, "unlisted-1", appId: app, client: client(account, host: host), checked: OwnershipCache()) }
+            #expect(apple.writes.isEmpty)
+        }
+    }
+
     @Test func appInformationAndRegionsAreChangedWithTheirGuards() async throws {
         let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
         let account = try #require(try await session.accounts().first), apple = SyntheticApple(), host = "info.appstoreconnect.test", app = "1000000001"
@@ -1166,6 +935,170 @@ extension WorkspaceSession {
         #expect(throws: PublishFailure.self) { try request.validated() }
         request.listingLocale = "de-DE"
         await #expect(throws: PublishFailure.self) { try await session.preparePublishing(account: account, request: request, client: client) }
+    }
+
+    @Test(arguments: ["marketingUrl", "supportUrl"])
+    func reviewedURLRemovalSendsNullAndDoesNotResendMatchingText(_ field: String) async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let account = try #require(try await session.accounts().first), apple = SyntheticApple(), host = "nullable-\(field.lowercased()).appstoreconnect.test"
+        let app = "1000000001", revisionId = "00000000-0000-4000-8000-000000000002"
+        let source = try #require(try await session.revisions(accountId: account.id, appId: app).first { $0.id == revisionId })
+        let revision = try await session.workspaceRevision(source, accountId: account.id, appId: app)
+        let selections = try LanguageEditorState.selections(revision: revision, versionId: "version-1", locale: "en-US")
+        var text = try LanguageEditorState(await session.languageTextDrafts(accountId: account.id, appId: app, revisionId: revisionId, selections: selections))
+        try text.change(try #require(text.fields.first { $0.key == field }), to: "")
+        try text.change(try #require(text.fields.first { $0.key == "promotionalText" }), to: "Synthetic new promotional copy.")
+        let entries = try text.entries(), receipt = try await session.saveLanguageDraft(accountId: account.id, appId: app, revisionId: revisionId, entries: entries)
+        try text.confirmed(entries, fingerprints: receipt)
+        var versionFields = Dictionary(uniqueKeysWithValues: text.fields.filter { $0.selection.scope == .version }.map { ($0.key, text.value($0)) })
+        versionFields["locale"] = "en-US"; versionFields[field] = "https://example.com/previous"; versionFields["promotionalText"] = "Synthetic previous promotional copy."
+        apple.locales[0]["attributes"] = versionFields
+        var infoFields = Dictionary(uniqueKeysWithValues: text.fields.filter { $0.selection.scope == .appInfo }.map { ($0.key, text.value($0)) })
+        infoFields["locale"] = "en-US"
+        let info: [String: Any] = ["type": "appInfoLocalizations", "id": "info-locale-1", "attributes": infoFields,
+            "relationships": ["appInfo": ["data": ["type": "appInfos", "id": "info-1"]]]]
+        StubProtocol.handle(host) { request in
+            if request.httpMethod == "GET", request.url?.path == "/v1/appInfos/info-1/appInfoLocalizations" { return apple.page([info]) }
+            if request.httpMethod == "PATCH", request.url?.path == "/v1/appStoreVersionLocalizations/version-locale-1",
+               let body = (try? JSONSerialization.jsonObject(with: apple.body(request))) as? [String: Any],
+               let data = body["data"] as? [String: Any], let fields = data["attributes"] as? [String: Any] {
+                guard fields[field] is NSNull else {
+                    return (422, [:], JSONText.object([("errors", .array([.object([("code", .string("ENTITY_ERROR.ATTRIBUTE.TYPE")),
+                        ("detail", .string("Synthetic URL must be a valid URI or null."))])]))]).data)
+                }
+                var attributes = apple.locales[0]["attributes"] as! [String: Any]
+                for (key, value) in fields { attributes[key] = value }
+                apple.locales[0]["attributes"] = attributes
+                apple.writes.append(("PATCH", "/v1/appStoreVersionLocalizations/version-locale-1", body))
+                return apple.page(apple.locales[0])
+            }
+            return apple.handle(request)
+        }
+        let client = try client(account, host: host)
+        var request = try text.publishingRequest(accountId: account.id, appId: app, revisionId: revisionId, versionId: "version-1", targetMode: "apple-version")
+        request.listingLocale = "en-US"; request.mediaStage = PublishRequest.textStage
+        let prepared = try await session.prepareLanguageListingReview(account: account, request: request, client: client)
+        #expect(apple.writes.isEmpty && prepared.review.steps.count == 1)
+        #expect(prepared.review.steps.first?.after?.contains(field + ": Not Set") == true)
+        let completed = try await session.approvePublishing(account: account, appId: app, id: prepared.review.id, fingerprint: prepared.review.fingerprint, client: client)
+        #expect(completed.state == "complete", "\(completed.error ?? "")")
+        #expect(apple.writes.count == 1)
+        let saved = try await session.prepareLanguageListingReview(account: account, request: request, client: client)
+        #expect(saved.review.steps.isEmpty && apple.writes.count == 1)
+        #expect(StubProtocol.requests(host).allSatisfy { !($0.url?.path.contains("Screenshot") ?? true) })
+    }
+
+    @Test func aVersionSetupRaceStillComparesTheLanguageBeforeReportingItMatches() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let account = try #require(try await session.accounts().first), apple = SyntheticApple(), host = "synthetic-language-setup-race.appstoreconnect.test"
+        let app = "1000000001", revision = "00000000-0000-4000-8000-000000000002"
+        _ = try await session.saveReleasePlan(account: account, appId: app, start: .reuse, sourceRevisionId: revision, baseVersionId: "version-1",
+            targetVersion: "2.0", releaseType: "MANUAL", earliestReleaseDate: nil, expected: "null")
+        let text = try await session.textDraft(accountId: account.id, appId: app, revisionId: revision, localizationId: "version-locale-1", scope: .version)
+        var fields = text.fields; fields["description"] = "Synthetic text that still needs to sync after version setup."
+        _ = try await session.saveTextDraft(accountId: account.id, appId: app, revisionId: revision, localizationId: "version-locale-1", scope: .version, fields: fields, fingerprint: text.fingerprint)
+        var attributes = apple.versions[0]["attributes"] as! [String: Any]; attributes["versionString"] = "2.0"; apple.versions[0]["attributes"] = attributes
+        StubProtocol.handle(host) { request in
+            if request.httpMethod == "GET", request.url?.path == "/v1/apps/1000000001/appStoreVersions" {
+                return apple.lock.withLock { apple.counter += 1; return apple.page(apple.counter == 1 ? [] : apple.versions) }
+            }
+            return apple.handle(request)
+        }
+        var request = PublishRequest(accountId: account.id, appId: app, scope: .metadata, targetMode: "release-plan", revisionId: revision, versionId: "version-1")
+        request.listingLocale = "en-US"; request.mediaStage = PublishRequest.textStage
+        let compared = try await session.prepareLanguageListingReview(account: account, request: request, client: try client(account, host: host))
+        #expect(!compared.versionSetup && compared.review.request == request && !compared.review.steps.isEmpty)
+        #expect(compared.review.steps.contains { $0.after?.contains(fields["description"]!) == true })
+        #expect(apple.counter >= 3 && apple.writes.isEmpty, "A setup race must not count as already-synced text or send an unapproved change")
+    }
+
+    @Test func nullableURLsKeepEmptyTextDistinctAndInvalidAddressesFailValidation() throws {
+        let fields = [("marketingUrl", ""), ("supportUrl", ""), ("privacyPolicyUrl", ""), ("privacyChoicesUrl", ""), ("promotionalText", "")]
+        let updated = JSONText.object(WorkspaceSession.publishedTextAttributes(fields))
+        for (field, _) in fields where field.hasSuffix("Url") { #expect(updated[field] == .null) }
+        #expect(updated["promotionalText"] == .string(""))
+        let created = JSONText.object(WorkspaceSession.publishedTextAttributes(fields, creating: true))
+        #expect(created["marketingUrl"] == nil && created["supportUrl"] == nil && created["privacyPolicyUrl"] == nil && created["privacyChoicesUrl"] == nil)
+        #expect(created["promotionalText"] == .string(""))
+        #expect(throws: PublishFailure.self) { try WorkspaceSession.publishedText([("marketingUrl", "not a public URL")], appInfo: false) }
+    }
+
+    @Test func britishTextPreparesWithoutScreenshotsOrMediaRequests() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let account = try #require(try await session.accounts().first), apple = SyntheticApple(), host = "british-text-only.appstoreconnect.test"
+        let revision = "00000000-0000-4000-8000-000000000002"
+        _ = try await session.addLanguage(accountId: account.id, appId: "1000000001", revisionId: revision, versionId: "version-1", locale: "en-GB", copyFrom: "en-US")
+        apple.sets = []; apple.shots = []; apple.placements = []; apple.libraryImages = []
+        StubProtocol.handle(host) { apple.handle($0) }
+        var request = PublishRequest(accountId: account.id, appId: "1000000001", scope: .metadata, targetMode: "apple-version", revisionId: revision, versionId: "version-1")
+        request.mediaStage = PublishRequest.textStage; request.listingLocale = "en-GB"
+        let prepared = try await session.prepareLanguageListingReview(account: account, request: request, client: try client(account, host: host))
+        #expect(!prepared.review.steps.isEmpty && prepared.review.request == request)
+        #expect(prepared.review.steps.allSatisfy { $0.label.contains("en-GB") && $0.kind == .api })
+        #expect(apple.writes.isEmpty, "Preparing text must not send anything without Publish approval")
+        #expect(StubProtocol.requests(host).allSatisfy { $0.httpMethod == "GET" && !($0.url?.path.contains("Screenshot") ?? true) && !($0.url?.path.contains("AssetLibrar") ?? true) })
+    }
+
+    @Test(arguments: ["apple-version", "release-plan"])
+    func britishTextSavesAndSyncsOnceWithoutReleaseReadinessOrMedia(_ targetMode: String) async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let account = try #require(try await session.accounts().first), apple = SyntheticApple(), host = "british-partial-\(targetMode).appstoreconnect.test"
+        let app = "1000000001", revisionId = "00000000-0000-4000-8000-000000000002"
+        _ = try await session.addLanguage(accountId: account.id, appId: app, revisionId: revisionId, versionId: "version-1", locale: "en-GB", copyFrom: "en-US")
+        if targetMode == "release-plan" {
+            _ = try await session.saveReleasePlan(account: account, appId: app, start: .reuse, sourceRevisionId: revisionId, baseVersionId: "version-1",
+                targetVersion: "2.0", releaseType: "MANUAL", earliestReleaseDate: nil, expected: "null")
+            var attributes = apple.versions[0]["attributes"] as! [String: Any]; attributes["versionString"] = "2.0"; apple.versions[0]["attributes"] = attributes
+        }
+        let source = try #require(try await session.revisions(accountId: account.id, appId: app).first { $0.id == revisionId })
+        let revision = try await session.workspaceRevision(source, accountId: account.id, appId: app)
+        let selections = try LanguageEditorState.selections(revision: revision, versionId: "version-1", locale: "en-GB")
+        var text = try LanguageEditorState(await session.languageTextDrafts(accountId: account.id, appId: app, revisionId: revisionId, selections: selections))
+        let description = try #require(text.fields.first { $0.key == "description" })
+        try text.change(description, to: "Synthetic British copy saved independently of submission.")
+        let entries = try text.entries(), receipt = try await session.saveLanguageDraft(accountId: account.id, appId: app, revisionId: revisionId, entries: entries)
+        try text.confirmed(entries, fingerprints: receipt)
+        #expect(!text.dirty && StubProtocol.requests(host).isEmpty)
+        var infoFields = Dictionary(uniqueKeysWithValues: text.fields.filter { $0.selection.scope == .appInfo }.map { ($0.key, text.value($0)) })
+        infoFields["locale"] = "en-GB"
+        let info: [String: Any] = ["type": "appInfoLocalizations", "id": "synthetic-british-info", "attributes": infoFields,
+            "relationships": ["appInfo": ["data": ["type": "appInfos", "id": "info-1"]]]]
+        apple.locales.append(["type": "appStoreVersionLocalizations", "id": "synthetic-british-text", "attributes": ["locale": "en-GB", "description": "Synthetic earlier British copy"],
+            "relationships": ["appStoreVersion": ["data": ["type": "appStoreVersions", "id": "version-1"]]]])
+        apple.sets = []; apple.shots = []; apple.placements = []; apple.libraryImages = []; apple.ageAnswers = [:]
+        #expect((apple.versions[0]["attributes"] as? [String: Any])?["copyright"] == nil && apple.reviewDetails.isEmpty)
+        StubProtocol.handle(host) { request in
+            if request.url?.path == "/v1/appInfos/info-1/appInfoLocalizations" { return apple.page([info]) }
+            if request.url?.path == "/v1/appInfoLocalizations/synthetic-british-info" { return apple.page(info) }
+            if request.httpMethod == "PATCH", request.url?.path == "/v1/appStoreVersionLocalizations/synthetic-british-text" {
+                let body = try! JSONSerialization.jsonObject(with: StubProtocol.body(request)) as! [String: Any]
+                return apple.lock.withLock {
+                    let index = apple.locales.firstIndex { $0["id"] as? String == "synthetic-british-text" }!
+                    var attributes = apple.locales[index]["attributes"] as! [String: Any]
+                    for (field, value) in (body["data"] as! [String: Any])["attributes"] as! [String: Any] { attributes[field] = value }
+                    apple.locales[index]["attributes"] = attributes
+                    apple.writes.append(("PATCH", "/v1/appStoreVersionLocalizations/synthetic-british-text", body))
+                    return apple.page(apple.locales[index])
+                }
+            }
+            return apple.handle(request)
+        }
+        let client = try client(account, host: host)
+        var request = try text.publishingRequest(accountId: account.id, appId: app, revisionId: revisionId, versionId: "version-1", targetMode: targetMode)
+        request.listingLocale = "en-GB"; request.mediaStage = PublishRequest.textStage
+        let before = try await session.storeAccess { try $0.document(namespace: "drafts", key: account.id + ":" + app + ":" + revisionId)?.payload }
+        let prepared = try await session.prepareLanguageListingReview(account: account, request: request, client: client)
+        #expect(apple.writes.isEmpty && !prepared.review.steps.isEmpty)
+        #expect(prepared.review.steps.allSatisfy { $0.kind == .api && $0.path == [.string("appStoreVersionLocalizations"), .string("synthetic-british-text")] })
+        let completed = try await session.approvePublishing(account: account, appId: app, id: prepared.review.id, fingerprint: prepared.review.fingerprint, client: client)
+        #expect(completed.state == "complete", "\(completed.error ?? "")")
+        #expect(apple.writes.count == 1 && apple.writes.first?.1 == "/v1/appStoreVersionLocalizations/synthetic-british-text")
+        #expect(try await session.storeAccess { try $0.document(namespace: "drafts", key: account.id + ":" + app + ":" + revisionId)?.payload } == before)
+        let matching = try await session.prepareLanguageListingReview(account: account, request: request, client: client)
+        #expect(matching.review.steps.isEmpty && apple.writes.count == 1)
+        #expect(StubProtocol.requests(host).allSatisfy { !($0.url?.path.contains("Screenshot") ?? true) && !($0.url?.path.contains("AssetLibrar") ?? true) })
+        await #expect(throws: PublishFailure.used) { try await session.approvePublishing(account: account, appId: app, id: prepared.review.id, fingerprint: prepared.review.fingerprint, client: client) }
+        #expect(apple.writes.count == 1)
     }
 
 }

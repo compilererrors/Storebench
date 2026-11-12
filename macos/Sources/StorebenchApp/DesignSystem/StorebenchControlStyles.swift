@@ -28,11 +28,12 @@ struct StorebenchPicker<Selection: Hashable>: View {
     var hint = ""
     @Binding var selection: Selection
     let options: [SelectionOption<Selection>]
+    let accessory: AnyView?
     private var hideLabel = false
-    init(_ title: String, selection: Binding<Selection>, hint: String = "", @SelectionOptionsBuilder<Selection> content: () -> [SelectionOption<Selection>]) { self.title = title; self.hint = hint; _selection = selection; options = content() }
+    init(_ title: String, selection: Binding<Selection>, hint: String = "", accessory: AnyView? = nil, @SelectionOptionsBuilder<Selection> content: () -> [SelectionOption<Selection>]) { self.title = title; self.hint = hint; self.accessory = accessory; _selection = selection; options = content() }
     func labelsHidden() -> Self { var copy = self; copy.hideLabel = true; return copy }
     var body: some View {
-        StorebenchFormField(label: title, hint: hint, hideLabel: hideLabel, hideHint: hideLabel) {
+        StorebenchFormField(label: title, hint: hint, hideLabel: hideLabel, hideHint: hideLabel, accessory: accessory) {
             StorebenchNativePicker(title: title, selection: $selection, options: options)
         }.accessibilityLabel(title)
     }
@@ -58,8 +59,8 @@ struct StorebenchMenuFace: View {
             StorebenchIcon(name: "next", size: 14).rotationEffect(.degrees(90)).foregroundStyle(active ? StorebenchTheme.muted : StorebenchTheme.subtle)
         }.padding(.horizontal, StorebenchTheme.space(3)).frame(minWidth: 0, maxWidth: .infinity)
             .frame(height: StorebenchTheme.controlHeight)
-            .foregroundStyle(active ? command ? StorebenchTheme.color("color-accent-muted") : StorebenchTheme.ink : StorebenchTheme.subtle)
-            .background(StorebenchTheme.color(active ? emphasized ? "color-surface-subtle" : command ? "color-surface-accent" : "color-surface" : "color-surface-sunken"), in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
+            .foregroundStyle(active ? StorebenchTheme.ink : StorebenchTheme.subtle)
+            .background(StorebenchTheme.color(active ? emphasized ? "color-surface-sunken" : command ? "color-surface-subtle" : "color-surface" : "color-surface-sunken"), in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
             .overlay(StorebenchControlOutline(border: StorebenchTheme.color(emphasized ? "color-border-accent" : "color-border-control"), focusedOverride: focused))
             .contentShape(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
     }
@@ -89,22 +90,64 @@ struct StorebenchNavigationSelect<Options: View>: View {
     }
 }
 
-/// Button geometry stays in the label; system menus keep their own menu-item rendering.
-struct StorebenchButtonStyle: ButtonStyle {
+/// Standard commands use the system's push buttons; quiet commands and icon tools share a lighter surface.
+struct StorebenchButtonStyle: PrimitiveButtonStyle {
     typealias Variant = ControlColors.Variant
     enum Size { case regular, icon }
     var variant: Variant = .secondary
     var size: Size = .regular
     var stretch = false
-    @State private var hovering = false
+    @Environment(\.naturalActions) private var naturalActions
+    @Environment(\.actionFill) private var actionFill
     @Environment(\.isEnabled) private var enabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     init(_ variant: Variant = .secondary, size: Size = .regular, stretch: Bool = false) { self.variant = variant; self.size = size; self.stretch = stretch }
+    @ViewBuilder func makeBody(configuration: Configuration) -> some View {
+        if size == .icon || variant == .quiet || variant == .field {
+            StorebenchCommandButton(role: configuration.role, action: configuration.trigger) { configuration.label }
+                .buttonStyle(StorebenchQuietButtonStyle(variant: configuration.role == .destructive ? .danger : variant, size: size, stretch: stretch))
+                .environment(\.isEnabled, enabled)
+        } else {
+            StorebenchCommandWidth(minimum: naturalActions ? 0 : StorebenchTheme.actionWidth,
+                                   maximum: naturalActions && !stretch && !actionFill ? .infinity : stretch ? StorebenchTheme.actionMaxWidth : StorebenchTheme.actionWidth,
+                                   fill: stretch || actionFill) {
+                if variant == .primary && configuration.role != .destructive {
+                    nativeButton(configuration).buttonStyle(.borderedProminent)
+                } else {
+                    nativeButton(configuration).buttonStyle(.bordered)
+                }
+            }.frame(minHeight: StorebenchTheme.controlHeight)
+        }
+    }
+    private func nativeButton(_ configuration: Configuration) -> some View {
+        StorebenchCommandButton(role: configuration.role, action: configuration.trigger) {
+            configuration.label.font(.sbCallout.weight(.medium)).multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, minHeight: StorebenchTheme.controlHeight - 8)
+        }.controlSize(.regular)
+            .tint(variant == .danger || configuration.role == .destructive ? StorebenchTheme.color("color-danger") : StorebenchTheme.accent)
+    }
+}
+
+/// Every activation takes over from an earlier scroll target, including VoiceOver and Return.
+private struct StorebenchCommandButton<Label: View>: View {
+    let role: ButtonRole?
+    let action: () -> Void
+    @ViewBuilder let label: () -> Label
+    @State private var focus = StorebenchScrollFocus()
+    @Environment(\.pageFocusInteraction) private var interaction
+    var body: some View {
+        Button(role: role) { interaction?(); focus.interact(); action() } label: { label() }
+            .background(StorebenchScrollFocusAnchor(focus: focus))
+    }
+}
+
+private struct StorebenchQuietButtonStyle: ButtonStyle {
+    let variant: ControlColors.Variant
+    let size: StorebenchButtonStyle.Size
+    let stretch: Bool
+    @State private var hovering = false
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .modifier(StorebenchControlSurface(variant: configuration.role == .destructive ? .danger : variant, size: size, stretch: stretch, emphasized: hovering || configuration.isPressed))
-            .scaleEffect(configuration.isPressed && enabled && !reduceMotion ? 0.99 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+            .modifier(StorebenchControlSurface(variant: variant, size: size, stretch: stretch, emphasized: hovering || configuration.isPressed))
             .contentShape(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
             .onHover { hovering = $0 }
     }
@@ -130,13 +173,13 @@ struct StorebenchControlSurface: ViewModifier {
             : .init(minimum: naturalActions || variant == .field ? 0 : CGFloat(StorebenchTheme.actionWidth),
                     maximum: naturalActions && !stretch && !actionFill ? .infinity : CGFloat(stretch ? StorebenchTheme.actionMaxWidth : StorebenchTheme.actionWidth), fill: stretch || actionFill)
         width {
-            content.font(.sbCallout.weight(variant == .field ? .regular : .semibold)).lineLimit(nil).multilineTextAlignment(.center)
-                .padding(.horizontal, size == .icon ? 4 : 16)
+            content.font(.sbCallout.weight(variant == .field ? .regular : .medium)).lineLimit(nil).multilineTextAlignment(.center)
+                .padding(.horizontal, size == .icon ? 4 : 12)
         }
             .frame(minHeight: StorebenchTheme.controlHeight)
             .foregroundStyle(StorebenchTheme.color(colors.foreground))
-            .background(StorebenchTheme.color(colors.background), in: RoundedRectangle(cornerRadius: radius))
-            .overlay(StorebenchControlOutline(border: StorebenchTheme.color(colors.border), radius: radius, focusedOverride: focused))
+            .background(variant == .quiet && !emphasized ? .clear : StorebenchTheme.color(colors.background), in: RoundedRectangle(cornerRadius: radius))
+            .overlay(StorebenchControlOutline(border: variant == .quiet ? .clear : StorebenchTheme.color(colors.border), radius: radius, focusedOverride: focused))
     }
 }
 

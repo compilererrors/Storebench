@@ -53,13 +53,13 @@ struct PeriodRangeField: View {
             Text(title).font(.sbCallout.weight(.semibold)).foregroundStyle(StorebenchTheme.muted)
             if latest.isEmpty { Text("Date choices appear once reports are saved.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
             else {
-            StorebenchFlow(spacing: 8) {
+            StorebenchChipGroup {
                 ForEach(presets, id: \.self) { preset in
                     Button { select(preset) } label: { Text(label(preset).title) }
                         .buttonStyle(StorebenchButtonStyle(selection == preset ? .secondary : .quiet)).help(label(preset).help)
                         .accessibilityAddTraits(selection == preset ? .isSelected : [])
                 }
-            }.environment(\.naturalActions, true)
+            }
             }
             if custom, let range = resolved, let first = PeriodDates.date(range.from), let last = PeriodDates.date(range.to) {
                 StorebenchFormGrid {

@@ -21,12 +21,12 @@ struct ExportComplianceCard: View {
             if declarations?.isEmpty == true { Text("This app has no declarations at Apple yet.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
             if declarations == nil && status.isEmpty { Text("Reading Apple's declarations…").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
             ForEach(declarations ?? []) { declaration in
-                HStack {
+                StorebenchActionRow {
                     VStack(alignment: .leading, spacing: 2) {
                         StorebenchTextSlot(text: declaration.description.isEmpty ? declaration.id : declaration.description, height: 34)
                         Text("\(AppStoreNames.state(declaration.state))\(declaration.platform.isEmpty ? "" : " · \(Releases.platformName(declaration.platform))")").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
                     }
-                    Spacer()
+                } actions: {
                     if ["CREATED", "IN_REVIEW"].contains(declaration.state) { Button("Upload PDF…") { changed(); fileSelection.begin(declaration.id) } }
                 }
                 StorebenchDivider()
@@ -55,6 +55,12 @@ struct ExportComplianceCard: View {
         .storebenchWorking(working)
         .onChange(of: questions) { changed() }
         .trackUnsavedChanges(draft?.dirty(questions.json) == true, busy: working || fileSelection.pending || draft?.busy == true, onSave: { await draft?.saveCurrent(value: { questions.json }) == true })
+        .pageRefreshParticipant("export-declarations/" + account.id + "/" + app.id,
+            state: { .init(dirty: draft?.dirty(questions.json) == true, busy: working || fileSelection.pending || draft?.busy == true, signature: questions.json.sha256) },
+            save: { await draft?.saveCurrent(value: { questions.json }) == true }, discard: {
+                guard let baseline = draft?.baseline else { return false }
+                questions = EncryptionQuestionnaire(json: baseline); return draft?.dirty(questions.json) == false
+            }, refresh: { await load(); return declarations != nil })
         .task {
             if offersNewDeclaration, let session {
                 let owner = LocalEditorDraftEditor(scope: .init(accountId: account.id, appId: app.id, editor: "encryption-declaration", resource: "new"), session: session)

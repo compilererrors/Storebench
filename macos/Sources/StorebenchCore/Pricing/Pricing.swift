@@ -170,6 +170,7 @@ extension WorkspaceSession {
     public func refreshPricing(account: Account, appId: String, client: AppStoreConnectClient, now: Date = Date()) async throws -> PricingSnapshot {
         _ = try currentAccount(account, client: client); try reviewsScope(account, appId: appId); try Task.checkCancellation()
         guard account.appIds.contains(appId) else { throw PricingFailure.invalid("App is not configured for this account.") }
+        let token = try pricingReadToken(accountId: account.id, appId: appId)
         do {
             guard let schedule = try await client.get("/v1/apps/\(appId)/appPriceSchedule").first, schedule.type == "appPriceSchedules" else { throw PricingFailure.unavailable }
             guard let base = try await client.get("/v1/appPriceSchedules/\(schedule.id)/baseTerritory").first, base.type == "territories" else { throw PricingFailure.unavailable }
@@ -180,33 +181,40 @@ extension WorkspaceSession {
                 .sorted { ($0.territory, $0.startDate ?? "") < ($1.territory, $1.startDate ?? "") }
             let snapshot = PricingSnapshot(baseTerritory: base.id, baseCurrency: base.attributes?["currency"]?.string ?? "", fetchedAt: CustomerReview.isoString(now), rows: rows)
             try Task.checkCancellation(); _ = try currentAccount(account, client: client); try reviewsScope(account, appId: appId)
-            try savePricing(accountId: account.id, appId: appId, checkedAt: snapshot.fetchedAt, snapshot: snapshot, code: nil)
+            try savePricing(accountId: account.id, appId: appId, checkedAt: snapshot.fetchedAt, snapshot: snapshot, code: nil, readToken: token)
             return snapshot
         } catch {
             if error is CancellationError || (error as? URLError)?.code == .cancelled { throw error }
             _ = try currentAccount(account, client: client); try reviewsScope(account, appId: appId)
             let code: String
             switch error { case AppStoreConnectClient.Failure.agreement, AccountFailure.agreement: code = "SB-APPLE-AGREEMENT"; case AppStoreConnectClient.Failure.status(401): code = "SB-APPLE-AUTH"; case AppStoreConnectClient.Failure.status(403): code = "SB-APPLE-ACCESS"; default: code = "SB-SYNC-PRICING" }
-            try? savePricing(accountId: account.id, appId: appId, checkedAt: CustomerReview.isoString(Date()), snapshot: nil, code: code)
+            try? savePricing(accountId: account.id, appId: appId, checkedAt: CustomerReview.isoString(now), snapshot: nil, code: code, readToken: token)
             throw error
         }
     }
 
-    func savePricing(accountId: String, appId: String, checkedAt: String, snapshot: PricingSnapshot?, code: String?) throws {
+    func savePricing(accountId: String, appId: String, checkedAt: String, snapshot: PricingSnapshot?, code: String?, readToken: PricingReadToken? = nil) throws {
         try storeAccess { store in
-            try store.transaction { current in
-                let previous = try current("apple_prices", "\(accountId):\(appId)").map { try JSONText.parse($0.payload) }
-                if let saved = previous?["checkedAt"]?.text, saved > checkedAt { return [] }
-                var fields: [(String, JSONText)] = [("checkedAt", .string(checkedAt))]
-                if let snapshot {
-                    fields.append(("snapshot", .object([("baseTerritory", .string(snapshot.baseTerritory)), ("baseCurrency", .string(snapshot.baseCurrency)), ("rows", .array(snapshot.rows.map(\.json))), ("fetchedAt", .string(snapshot.fetchedAt))])))
+            try FileMutex.withLock(store.directory.appendingPathComponent("pricing_readback.mutex")) {
+                try store.transaction { current in
+                    let key = "\(accountId):\(appId)"
+                    if let readToken, try current("pricing_refresh", key)?.payload != readToken.invalidation { throw PricingFailure.stale }
+                    let previous = try current("apple_prices", "\(accountId):\(appId)").map { try JSONText.parse($0.payload) }
+                    if let saved = previous?["checkedAt"]?.text, saved > checkedAt { return [] }
+                    var fields: [(String, JSONText)] = [("checkedAt", .string(checkedAt))]
+                    if let snapshot {
+                        fields.append(("snapshot", .object([("baseTerritory", .string(snapshot.baseTerritory)), ("baseCurrency", .string(snapshot.baseCurrency)), ("rows", .array(snapshot.rows.map(\.json))), ("fetchedAt", .string(snapshot.fetchedAt))])))
+                    }
+                    if let code { fields.append(("code", .string(code))) }
+                    // A failed read keeps the last prices Apple returned.
+                    if snapshot == nil, let kept = previous?["snapshot"] { fields.append(("snapshot", kept)) }
+                    var changes: [EncryptedDocumentStore.Write] = [.put(namespace: "apple_prices", key: key, json: JSONText.object(fields).data)]
+                    if snapshot != nil, let confirmed = readToken?.confirmed { changes.append(.put(namespace: "pricing_refresh", key: key, json: confirmed)) }
+                    return changes
                 }
-                if let code { fields.append(("code", .string(code))) }
-                // A failed read keeps the last prices Apple returned.
-                if snapshot == nil, let kept = previous?["snapshot"] { fields.append(("snapshot", kept)) }
-                return [.put(namespace: "apple_prices", key: "\(accountId):\(appId)", json: JSONText.object(fields).data)]
             }
         }
+        pricingDidChange(accountId: accountId, appId: appId)
     }
 
     public func savedPricing(accountId: String, appId: String) throws -> SavedPricing? {

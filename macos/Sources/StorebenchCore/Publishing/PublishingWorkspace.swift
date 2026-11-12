@@ -2,6 +2,18 @@ import Foundation
 
 /// Live Apple choices are kept separate from the saved material used for a metadata review.
 public enum PublishingWorkspace {
+    /// Why the selected change can proceed, needs input, or has already been completed at Apple.
+    public struct Preparation: Sendable, Equatable {
+        public enum State: Sendable, Equatable { case available, blocked, settled }
+        public let state: State
+        public let title, detail: String
+        public var canPrepare: Bool { state == .available }
+    }
+    /// A remembered review belongs to one editor target; a text review cannot replace Copyright or a different media stage.
+    public static func reviewContext(_ request: PublishRequest) -> String {
+        JSONText.array([request.accountId, request.appId, request.scope.rawValue, request.revisionId ?? "", request.versionId ?? "",
+                        request.targetMode ?? "", request.mediaStage ?? "", request.listingLocale ?? ""].map(JSONText.string)).sha256
+    }
     public struct Version: Sendable, Identifiable, Equatable, Codable {
         public let id, name, platform, number, state, releaseType, copyright: String
         public init(id: String, platform: String, number: String, state: String, releaseType: String = "", copyright: String = "") {
@@ -83,9 +95,12 @@ public enum PublishingWorkspace {
         }
         public mutating func receive(_ value: Snapshot) throws {
             guard value.accountId == accountId, value.appId == appId else { throw PublishFailure.invalid("Publishing choices belong to another app. Your selections remain here.") }
+            let initialCopyright = snapshot?.versions == nil && action == .copyright && copyright.isEmpty
             snapshot = value
             if versionId.isEmpty, value.versions != nil {
                 versionId = initialVersion(value.versions ?? [], scope: action.scope, planPlatform: value.plan?.platform, planNumber: value.plan?.targetVersion)
+                copyright = version?.copyright ?? ""; copyrightBaseline = copyright
+            } else if initialCopyright {
                 copyright = version?.copyright ?? ""; copyrightBaseline = copyright
             }
             if revisionId.isEmpty { revisionId = value.sources?.first?.id ?? ""; sourceVersionId = source?.versions.first?.id ?? "" }
@@ -138,6 +153,22 @@ public enum PublishingWorkspace {
             return try request.validated()
         }
         public var canPrepare: Bool { (try? request()) != nil }
+        /// A current Apple submission takes precedence over an older failed local attempt.
+        public var preparation: Preparation {
+            if action == .submit, let version, ReleaseReadiness.submitted.contains(version.state) {
+                return Preparation(state: .settled, title: AppStoreNames.state(version.state),
+                                   detail: "\(version.name) is \(AppStoreNames.state(version.state)) at Apple. This version has already been submitted. No new submission is needed; refresh its status or continue to App Store Version Release.")
+            }
+            do {
+                _ = try request()
+                if action == .submit, let version, !Apple.editable.contains(version.state) {
+                    return Preparation(state: .blocked, title: "Check Version Status", detail: "\(version.name) is \(AppStoreNames.state(version.state)) at Apple. Refresh Status before preparing a submission for this version.")
+                }
+                return Preparation(state: .available, title: "Ready to Prepare", detail: "Review the changes before sending them to App Store Connect.")
+            } catch {
+                return Preparation(state: .blocked, title: "Before You Continue", detail: (error as? PublishFailure)?.message ?? "Read current choices before preparing this change.")
+            }
+        }
     }
 }
 

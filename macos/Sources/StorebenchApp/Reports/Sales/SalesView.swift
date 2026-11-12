@@ -41,7 +41,7 @@ struct SalesView: View {
         })
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             if loaded && (failed || reports.isEmpty || range == nil) {
                 Card(title: "Sales reports and dates", subtitle: "Download reports, then choose saved dates to analyze.", help: "report-availability", actions: AnyView(downloadAction)) { reportControls }
             }

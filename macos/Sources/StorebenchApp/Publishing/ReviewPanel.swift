@@ -32,6 +32,7 @@ struct ReviewPanel: View {
     var reveals = true
     /// Editors use one sync command followed by this concrete approval sheet.
     var syncConfirmation = false
+    var syncTitle = "Sync to Apple"
     var localDraft: LocalEditorDraftEditor? = nil
     var draftPaths: [[String]]? = nil
     @State private var draftSnapshot: LocalEditorDraftEditor.SyncSnapshot?
@@ -39,6 +40,7 @@ struct ReviewPanel: View {
     @State private var syncPresented = false
     @Environment(\.pageScroll) private var pageScroll
     @Environment(\.pageReveal) private var pageReveal
+    @Environment(\.recoveryNavigation) private var recoveryNavigation
     @Environment(\.readyReviews) private var readyReviews
     /// The send command takes focus when a new review appears, so Return or Space sends it after reading.
     @FocusState private var sendFocused: Bool
@@ -88,8 +90,8 @@ struct ReviewPanel: View {
         }
         .sheet(isPresented: Binding(get: { syncPresented && review?.state == "prepared" }, set: { syncPresented = $0 })) {
             if let review {
-                StorebenchDialog(title: "Sync to Apple", wide: true, height: 720, subtitle: review.title, busy: working) {
-                    Text("Review the changes below, then confirm the sync.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
+                StorebenchDialog(title: syncTitle, wide: true, height: 720, subtitle: review.title, busy: working) {
+                    Text("Review the changes below, then approve them.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
                     let removals = PublishingReviewPresentation.removals(review)
                     if !removals.isEmpty {
                         StorebenchAttention(title: "Remove \(removals.count) Items") {
@@ -104,11 +106,13 @@ struct ReviewPanel: View {
                 } actions: {
                     StorebenchActionGroup(alignment: .trailing) {
                         Button("Cancel", role: .cancel) { syncPresented = false; self.review = nil }
-                        StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Syncing…", busy: working,
+                            .storebenchControlID("publish.sync.cancel")
+                        StorebenchBusyButton(title: syncTitle, loadingTitle: "Sending…", busy: working,
                             variant: PublishingReviewPresentation.hasDestructiveChanges(review) ? .danger : .primary) {
                             syncPresented = false
                             Task { await approve(review) }
                         }.storebenchWorking(actionsBusy || !PublishingReviewPresentation.canApprove(review, now: now))
+                            .storebenchControlID("publish.sync.approve")
                     }.storebenchWorking(working)
                 }
                 .interactiveDismissDisabled(working)
@@ -175,25 +179,36 @@ struct ReviewPanel: View {
         else {
             Group {
                 if working && review.state == "prepared" {
-                    ProgressView { Text("Checking App Store Connect again before sending…") }
+                    StorebenchProgressStatus(message: "Checking App Store Connect again before sending…", height: 18)
                 } else {
-                    ProgressView(value: Double(completed), total: Double(max(1, total))) {
-                        // The file being uploaded now, with its speed, so a long upload visibly moves.
-                        Text(review.state == "running" ? PublishingReviewPresentation.activity(review) + (PublishTransfer.shared.snapshot().map { " · " + $0.text } ?? "")
-                             : review.state == "complete" ? "All \(total) sent" : stopped ? "Stopped after \(completed) of \(total)" : "Nothing sent yet")
-                    }.accessibilityLabel("Publishing and media upload progress")
+                    // The file being uploaded now, with its speed, so a long upload visibly moves.
+                    StorebenchProgressStatus(message: review.state == "running" ? PublishingReviewPresentation.activity(review) + (PublishTransfer.shared.snapshot().map { " · " + $0.text } ?? "")
+                                             : review.state == "complete" ? "All \(total) sent" : stopped ? "Stopped after \(completed) of \(total)" : "Nothing sent yet",
+                                             value: Double(completed), total: Double(max(1, total)), height: 18)
+                        .accessibilityLabel("Publishing and media upload progress")
                 }
-            }.progressViewStyle(StorebenchProgressStyle()).frame(maxWidth: .infinity, minHeight: 34, maxHeight: 34, alignment: .topLeading)
+            }.frame(maxWidth: .infinity, minHeight: 34, maxHeight: 34, alignment: .topLeading)
         }
         // Why it stopped and what to do, set apart from the review itself.
         // Sections App Store Connect now shows as answered move out of the warning; Apple checks them again on Resume.
         if stopped {
             let answered = review.problems.filter { fixed[$0.area]?.done == true }, remaining = review.problems.filter { fixed[$0.area]?.done != true }
+            let scopeFailure = review.errorCode == "SB-PUBLISH-SCOPE" && review.request.scope == .reviewInfo
+            let contextualActions = fix != nil || remaining.allSatisfy { PublishingReviewPresentation.recoveryTarget($0.area) != nil }
             if review.problems.isEmpty || !remaining.isEmpty {
                 StorebenchAttention {
                     Text(review.problems.isEmpty ? review.error ?? "This review stopped before it finished. Completed steps remain applied." : AppleProblem.summary(remaining, status: 0)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                     if !remaining.isEmpty { AppleProblemsView(problems: remaining, fixed: fixed, fix: fix) }
-                    RecoveryActions(code: issueCode ?? "SB-PUBLISH-APPROVAL", compact: true, copyCode: true)
+                    if scopeFailure {
+                        StorebenchActionGroup {
+                            Button("Open App Review") {
+                                if let fix { fix(AppleProblem.Area.reviewInformation.rawValue) }
+                                else if let action = PublishingReviewPresentation.recoveryTarget(.reviewInformation)?.resolved(scope: recoveryNavigation.scope) { recoveryNavigation.navigate?(action) }
+                            }.help("Open App Review Information, refresh it and prepare a new review.")
+                        }
+                    }
+                    RecoveryActions(code: review.errorCode ?? issueCode ?? "SB-PUBLISH-APPROVAL", compact: true, copyCode: true,
+                                    showPrimaryAction: !scopeFailure && (remaining.isEmpty || !contextualActions))
                 }
             }
             if !answered.isEmpty {
@@ -321,10 +336,7 @@ struct ReviewPanel: View {
         } label: {
             HStack {
                 Text(step.label).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
-                HStack(spacing: 6) {
-                    if step.state == "running" { StorebenchSpinner() }
-                    Text(Self.stepState(step, pending: "")).font(.sbCaption).foregroundStyle(step.state == "failed" ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted)
-                }.frame(width: 100, height: 22, alignment: .trailing)
+                StorebenchStepState(text: Self.stepState(step, pending: ""), running: step.state == "running", problem: step.state == "failed")
             }
         }
     }
@@ -359,7 +371,7 @@ struct ReviewPanel: View {
             statusText = review?.state == "complete" ? "Published." : ""
         } catch let failure as PublishFailure {
             progress.cancel()
-            issueCode = "SB-PUBLISH-APPROVAL"
+            issueCode = failure.recoveryCode ?? "SB-PUBLISH-APPROVAL"
             statusText = failure.message
             review = try? await session.publishReview(accountId: account.id, appId: app.id, id: prepared.id)
         } catch { progress.cancel(); issueCode = RecoveryIssue.apple(error) ?? "SB-PUBLISH-APPROVAL"; statusText = ReportingMessages.message(issueCode!) }
@@ -382,6 +394,7 @@ struct ReviewPanel: View {
 /// where they are answered. Codes Storebench does not know stay under Other, as Apple sent them.
 struct AppleProblemsView: View {
     let problems: [AppleProblem]
+    @Environment(\.recoveryNavigation) private var recoveryNavigation
     /// What App Store Connect shows now for a section, read after Apple refused it.
     struct Now: Equatable {
         let done: Bool, text: String
@@ -410,11 +423,17 @@ struct AppleProblemsView: View {
         VStack(alignment: .leading, spacing: StorebenchTheme.space(3)) {
             ForEach(areas, id: \.self) { area in
                 let items = problems.filter { $0.area == area }
+                let action = PublishingReviewPresentation.recoveryTarget(area)?.resolved(scope: recoveryNavigation.scope)
                 VStack(alignment: .leading, spacing: StorebenchTheme.space(1)) {
                     StorebenchHeader {
                         Text(answered ? area.title : "\(area.title) · \(items.count) \(items.count == 1 ? "item" : "items")").font(.sbHeadline).fixedSize(horizontal: false, vertical: true)
                     } actions: {
-                        if let fix, let check = area.check { Button(area.action) { fix(check) }.buttonStyle(StorebenchButtonStyle(fixed?[area]?.done == true ? .secondary : .primary)).help(area.actionHelp) }
+                        if let check = area.check, fix != nil || action != nil && recoveryNavigation.navigate != nil {
+                            Button(area.action) {
+                                if let fix { fix(check) }
+                                else if let action { recoveryNavigation.navigate?(action) }
+                            }.buttonStyle(StorebenchButtonStyle(fixed?[area]?.done == true ? .secondary : .primary)).help(area.actionHelp)
+                            .storebenchControlID("apple.fix." + check) }
                     }
                     if !answered {
                         // Apple's own reason for each item, with the field it names; its code stays for support.

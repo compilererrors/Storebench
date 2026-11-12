@@ -7,19 +7,21 @@ struct Card: View {
     private let icon: String
     private let content: AnyView
     private let actions: AnyView?
+    private let accessory: AnyView?
     @Environment(\.gridCardRows) private var gridCardRows
+    @Environment(\.settingsPresentation) private var settingsPresentation
 
     /// `help` names a public help topic; its (?) sits beside the title.
-    init<Content: View>(title: String, subtitle: String, help: String = "", icon: String = "", actions: AnyView? = nil, @ViewBuilder content: () -> Content) {
-        self.title = title; self.subtitle = subtitle; self.help = help; self.icon = icon; self.actions = actions; self.content = AnyView(content())
+    init<Content: View>(title: String, subtitle: String, help: String = "", icon: String = "", actions: AnyView? = nil, accessory: AnyView? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title; self.subtitle = subtitle; self.help = help; self.icon = icon; self.actions = actions; self.accessory = accessory; self.content = AnyView(content())
     }
 
     /// Settings panes use the same cards as the workspace, so the whole app shares one look.
     var body: some View {
-        StorebenchCardLayout(fillsRow: gridCardRows) {
-            if let actions { StorebenchHeader { CardHeading(title: title, subtitle: subtitle, help: help, icon: icon) } actions: { actions } }
-            else { CardHeading(title: title, subtitle: subtitle, help: help, icon: icon) }
-            StorebenchCardBodyLayout { content.environment(\.gridCardRows, false) }
+        StorebenchCardLayout(fillsRow: gridCardRows, spacing: settingsPresentation ? StorebenchTheme.space(2) : StorebenchTheme.measure("sectionSpacing")) {
+            if let actions { StorebenchHeader { CardHeading(title: title, subtitle: subtitle, help: help, icon: icon, accessory: accessory) } actions: { actions } }
+            else { CardHeading(title: title, subtitle: subtitle, help: help, icon: icon, accessory: accessory) }
+            StorebenchCardBodyLayout(spacing: settingsPresentation ? StorebenchTheme.space(2) : StorebenchTheme.gap) { content.environment(\.gridCardRows, false) }
                 .transformEnvironment(\.navigationPresentation) { $0 = $0?.scoped(title) }
         }
         .modifier(CardSurface())
@@ -29,9 +31,10 @@ struct Card: View {
 /// Grid rows offer their shared height to the body, keeping card headings at the top and commands at the bottom.
 private struct StorebenchCardLayout: StorebenchTrackLayout {
     var fillsRow: Bool
+    var spacing: CGFloat
     func tracks(width: CGFloat, minimumHeight: CGFloat, subviews: Subviews) -> StorebenchTracks {
         let heading = subviews.size(0, ProposedViewSize(width: width, height: nil)).height
-        let top = heading + StorebenchTheme.measure("sectionSpacing")
+        let top = heading + spacing
         let body = subviews.size(1, ProposedViewSize(width: width, height: nil)).height
         let height = max(top + body, minimumHeight)
         return StorebenchTracks(frames: [CGRect(x: 0, y: 0, width: width, height: heading),
@@ -42,17 +45,18 @@ private struct StorebenchCardLayout: StorebenchTrackLayout {
 struct StorebenchCardFooterKey: LayoutValueKey { static let defaultValue = false }
 
 private struct StorebenchCardBodyLayout: StorebenchTrackLayout {
+    var spacing: CGFloat
     var fillsRow: Bool { true }
     func tracks(width: CGFloat, minimumHeight: CGFloat, subviews: Subviews) -> StorebenchTracks {
         let heights = subviews.map { $0.sizeThatFits(ProposedViewSize(width: width, height: nil)).height }
-        let natural = heights.reduce(0, +) + CGFloat(max(0, subviews.count - 1)) * StorebenchTheme.gap
+        let natural = heights.reduce(0, +) + CGFloat(max(0, subviews.count - 1)) * spacing
         let height = max(natural, minimumHeight)
         var y: CGFloat = 0, frames: [CGRect] = []
         var placedSpace = false
         for (index, view) in subviews.enumerated() {
             if view[StorebenchCardFooterKey.self], !placedSpace { y += height - natural; placedSpace = true }
             frames.append(CGRect(x: 0, y: y, width: width, height: heights[index]))
-            y += heights[index] + StorebenchTheme.gap
+            y += heights[index] + spacing
         }
         return StorebenchTracks(frames: frames, height: height)
     }
@@ -62,21 +66,26 @@ private struct CardHeading: View {
     let title: String, subtitle: String
     var help = ""
     var icon = ""
+    var accessory: AnyView? = nil
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .center, spacing: StorebenchTheme.space(2)) {
-                if !icon.isEmpty {
-                    StorebenchIcon(name: icon, size: 18).foregroundStyle(StorebenchTheme.color("color-accent-muted"))
-                        .frame(width: StorebenchTheme.controlHeight, height: StorebenchTheme.controlHeight)
-                        .background(StorebenchTheme.color("color-surface-accent"), in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
-                        .accessibilityHidden(true)
-                }
-                StorebenchHugWidth {
-                    StorebenchTextSlot(text: title, height: StorebenchTheme.measure("sectionTitle"), font: .sbTitle3)
-                }.layoutPriority(1)
-                if !help.isEmpty { StorebenchHelpButton(topic: help); Spacer(minLength: 0) }
+        HStack(alignment: .top, spacing: StorebenchTheme.space(2)) {
+            if !icon.isEmpty {
+                StorebenchIcon(name: icon, size: 14).foregroundStyle(StorebenchTheme.color("color-accent-muted"))
+                    .frame(width: 24, height: 24)
+                    .background(StorebenchTheme.color("color-surface-accent"), in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
+                    .accessibilityHidden(true)
             }
-            if !subtitle.isEmpty { StorebenchTextSlot(text: subtitle, height: StorebenchTheme.measure("sectionDescription"), font: .sbCallout, color: StorebenchTheme.muted) }
+            VStack(alignment: .leading, spacing: StorebenchTheme.space(1)) {
+                HStack(spacing: StorebenchTheme.space(2)) {
+                    StorebenchHugWidth {
+                        StorebenchTextSlot(text: title, height: StorebenchTheme.measure("sectionTitle"), font: .sbTitle3)
+                    }.layoutPriority(1)
+                    if !help.isEmpty { StorebenchHelpButton(topic: help) }
+                    if !help.isEmpty || accessory != nil { Spacer(minLength: StorebenchTheme.space(2)) }
+                    if let accessory { accessory.fixedSize() }
+                }
+                if !subtitle.isEmpty { StorebenchTextSlot(text: subtitle, height: StorebenchTheme.measure("sectionDescription"), font: .sbCallout, color: StorebenchTheme.muted) }
+            }
         }
     }
 }
@@ -104,6 +113,7 @@ struct StorebenchCardSection<Content: View>: View {
     let title: String
     var description = ""
     var help = ""
+    var accessory: AnyView? = nil
     @ViewBuilder let content: () -> Content
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -111,6 +121,7 @@ struct StorebenchCardSection<Content: View>: View {
                 Text(title).font(.sbHeadline).fixedSize(horizontal: false, vertical: true).layoutPriority(1)
                 if !help.isEmpty { StorebenchHelpButton(topic: help) }
                 StorebenchDivider()
+                if let accessory { accessory.fixedSize() }
             }.frame(maxWidth: .infinity, alignment: .leading)
             if !description.isEmpty { StorebenchAdaptiveText(text: description, color: StorebenchTheme.muted) }
             content()
@@ -126,14 +137,14 @@ struct Fact: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .top, spacing: StorebenchTheme.space(1)) {
-                StorebenchTextSlot(text: title, height: 34, font: .sbCallout.weight(.semibold), color: StorebenchTheme.muted)
+                StorebenchTextSlot(text: title, height: 18, font: .sbCallout.weight(.medium), color: StorebenchTheme.muted)
                 if !info.isEmpty { StorebenchInfoTip(title: title, text: info) }
             }
-            StorebenchTextSlot(text: value, height: 36, font: compact ? .sbHeadline : .sbMetric)
-            if !compact { StorebenchTextSlot(text: hint, height: 32, font: .sbCaption, color: StorebenchTheme.subtle) }
+            StorebenchTextSlot(text: value, height: 32, font: compact ? .sbHeadline : .sbMetric)
+            if !compact { StorebenchTextSlot(text: hint, height: 28, font: .sbCaption, color: StorebenchTheme.subtle) }
         }
         .padding(.horizontal, 16).padding(.vertical, StorebenchTheme.space(3))
-        .frame(maxWidth: .infinity, minHeight: compact ? 104 : 140, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, minHeight: StorebenchTheme.measure(compact ? "metricCompact" : "metricHeight"), maxHeight: .infinity)
         .modifier(StorebenchPanelSurface())
     }
 }
@@ -219,15 +230,18 @@ struct StorebenchWorkflowCard<Heading: View, Action: View>: View {
     var progress: Double? = nil
     var total: Double = 7
     var accessory = false
+    /// Optional contextual rows between the description and the reserved feedback track.
+    var details: AnyView? = nil
     @ViewBuilder let heading: () -> Heading
     @ViewBuilder let action: () -> Action
     /// Live feedback keeps the shared fixed track: two caption lines below the progress bar, so updates never move the card.
     private var feedbackLines: CGFloat { 34 }
     private var progressHeight: CGFloat { StorebenchTheme.measure("workflowFeedback") - feedbackLines }
     var body: some View {
-        StorebenchWorkflowLayout(accessory: accessory) {
+        StorebenchWorkflowLayout(accessory: accessory, details: details != nil) {
             VStack(alignment: .leading, spacing: 0) { heading() }
             StorebenchTextSlot(text: description, height: StorebenchTheme.measure("workflowDescription"), font: .sbCaption, color: StorebenchTheme.muted)
+            if let details { details }
             if let progress {
                 VStack(alignment: .leading, spacing: 0) {
                     ProgressView(value: progress, total: total).frame(height: progressHeight).accessibilityLabel("Sources checked")
@@ -245,12 +259,16 @@ struct StorebenchWorkflowCard<Heading: View, Action: View>: View {
 /// Measures the copy tracks; a taller grid row keeps the command on the bottom edge shared by its neighbours.
 private struct StorebenchWorkflowLayout: StorebenchTrackLayout {
     let accessory: Bool
+    var details = false
     var fillsRow: Bool { true }
     func tracks(width: CGFloat, minimumHeight: CGFloat, subviews: Subviews) -> StorebenchTracks {
         let reserved = ComponentLayout.workflowCard(width: width, accessory: accessory)
         func height(_ index: Int) -> CGFloat { subviews.size(index, ProposedViewSize(width: reserved.heading.width, height: nil)).height }
-        let card = ComponentLayout.workflowCard(width: width, accessory: accessory, headingHeight: height(0), descriptionHeight: height(1), minimumHeight: minimumHeight)
-        return StorebenchTracks(frames: [card.heading, card.description, card.feedback, card.action], height: card.height)
+        let extra = details ? height(2) + StorebenchTheme.space(2) : 0
+        let card = ComponentLayout.workflowCard(width: width, accessory: accessory, headingHeight: height(0), descriptionHeight: height(1), minimumHeight: max(0, minimumHeight - extra))
+        guard details else { return StorebenchTracks(frames: [card.heading, card.description, card.feedback, card.action], height: card.height) }
+        let rows = CGRect(x: card.feedback.minX, y: card.feedback.minY, width: card.feedback.width, height: height(2))
+        return StorebenchTracks(frames: [card.heading, card.description, rows, card.feedback.offsetBy(dx: 0, dy: extra), card.action.offsetBy(dx: 0, dy: extra)], height: card.height + extra)
     }
 }
 

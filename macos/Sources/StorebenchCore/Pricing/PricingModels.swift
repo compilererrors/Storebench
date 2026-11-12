@@ -154,7 +154,12 @@ public struct PricingTarget: Equatable, Sendable {
 }
 
 public struct FxRate: Equatable, Sendable { public let rate, date, source: String; public let providers: [String]?; public let fetchedAt: String? }
-public struct IndexSnapshot: Equatable, Sendable { public let method, date, source: String; public let values: [String: String] }
+public struct IndexSnapshot: Equatable, Sendable {
+    public let method, date, source: String
+    public let values: [String: String]
+    public var fetchedAt: String? = nil
+    public var cached = false
+}
 
 /// One country's model price: the calculated target and the Apple price point it rounds to.
 public struct ModelPrice: Equatable, Sendable, Identifiable {
@@ -189,6 +194,7 @@ public enum PricingModels {
         guard let method = profile.pricingMethod else { throw PricingFailure.invalid("Choose a valid pricing method.") }
         let mix = profile.mixMethod.flatMap { other in profile.mix.map { (other, $0.share) } }
         let rounding = method.rounding(profile.rounding), exactOnly = rounding == PricingRounding.exact.rawValue
+        let pointsByCountry = Dictionary(grouping: points, by: \.territory)
         func decimal(_ number: Double) -> Decimal? { PricingMath.decimal(JSONText.number(number)) }
         func indexValue(_ kind: PricingMethod, _ code: String) -> Decimal? {
             kind == .own ? profile.index[code].flatMap(decimal) : indexes.first { $0.method == kind.rawValue }?.values[code].flatMap(PricingMath.decimal)
@@ -245,12 +251,13 @@ public enum PricingModels {
                 }
             }
             // Rounding picks only among Apple price points inside the limits, so the chosen point never breaks them.
-            let allowed = low == nil && high == nil ? points : points.filter { point in
+            let countryPoints = pointsByCountry[country.code] ?? []
+            let allowed = low == nil && high == nil ? countryPoints : countryPoints.filter { point in
                 guard point.territory == country.code, let amount = PricingMath.decimal(point.customerPrice) else { return false }
                 return (low.map { amount >= $0 } ?? true) && (high.map { amount <= $0 } ?? true)
             }
             let selected = PricingMath.select(territory: country.code, calculated: value, rounding: rounding, points: allowed).selected
-            let limitedOut = selected == nil && (low != nil || high != nil) && PricingMath.select(territory: country.code, calculated: value, rounding: rounding, points: points).selected != nil
+            let limitedOut = selected == nil && (low != nil || high != nil) && PricingMath.select(territory: country.code, calculated: value, rounding: rounding, points: countryPoints).selected != nil
             let unknown = pointsUnavailable.contains(country.code)
             let availability = unknown ? "Apple price points unavailable" : selected.map { "Apple price point: \($0.customerPrice) \(country.currency)" }
                 ?? (limitedOut ? "No Apple price point lies between the lowest and highest price" : exactOnly ? "No exact Apple price point" : "No Apple price point matches this rounding rule")
@@ -285,7 +292,7 @@ public enum PricingModels {
             guard positions.allSatisfy({ $0 < cells.count }) else { continue }
             let date = cells[positions[0]], code = cells[positions[1]], currency = cells[positions[2]], value = cells[positions[3]]
             guard ReportTables.validDate(date) || date.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil, code.range(of: "^[A-Z]{3}$", options: .regularExpression) != nil,
-                  let number = Double(value), number > 0, currencies[code] == currency else { continue }
+                  let number = Double(value), number.isFinite, number > 0, currencies.isEmpty || currencies[code] == currency else { continue }
             rows.append((date, code, value))
         }
         guard let date = rows.map(\.0).max() else { throw PricingFailure.invalid("No usable Big Mac observations.") }
@@ -295,6 +302,11 @@ public enum PricingModels {
     public static func worldBank(data: Data, metadata: Data, currencies: [String: String]) throws -> IndexSnapshot {
         guard let rows = (try? JSONSerialization.jsonObject(with: data)) as? [Any], rows.count > 1, let observations = rows[1] as? [[String: Any]],
               let meta = (try? JSONSerialization.jsonObject(with: metadata)) as? [String: Any] else { throw PricingFailure.invalid("World Bank response format changed.") }
+        func complete(_ pagination: [String: Any]) -> Bool {
+            guard let pages = pagination["pages"] else { return true }
+            return String(describing: pages) == "1" && pagination["page"].map { String(describing: $0) == "1" } != false
+        }
+        guard complete(rows[0] as? [String: Any] ?? [:]), complete(meta) else { throw PricingFailure.invalid("The purchasing power response was incomplete. Try again.") }
         func normalized(_ text: String) -> String { text.lowercased().filter { $0.isLetter && $0.isASCII } }
         var countryCurrencies: [String: String] = [:]
         for source in meta["source"] as? [[String: Any]] ?? [] {
@@ -306,19 +318,35 @@ public enum PricingModels {
         }
         guard !countryCurrencies.isEmpty else { throw PricingFailure.invalid("World Bank currency metadata is unavailable.") }
         let names = Locale(identifier: "en")
-        var byYear: [String: [String: String]] = [:]
+        var byYear: [String: [String: String]] = [:], marketByYear: [String: [String: String]] = [:]
         for row in observations {
-            guard let code = row["countryiso3code"] as? String, code.range(of: "^[A-Z]{3}$", options: .regularExpression) != nil, let currency = currencies[code],
+            guard let code = row["countryiso3code"] as? String, code.range(of: "^[A-Z]{3}$", options: .regularExpression) != nil,
                   let year = row["date"] as? String, year.range(of: #"^\d{4}$"#, options: .regularExpression) != nil else { continue }
             let value: String
-            if let number = row["value"] as? Double, number > 0 { value = JSONText.number(number) } else if let text = row["value"] as? String, let number = Double(text), number > 0 { value = text } else { continue }
-            let expected = normalized(names.localizedString(forCurrencyCode: currency) ?? "")
-            guard let actual = countryCurrencies[code], actual == expected || (currency == "GBP" && actual == "poundsterling") else { continue }
-            byYear[year, default: [:]][code] = value
+            if let number = row["value"] as? Double, number.isFinite, number > 0 { value = JSONText.number(number) } else if let text = row["value"] as? String, let number = Double(text), number.isFinite, number > 0 { value = text } else { continue }
+            guard let actual = countryCurrencies[code], !actual.isEmpty else { continue }
+            let indicator = (row["indicator"] as? [String: Any])?["id"] as? String ?? "PA.NUS.PPP"
+            if indicator == "PA.NUS.FCRF" { marketByYear[year, default: [:]][code] = value }
+            else if indicator == "PA.NUS.PPP" { byYear[year, default: [:]][code] = value }
         }
-        let minimum = min(20, currencies.count)
-        guard let date = byYear.keys.sorted(by: >).first(where: { byYear[$0]!.count >= minimum }) else { throw PricingFailure.invalid("No usable purchasing power observations.") }
-        return IndexSnapshot(method: PricingMethod.ppp.rawValue, date: date, source: "World Bank PA.NUS.PPP", values: byYear[date]!)
+        var converted: [String: [String: String]] = [:], dollarConversionYears = Set<String>()
+        for (year, observations) in byYear {
+            for (code, value) in observations {
+                if currencies.isEmpty { converted[year, default: [:]][code] = value; continue }
+                guard let currency = currencies[code], let actual = countryCurrencies[code] else { continue }
+                let expected = normalized(names.localizedString(forCurrencyCode: currency) ?? "")
+                if actual == expected || (currency == "GBP" && actual == "poundsterling") { converted[year, default: [:]][code] = value }
+                else if currency == "USD", let ppp = PricingMath.decimal(value), let market = marketByYear[year]?[code].flatMap(PricingMath.decimal), market > 0 {
+                    // Both annual factors use the same national currency. Dividing cancels it: USD per international dollar.
+                    let amount = ppp / market
+                    guard amount > 0 else { continue }
+                    converted[year, default: [:]][code] = PricingMath.text(amount); dollarConversionYears.insert(year)
+                }
+            }
+        }
+        let minimum = min(20, converted.values.map(\.count).max() ?? 1)
+        guard let date = converted.keys.sorted(by: >).first(where: { converted[$0]!.count >= minimum }) else { throw PricingFailure.invalid("No usable purchasing power observations.") }
+        return IndexSnapshot(method: PricingMethod.ppp.rawValue, date: date, source: dollarConversionYears.contains(date) ? "World Bank PA.NUS.PPP · PA.NUS.FCRF for USD Prices" : "World Bank PA.NUS.PPP", values: converted[date]!)
     }
 }
 
@@ -327,17 +355,20 @@ public struct PricingSources: Sendable {
     public var frankfurter = URL(string: "https://api.frankfurter.dev/v2/rates")!
     public var exchangeRates = URL(string: "https://open.er-api.com/v6/latest/")!
     public var bigMac = URL(string: "https://raw.githubusercontent.com/TheEconomist/big-mac-data/master/output-data/big-mac-full-index.csv")!
-    public var worldBank = URL(string: "https://api.worldbank.org/v2/country/all/indicator/PA.NUS.PPP?format=json&per_page=20000")!
+    public var worldBank = URL(string: "https://api.worldbank.org/v2/country/all/indicator/PA.NUS.PPP;PA.NUS.FCRF?source=2&format=json&per_page=20000&mrv=5")!
     public var worldBankCurrencies = URL(string: "https://api.worldbank.org/v2/sources/2/country/all/metatypes/CurrencyUnit/metadata?format=json&per_page=5000")!
     public var configuration: URLSessionConfiguration = .ephemeral
     public init() {}
 
     func fetch(_ url: URL, limit: Int, timeout: TimeInterval) async throws -> Data {
-        configuration.timeoutIntervalForRequest = timeout
-        configuration.httpShouldSetCookies = false
-        let (data, response) = try await URLSession(configuration: Network.guarded(configuration)).data(for: URLRequest(url: url), delegate: RefuseRedirects())
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), data.count <= limit else { throw PricingFailure.unavailable }
-        return data
+        let config = configuration.copy() as! URLSessionConfiguration
+        config.timeoutIntervalForRequest = timeout; config.timeoutIntervalForResource = timeout
+        config.httpShouldSetCookies = false; config.httpCookieStorage = nil; config.urlCredentialStorage = nil
+        config.waitsForConnectivity = false
+        var request = URLRequest(url: url); request.timeoutInterval = timeout
+        return try await BoundedResponse.read(request, configuration: config, maximumBytes: limit) { response in
+            guard (200..<300).contains(response.statusCode) else { throw PricingFailure.unavailable }
+        }.data
     }
 }
 
@@ -529,17 +560,6 @@ extension WorkspaceSession {
         return rates
     }
 
-    public func pricingIndex(method: PricingMethod, catalog: [Territory], sources: PricingSources = PricingSources()) async throws -> IndexSnapshot {
-        let currencies = Dictionary(catalog.map { ($0.code, $0.currency) }, uniquingKeysWith: { first, _ in first })
-        if method == .bigmac {
-            guard let text = String(data: try await sources.fetch(sources.bigMac, limit: 8_000_000, timeout: 12), encoding: .utf8) else { throw PricingFailure.unavailable }
-            return try PricingModels.bigMac(text, currencies: currencies)
-        }
-        async let data = sources.fetch(sources.worldBank, limit: 8_000_000, timeout: 12)
-        async let metadata = sources.fetch(sources.worldBankCurrencies, limit: 8_000_000, timeout: 12)
-        return try PricingModels.worldBank(data: try await data, metadata: try await metadata, currencies: currencies)
-    }
-
     /// The model preview: rates or index data and Apple price points, then the model prices with their warnings.
     public func modelPreview(appId: String, profile: PricingProfile, base: String, countries: [Territory], guideCurrency: String, client: AppStoreConnectClient,
                              sources: PricingSources = PricingSources()) async throws -> (rows: [ModelPrice], warnings: [String]) {
@@ -575,12 +595,15 @@ extension WorkspaceSession {
         try await modelPrices(.app(appId), profile: profile, base: base, countries: countries, guideCurrency: guideCurrency, client: client, sources: PricingSources())
     }
     /// Prices typed per country or region for any owner, each rounded to the nearest of its own Apple price points. Nothing is written.
-    public func manualPrices(_ owner: PriceOwner, amounts: [String: String], countries: [Territory], client: AppStoreConnectClient) async throws -> (rows: [ModelPrice], warnings: [String], points: [String: String]) {
+    public func manualPrices(_ owner: PriceOwner, amounts: [String: String], countries: [Territory], client: AppStoreConnectClient,
+                             progress: @escaping @Sendable (String) async -> Void = { _ in }) async throws -> (rows: [ModelPrice], warnings: [String], points: [String: String]) {
         let typed = amounts.compactMapValues { value -> Decimal? in PricingMath.decimal(value.trimmingCharacters(in: .whitespaces)).flatMap { $0 > 0 ? $0 : nil } }
         guard !typed.isEmpty else { throw PricingFailure.invalid("Type a price above zero for at least one country or region.") }
         guard typed.count <= 200, typed.keys.allSatisfy({ $0.range(of: "^[A-Z]{3}$", options: .regularExpression) != nil }) else { throw PricingFailure.invalid("Invalid territory selection.") }
         let codes = typed.keys.sorted()
-        let (points, failed) = try await PricePointCatalog.readAll(owner, territories: codes, client: client)
+        let (points, failed) = try await previewPricePoints(owner, territories: codes, client: client) { done, total in
+            await progress("Matching Apple Prices · \(done) of \(total) Countries or Regions")
+        }
         var rows: [ModelPrice] = [], chosen: [String: String] = [:]
         for code in codes {
             let currency = countries.first { $0.code == code }?.currency ?? "", amount = typed[code]!
@@ -597,7 +620,8 @@ extension WorkspaceSession {
     /// A model's prices for any owner: the profile applied to the guide price, rounded to the owner's own Apple price points, with the
     /// price point chosen in each country or region. Nothing is written.
     public func modelPrices(_ owner: PriceOwner, profile: PricingProfile, base: String, countries: [Territory], guideCurrency: String, client: AppStoreConnectClient,
-                            sources: PricingSources = PricingSources()) async throws -> (rows: [ModelPrice], warnings: [String], points: [String: String]) {
+                            sources: PricingSources = PricingSources(), progress: @escaping @Sendable (String) async -> Void = { _ in },
+                            estimated: @escaping @Sendable ([ModelPrice]) async -> Void = { _ in }) async throws -> (rows: [ModelPrice], warnings: [String], points: [String: String]) {
         let method = profile.pricingMethod
         var complete = countries
         for code in [profile.guideTerritory] + (method?.usesCountryPercentages == true ? Array(profile.percentages.keys) : []) where !complete.contains(where: { $0.code == code }) {
@@ -607,24 +631,40 @@ extension WorkspaceSession {
         var warnings: [String] = []
         var rates: [String: FxRate] = [:], indexes: [IndexSnapshot] = []
         if profile.needsExchangeRates {
+            await progress("Reading Exchange Rates…")
             let loaded = try? await fxRates(base: guideCurrency, quotes: Array(Set(selected.map(\.currency).filter { !$0.isEmpty && $0 != guideCurrency })), sources: sources)
+            try Task.checkCancellation()
             rates = loaded?.rates ?? [:]
             if loaded == nil || !(loaded?.missing.isEmpty ?? true) { warnings.append("Some exchange rates are unavailable. Affected countries have no model price.") }
             if !(loaded?.stale.isEmpty ?? true) { warnings.append("Some exchange rates came from a dated local cache. Check country details.") }
         }
         for kind in profile.methods where kind.usesIndex {
-            let index = try? await pricingIndex(method: kind, catalog: countries, sources: sources)
-            if let index { indexes.append(index) }
-            if index?.values[profile.guideTerritory] == nil { warnings.append("\(kind.name) has no observation for the guide country. Choose another pricing method or guide country.") }
+            await progress("Reading \(kind.name)…")
+            let index = try await pricingIndex(method: kind, catalog: countries, sources: sources)
+            try Task.checkCancellation()
+            guard index.values[profile.guideTerritory] != nil else {
+                throw PricingFailure.invalid("\(kind.name) has no observation in the guide country's App Store currency. Choose another guide country or pricing method. No prices were changed.")
+            }
+            indexes.append(index)
+            if index.cached, let fetched = index.fetchedAt.flatMap({ ISO8601DateFormatter.storebench.date(from: $0) }), Date().timeIntervalSince(fetched) >= PricingIndexData.freshness {
+                warnings.append("Using saved \(kind.name) observations from \(index.date). A background refresh will retry when the source is available.")
+            }
         }
-        let codes = selected.filter { !$0.currency.isEmpty }.map(\.code)
-        let (points, failed) = try await PricePointCatalog.readAll(owner, territories: codes, client: client)
+        // Skip Apple's expensive catalog entirely for countries whose model cannot produce an amount.
+        let estimates = try PricingModels.calculate(profile, base: base, countries: selected, guideCurrency: guideCurrency, rates: rates, points: [], indexes: indexes)
+        await estimated(estimates)
+        let codes = estimates.filter { $0.calculated != nil }.map(\.territory)
+        let (points, failed) = try await previewPricePoints(owner, territories: codes, client: client) { done, total in
+            await progress("Matching Apple Prices · \(done) of \(total) Countries or Regions")
+        }
+        try Task.checkCancellation()
         if !failed.isEmpty { warnings.append("Some Apple price points could not be checked. Calculated amounts are shown without a price-point match.") }
         let rows = try PricingModels.calculate(profile, base: base, countries: selected, guideCurrency: guideCurrency, rates: rates, points: points, indexes: indexes, pointsUnavailable: failed)
         // The Apple price point each country or region rounds to, by its amount among that country's own price points.
         var chosen: [String: String] = [:]
+        let pointsByCountry = Dictionary(grouping: points, by: \.territory)
         for row in rows where row.pointStatus == "available" {
-            if let amount = row.amount, let point = points.first(where: { $0.territory == row.territory && PricingMath.decimal($0.customerPrice) == PricingMath.decimal(amount) }) { chosen[row.territory] = point.id }
+            if let amount = row.amount, let point = pointsByCountry[row.territory]?.first(where: { PricingMath.decimal($0.customerPrice) == PricingMath.decimal(amount) }) { chosen[row.territory] = point.id }
         }
         return (rows, warnings, chosen)
     }

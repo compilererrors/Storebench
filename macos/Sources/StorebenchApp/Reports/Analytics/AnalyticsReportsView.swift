@@ -51,7 +51,7 @@ import UniformTypeIdentifiers
     private var availability: AnalyticsCatalog.Availability? { checkedSelection == selectionKey ? catalog?.availability : nil }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             downloadCard.id("analytics-download")
             importCard
             if let review { reviewCard(review) }
@@ -168,13 +168,11 @@ import UniformTypeIdentifiers
     }
     private var downloadProgress: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ProgressView(value: Double(downloadJob?.completed ?? 0), total: Double(max(1, downloadJob?.total ?? 0)))
-                .accessibilityLabel("Analytics Download Progress")
+            StorebenchProgressStatus(message: downloadProgressMessage, value: Double(downloadJob?.completed ?? 0), total: Double(max(1, downloadJob?.total ?? 0)), height: 88)
                 .accessibilityLabel(downloadRunning ? "Analytics download progress" : "Latest Analytics download")
-            ScrollView {
-                Text(downloadProgressMessage).font(.sbCallout).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-            }.frame(height: 88).accessibilityLabel("Saved Analytics download status")
-            StorebenchReadButton("Refresh Status") { await readDownloadJob(context: contextId) }.help("Refresh Download Status").accessibilityLabel("Refresh Download Status").storebenchWorking(working || session == nil)
+            StorebenchActionGroup {
+                StorebenchReadButton("Refresh Status") { await readDownloadJob(context: contextId) }.help("Refresh Download Status").accessibilityLabel("Refresh Download Status").storebenchWorking(working || session == nil)
+            }
         }
     }
     private var downloadProgressMessage: String {
@@ -214,7 +212,7 @@ import UniformTypeIdentifiers
             } else { Text("JSON retains original processing dates, detail levels and granularities. Preview validates its contents and configured app.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
             Text("CSV, TXT, TSV, GZ or JSON · up to 20 files and 10 MB total after decompression. Only this app's rows are saved. Standard and detailed reports, and daily, weekly and monthly periods remain separate.")
                 .font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
-            if working { Button("Stop Waiting") { stop() } }
+            if working { StorebenchActionGroup { Button("Stop Waiting") { stop() } } }
             StorebenchTextSlot(text: status, height: 88, font: .sbCallout, color: StorebenchTheme.muted, live: true).accessibilityLabel("Analytics report operation status")
             RecoveryActions(code: issueCode)
         }
@@ -244,15 +242,11 @@ import UniformTypeIdentifiers
                 }
                 StorebenchDivider()
             }
-            HStack {
-                if reviewPage > 1 { Button("Previous Page") { reviewPage = max(1, reviewPage - 1) } }
-                Text("Page \(min(reviewPage, pages)) of \(pages)")
-                if reviewPage < pages { Button("Next Page") { reviewPage = min(pages, reviewPage + 1) } }
-            }.storebenchWorking(unavailable)
+            if pages > 1 { StorebenchPagination(page: min(reviewPage, pages), count: pages) { reviewPage = $0 }.storebenchWorking(unavailable) }
             if stale { Text("This review needs a new baseline. Preview the selected files again before saving.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
             let changesSaved = value.changes.contains(where: { $0.action == "added" || $0.action == "replaced" })
             if !changesSaved { Text("These files would not change any saved report. Discard the review to keep the saved data.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
-            HStack {
+            StorebenchFormFooter {
                 if !stale && changesSaved {
                     Button { run { id in await save(value, id: id) } } label: { StorebenchBusyLabel("Save Reviewed Import", loading: "Working…", busy: working) }.buttonStyle(StorebenchButtonStyle(.primary))
                 }
@@ -263,19 +257,21 @@ import UniformTypeIdentifiers
     private func savedCard(_ value: AnalyticsFileState) -> some View {
         Card(title: "Saved Analytics periods", subtitle: "JSON exports the complete history. Original exports retain the selected period's source rows.") {
             DisclosureGroup("Manage saved reports (\(value.partitions.count))") {
-                Button("Export History JSON") { export(nil, format: .historyJson) }.help("Export Complete History · JSON").accessibilityLabel("Export Complete History · JSON").storebenchWorking(unavailable)
+                StorebenchActionGroup { Button("Export History JSON") { export(nil, format: .historyJson) }.help("Export Complete History · JSON").accessibilityLabel("Export Complete History · JSON").storebenchWorking(unavailable) }
                 StorebenchCollection(items: Array(value.partitions.reversed()).map { StorebenchCollectionEntry(id: $0.key, value: $0) }, title: { entry in let item = entry.value; return item.date + " · " + item.kind + " · " + item.level }, empty: "No saved Analytics periods yet. Download Analytics reports to save a period.") { entry in
                     let item = entry.value
                     VStack(alignment: .leading, spacing: 8) {
                         Text("\(item.date) – \(AnalyticsReports.periodEnd(item.date, granularity: item.granularity)) · \(item.kind) · \(item.level) · \(item.granularity.lowercased())").font(.sbHeadline).fixedSize(horizontal: false, vertical: true)
                         Text("Processed \(item.processingDate) · \(item.source.rows.count) app rows · \(item.segments) original segments").font(.sbCaption)
-                        StorebenchActionGroup { exportActions(item) }
-                        if review == nil { Button("Remove Period…", role: .destructive) { remove(item, saved: value) }.help("Remove Local Period").accessibilityLabel("Remove Local Period").storebenchWorking(unavailable) }
+                        StorebenchActionGroup {
+                            exportActions(item)
+                            if review == nil { Button("Remove Period…", role: .destructive) { remove(item, saved: value) }.help("Remove Local Period").accessibilityLabel("Remove Local Period").storebenchWorking(unavailable) }
+                        }
                     }.padding(.vertical, 8)
                     StorebenchDivider()
                 }
 
-                Button("Read Saved Reports") { run { id in await load(id: id); await onChanged() } }.storebenchWorking(unavailable)
+                StorebenchActionGroup { Button("Read Saved Reports") { run { id in await load(id: id); await onChanged() } }.storebenchWorking(unavailable) }
             }
         }
     }

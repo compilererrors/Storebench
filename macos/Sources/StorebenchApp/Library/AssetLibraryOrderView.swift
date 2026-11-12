@@ -56,20 +56,15 @@ struct AssetLibraryOrderView: View {
                                         drag: enabled ? MaterialDrag(id: id, title: title(id), context: editor.context, order: editor.order, enabled: true, session: reorder) : nil) {
                         if let asset {
                             AppleLibraryThumbnail(account: account, appId: appId, asset: asset, session: session, fresh: fresh)
-                                .materialDragSource(id: id, title: title(id), order: editor.order, context: editor.context, enabled: enabled && editor.order.count > 1, session: reorder)
+                                .materialDragSource(id: id, title: title(id), order: editor.order, context: editor.context, enabled: enabled, session: reorder)
                         } else { StorebenchIcon(name: "screenshots", size: 32).foregroundStyle(StorebenchTheme.muted) }
                     } actions: {
                         if enabled || editor.busy {
-                            HStack(spacing: StorebenchTheme.space(2)) {
-                                StorebenchReorderHandle(id: id, title: title(id), context: editor.context, order: editor.order, enabled: enabled, session: reorder, apply: apply)
-                                Button { move(id, to: index - 1) } label: { StorebenchIcon(name: "up", size: 16) }.buttonStyle(StorebenchButtonStyle(.quiet, size: .icon))
-                                    .opacity(index == 0 ? 0 : 1).allowsHitTesting(index > 0).accessibilityHidden(index == 0).storebenchWorking(reorder.active).help("Move earlier").accessibilityLabel("Move " + title(id) + " earlier")
-                                Button { move(id, to: index + 1) } label: { StorebenchIcon(name: "down", size: 16) }.buttonStyle(StorebenchButtonStyle(.quiet, size: .icon))
-                                    .opacity(index == editor.order.count - 1 ? 0 : 1).allowsHitTesting(index < editor.order.count - 1).accessibilityHidden(index == editor.order.count - 1).storebenchWorking(reorder.active).help("Move later").accessibilityLabel("Move " + title(id) + " later")
-                            }.storebenchWorking(editor.busy)
+                            StorebenchMaterialToolbar().storebenchWorking(editor.busy)
                         }
                     }
-                    .materialDropTarget(id: id, session: reorder)
+                    .materialReorderCard(id: id, title: title(id), order: editor.order, context: editor.context,
+                        enabled: enabled, session: reorder, apply: { next, expected, context in apply(next, expected: expected, context: context) })
                 }
             }
             .materialDropArea(order: editor.order, context: editor.context, enabled: enabled, session: reorder, apply: apply)
@@ -83,7 +78,6 @@ struct AssetLibraryOrderView: View {
         .onDisappear { reorder.cancel() }
         .shortcutAction(.save, enabled: enabled && editor.dirty && !reorder.active && session != nil, identity: editor.context) { _ = await save() }
     }
-    private func move(_ id: String, to: Int) { if let next = MaterialReorder.moving(editor.order, source: id, to: to) { _ = apply(next, expected: editor.order, context: editor.context) } }
     private func apply(_ next: [String], expected: [String], context: String) -> Bool { guard enabled else { return false }; return editor.reorder(next, expected: expected, context: context) }
     private func save() async -> Bool {
         guard editable, !reorder.active, let session else { return false }

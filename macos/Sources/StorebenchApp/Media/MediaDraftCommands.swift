@@ -15,10 +15,10 @@ struct MediaDraftCommands: View {
                     _ = await model.run()
                 }
             }
-            .storebenchWorking(blocked || model.workflow.busy || (!model.dirty || model.workflow.blocked))
+            .storebenchWorking(blocked || model.workflow.busy || (!model.dirty || model.workflow.shown.blocked))
             .help("Save additions, removals and order on this Mac")
             StorebenchBusyButton(title: "Sync to Apple", loadingTitle: syncing ? "Syncing…" : "Preparing…", busy: syncing || model.workflow.phase == .preparing, variant: model.needsSync ? .primary : .secondary, action: sync)
-                .storebenchWorking(blocked || model.busy || model.workflow.blocked)
+                .storebenchWorking(blocked || model.busy || model.workflow.shown.blocked)
                 .help("Save the media draft and review the changes before sending them to App Store Connect")
         }
     }

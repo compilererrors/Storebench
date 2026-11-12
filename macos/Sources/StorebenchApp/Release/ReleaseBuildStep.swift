@@ -26,6 +26,7 @@ struct ReleaseBuildStep: View {
     /// False while remembered builds show and App Store Connect is read again.
     @State private var confirmed = false
     @State private var reader: ReleaseBuildReader?
+    @State private var readCount = 0
     @State private var draft: LocalEditorDraftEditor?
     @Environment(\.pageScroll) private var pageScroll
     @Environment(\.navigationPresentation) private var presentation
@@ -39,7 +40,8 @@ struct ReleaseBuildStep: View {
     private var versionName: String { "\(Releases.platformName(plan.platform)) \(plan.targetVersion)" }
     private var draftValue: JSONText { .string(selectedBuildId ?? "") }
     var body: some View {
-        Card(title: "Build for \(plan.targetVersion)", subtitle: "Upload the build with Xcode or Transporter. It appears here once Apple has processed it, usually within 30 minutes. Then add it to the version.") {
+        Card(title: "Build for \(plan.targetVersion)", subtitle: "Upload the build with Xcode or Transporter. It appears here once Apple has processed it, usually within 30 minutes. Then add it to the version.",
+             actions: AnyView(StorebenchReadButton("Refresh Builds") { await load(fresh: true) })) {
             StorebenchLoadState(state: builds != nil ? .ready : failure.isEmpty ? .loading("Reading builds from App Store Connect…") : .failed(failure, retry: { await load() })) {
                 StorebenchReadAge(readAt: readAt, reading: !confirmed)
                 if matching.isEmpty && !complete {
@@ -57,20 +59,16 @@ struct ReleaseBuildStep: View {
                 StorebenchTextSlot(text: complete || matching.isEmpty ? "" : "The newest builds are shown. Older builds for version \(plan.targetVersion) are still being read.",
                                    height: 20, font: .sbCaption, color: StorebenchTheme.muted, live: true)
                 StorebenchFeedback(text: status, height: 40, error: !status.isEmpty)
-                StorebenchActionGroup(alignment: .leading) {
-                    if let draft {
-                        LocalDraftActions(editor: draft, value: draftValue, restore: { selectedBuildId = $0.text.flatMap { $0.isEmpty ? nil : $0 }; review = nil }, blocked: preparing || publishing)
-                    }
+                if let draft {
                     // Once its review is prepared, Send to Apple in the review below is the one next action.
                     // As in App Store Connect, a build is added once its export compliance is answered.
                     // Add Build stays in place; its hover text names what is still missing.
-                    let blocker: String? = !confirmed ? "Save this step's changes on this Mac first" : versionId == nil ? "Save the version to App Store Connect in step 3 first"
+                    let blocker: String? = !confirmed ? "Wait for the current builds to finish loading" : versionId == nil ? createFirst ?? "Save the version to App Store Connect in step 3 first"
                         : selected == nil ? "Choose a processed build first" : selected?.id == attachedId ? "This build is already added to \(versionName)"
                         : selected?.usesNonExemptEncryption == nil ? "Answer Export Compliance for this build first" : review != nil ? "Approve or discard the prepared review below" : nil
-                    StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Preparing…", busy: preparing) { Task { await addBuild() } }
-                        .storebenchWorking(blocker != nil && !preparing)
-                        .help(blocker ?? "Prepare a review that adds build \(selected?.version ?? "") to \(versionName) at Apple")
-                    StorebenchReadButton("Refresh Builds") { await load(fresh: true) }
+                    LocalDraftActions(editor: draft, value: draftValue, restore: { selectedBuildId = $0.text.flatMap { $0.isEmpty ? nil : $0 }; review = nil },
+                                      blocked: preparing || publishing, sync: { await addBuild() }, syncBlocked: blocker != nil,
+                                      title: "Build Selection", hint: blocker ?? "Add Build saves your selection and opens its approval review. The version is submitted in Add for Review.", syncTitle: "Add Build")
                 }
             } placeholder: {
                 StorebenchPicker("Build to submit", selection: .constant("")) { SelectionOption("Choose a build", value: "") }.storebenchFormColumn()
@@ -103,6 +101,12 @@ struct ReleaseBuildStep: View {
         .onChange(of: selectedBuildId) { if review?.state == "prepared" { review = nil } }
         .onChange(of: addRequests) { Task { await addBuild() } }
         .trackUnsavedChanges(draft?.dirty(draftValue) == true, busy: preparing || publishing || draft?.busy == true, onSave: { await draft?.saveCurrent(value: { draftValue }) == true })
+        .pageRefreshParticipant(readScope,
+            state: { .init(dirty: draft?.dirty(draftValue) == true, busy: preparing || publishing || draft?.busy == true || readCount > 0, signature: draftValue.stringify()) },
+            save: { await draft?.saveCurrent(value: { draftValue }) == true }, discard: {
+                guard let baseline = draft?.baseline else { return false }
+                selectedBuildId = baseline.text.flatMap { $0.isEmpty ? nil : $0 }; review = nil; return draft?.dirty(draftValue) == false
+            }, refresh: { await load(fresh: true); return confirmed && failure.isEmpty })
         // Export compliance comes right after choosing the build, before Add Build and its review.
         if let build = selected ?? focusedBuild {
             if build.usesNonExemptEncryption == nil {
@@ -117,7 +121,7 @@ struct ReleaseBuildStep: View {
         }
         ReviewPanel(account: account, app: app, session: session, review: $review, done: {
             if review?.state == "complete" { review = nil; Task { await load(fresh: true) }; done() }
-        }, busyChanged: { publishing = $0 }, syncConfirmation: true, localDraft: draft).id("release-build-review")
+        }, busyChanged: { publishing = $0 }, syncConfirmation: true, syncTitle: "Add Build", localDraft: draft).id("release-build-review")
     }
     /// What Apple has for the version's build, and the one next step.
     @ViewBuilder private var attachment: some View {
@@ -128,7 +132,7 @@ struct ReleaseBuildStep: View {
         } else if let selected, selected.id == attachedId {
             Text("Build \(selected.version) is added to \(versionName) at Apple.").font(.sbCallout).fixedSize(horizontal: false, vertical: true)
         } else if let selected, selected.usesNonExemptEncryption == nil {
-            StorebenchNotice(title: "Answer export compliance for build \(selected.version) first", description: "Apple asks whether the build uses encryption before it can be added to \(versionName). The questions are right below; Add Build appears once they are answered.", icon: "info") { EmptyView() }
+            StorebenchNotice(title: "Answer export compliance for build \(selected.version) first", description: "Answer the questions below to enable Add Build for \(versionName).", icon: "info") { EmptyView() }
         } else if let selected, let review, review.state == "prepared", review.request.buildId == selected.id {
             // Preparing only shows the change; the build is added when the review below is approved.
             StorebenchNotice(title: "Build \(selected.version) is not added yet", description: "Approve the review below to add it to \(versionName). Nothing changes at Apple before that.", icon: "info") { EmptyView() }
@@ -172,6 +176,7 @@ struct ReleaseBuildStep: View {
     /// Refresh replaces this step's shared reads; `latest` reads past the cache for an automatic check.
     private func load(fresh: Bool = false, latest: Bool = false) async {
         guard let reader, reader.scope == readScope, reader.active, !Task.isCancelled else { return }
+        readCount += 1; defer { readCount -= 1 }
         failure = ""; if !latest { confirmed = false; status = "" }
         if !fresh, builds == nil, let saved = await presentation?.rememberedDecodedRead(buildsKey, as: RememberedBuilds.self), !Task.isCancelled, reader.active, self.reader === reader, builds == nil {
             // A remembered list cannot establish that a chosen build is missing; wait for the new read before replacing it.

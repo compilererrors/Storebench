@@ -10,11 +10,29 @@ struct SettingsView: View {
     @State private var shortcutActions = ShortcutActions()
     @AppStorage("settings.pane") private var tab = "general"
     @State private var recoveryRequest: RecoveryIntent?
+    @State private var search = ""
+    @State private var searchRequest: SettingsSearchRequest?
     @Environment(\.openURL) private var openURL
 
     var body: some View {
         let shortcutPane = tab
-        return settingsContent.scrollContentBackground(.hidden)
+        return VStack(spacing: 0) {
+            StorebenchSearchField("Search Settings", text: $search)
+                .onSubmit { if let result = SettingsSearch.results(for: search).first { chooseSearchResult(result) } }
+                .storebenchControlID("settings.search")
+                .padding(.horizontal, StorebenchTheme.settingsInset).padding(.vertical, 12)
+            StorebenchDivider()
+            ZStack(alignment: .topLeading) {
+                settingsContent.opacity(search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 1 : 0)
+                    .allowsHitTesting(search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityHidden(!search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .storebenchWorking(!search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    SettingsSearchResults(query: search, choose: chooseSearchResult)
+                }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }.scrollContentBackground(.hidden)
+        .environment(\.settingsSearchRequest, searchRequest)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .storebenchWorking(model.isTerminating)
         .environment(\.settingsPresentation, true)
@@ -26,14 +44,14 @@ struct SettingsView: View {
             guard !model.isTerminating, tab == shortcutPane else { return }
             let current = SettingsNavigation.Pane.restored(shortcutPane)
             let next = command == .help ? SettingsNavigation.Pane.help : KeyboardNavigation.adjacent(SettingsNavigation.Pane.allCases, current: current, direction: command == .nextSection ? 1 : -1)
-            if let next, next.rawValue != tab { protection.requestLeaving { tab = next.rawValue } }
+            if let next { choosePane(next) }
         }
         .environment(\.editorProtection, protection).background(EditorWindowGuard(protection: protection).frame(width: 0, height: 0))
         .environment(\.shortcutActions, shortcutActions)
         .focusedSceneValue(\.shortcutActions, shortcutActions).focusedSceneValue(\.shortcutProtection, protection)
         .background(StorebenchSettingsToolbar(selected: SettingsNavigation.Pane.restored(tab)) { pane in
             guard !model.isTerminating else { return }
-            if pane.rawValue != tab { protection.requestLeaving { tab = pane.rawValue } }
+            choosePane(pane)
         }.frame(width: 0, height: 0))
         .environment(\.recoveryNavigation, RecoveryNavigation(scope: nil, navigate: recover))
         .onAppear { recovery.settingsProtection = protection; updateArea() }
@@ -42,9 +60,17 @@ struct SettingsView: View {
         .onChange(of: recovery.request?.id, initial: true) { receiveRecovery() }
         .onChange(of: recovery.aiRequest, initial: true) {
             guard let id = recovery.aiRequest else { return }
-            if recovery.authorizeAI(id, current: protection.policy) { tab = "ai" }
+            if recovery.authorizeAI(id, current: protection.policy) { search = ""; searchRequest = nil; tab = "ai" }
             recovery.consumeAI(id)
         }
+    }
+    private func choosePane(_ pane: SettingsNavigation.Pane) {
+        let show: @MainActor @Sendable () -> Void = { search = ""; searchRequest = nil; tab = pane.rawValue }
+        if pane.rawValue == tab { show() } else { protection.requestLeaving(show) }
+    }
+    private func chooseSearchResult(_ result: SettingsSearch.Result) {
+        let show: @MainActor @Sendable () -> Void = { tab = result.pane.rawValue; search = ""; searchRequest = SettingsSearchRequest(target: result.id) }
+        if result.pane.rawValue == tab { show() } else { protection.requestLeaving(show) }
     }
     @ViewBuilder private var settingsContent: some View {
         switch tab {
@@ -76,6 +102,7 @@ struct SettingsView: View {
     private func receiveRecovery() {
         guard let request = recovery.request else { return }
         guard recovery.authorize(request.id, current: protection.policy) else { recovery.consume(request.id); return }
+        search = ""; searchRequest = nil
         switch request.action.target.area {
         case .accounts: tab = "accounts"
         case .storage: tab = "general"

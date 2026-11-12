@@ -72,14 +72,14 @@ import Testing
                                      openingLimit: .constant(0), allExpanded: false, allCollapsed: true, expand: {}, collapse: {}, pageItems: items)
     }
 
-    /// The collection header is one row at desktop width: view options and the count lead, one page command trails.
+    /// The count and its compact View Options menu share one row, including in narrow cards.
     @Test func collectionControlsTakeOneRowWithoutReservedHeight() {
         let row = NSHostingController(rootView: controls(items: 5)).sizeThatFits(in: CGSize(width: 1200, height: CGFloat.infinity))
         #expect(row.height <= CGFloat(StorebenchTheme.controlHeight) + 2, "Measured \(row)")
         let single = NSHostingController(rootView: controls(items: 1)).sizeThatFits(in: CGSize(width: 1200, height: CGFloat.infinity))
         #expect(single.height <= CGFloat(StorebenchTheme.controlHeight) + 2, "Measured \(single)")
         let narrow = NSHostingController(rootView: controls(items: 5)).sizeThatFits(in: CGSize(width: 300, height: CGFloat.infinity))
-        #expect(narrow.height > row.height && narrow.height <= 2 * CGFloat(StorebenchTheme.controlHeight) + 16, "Measured \(narrow)")
+        #expect(abs(narrow.height - row.height) <= 1 && narrow.width <= 300, "Measured \(narrow)")
         capture("collection controls", controls(items: 5))
     }
 

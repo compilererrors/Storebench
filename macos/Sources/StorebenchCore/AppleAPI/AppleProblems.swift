@@ -38,7 +38,7 @@ public struct AppleProblem: Sendable, Equatable {
             default: action
             }
         }
-        /// The command that opens where it is answered. App Privacy and Tax Category are answered with an Apple ID in App Store changes.
+        /// The command that opens where it is answered. App Privacy and Tax Category use the Apple ID forms in App Privacy.
         public var action: String {
             switch self {
             case .ageRating: "Answer Age Ratings"

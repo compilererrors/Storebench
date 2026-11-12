@@ -3,7 +3,12 @@ import Observation
 
 /// Saves local drafts through their existing validators and scopes continuation to the latest navigation intent.
 @MainActor @Observable public final class EditorDeparture {
-    public var policy = EditorProtectionPolicy()
+    /// Only an actual change is published, so typing in an already-dirty editor does not refresh every view that reads the policy.
+    public var policy: EditorProtectionPolicy {
+        get { storedPolicy }
+        set { if storedPolicy != newValue { storedPolicy = newValue } }
+    }
+    private var storedPolicy = EditorProtectionPolicy()
     private var savers: [String: @MainActor () async -> Bool] = [:]
     private var priorities: [String: Int] = [:]
     private var generations: [String: String] = [:]

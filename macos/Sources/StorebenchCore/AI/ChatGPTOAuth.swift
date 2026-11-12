@@ -39,6 +39,7 @@ struct ChatGPTTokens: Codable, Sendable {
 }
 
 public enum ChatGPTOAuth {
+    public static let signInLifetime: Duration = .seconds(600)
     public static func random() throws -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
         guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { throw AIFailure.unavailable }
@@ -72,7 +73,14 @@ public enum ChatGPTOAuth {
               Set(items.map(\.name)).count == items.count else { throw AIFailure.identity }
         let query = Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
         guard query["state"] == attempt.state else { throw AIFailure.identity }
-        guard query["error"] == nil else { throw AIFailure.cancelled }
+        if let error = query["error"] {
+            switch error {
+            case "access_denied": throw AIFailure.cancelled
+            case "temporarily_unavailable", "server_error": throw AIFailure.subscriptionUnavailable
+            case "login_required", "interaction_required": throw AIFailure.signIn
+            default: throw AIFailure.signInRejected
+            }
+        }
         let client = query["client_id"] ?? attempt.profile.clientID ?? ""
         guard client.hasPrefix("oaiapp_"), AIConnection.validModel(client), attempt.profile.clientID == nil || attempt.profile.clientID == client,
               let code = query["code"], ChatGPTTokens.valid(code) else { throw AIFailure.identity }

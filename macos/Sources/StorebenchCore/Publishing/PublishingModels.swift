@@ -2,6 +2,8 @@ import Foundation
 
 public enum PublishFailure: Error, Equatable {
     case invalid(String), busy, used, expired, conflict, noChanges, versionRequired, write(String)
+    /// Storebench could not establish the resource's relationship to the app approved in the review.
+    case ownership
     /// Apple refused a change and named what it wants, field by field; each problem's area opens where it is answered.
     case refused(String, problems: [AppleProblem])
 
@@ -13,7 +15,17 @@ public enum PublishFailure: Error, Equatable {
         case .expired: "This review expired or does not match your approval. Prepare a new review."
         case .conflict: "Apple data or local drafts changed after review. Prepare a new review before publishing."
         case .noChanges: "There are no changes to publish."
-        case .versionRequired: "Create the planned version in App Store changes first, then review Languages & media."
+        case .versionRequired: "Prepare and sync the planned version first, then sync its text. Your local draft is kept."
+        case .ownership: "Storebench could not verify that this change belongs to the selected app. Refresh the app's information and prepare a new review. Completed steps remain applied."
+        }
+    }
+    public var recoveryCode: String? {
+        switch self {
+        case .ownership: "SB-PUBLISH-SCOPE"
+        case .refused: "SB-PUBLISH-REFUSED"
+        case .invalid, .versionRequired: "SB-PUBLISH-REQUIREMENTS"
+        case .used, .expired, .conflict, .noChanges: "SB-PUBLISH-REVIEW"
+        default: nil
         }
     }
 }
@@ -322,6 +334,8 @@ public struct PublishReview: Sendable, Identifiable {
     public internal(set) var problems: [AppleProblem] = []
     public internal(set) var state, updatedAt: String
     public internal(set) var approvedAt, sentAt, completedAt, error: String?
+    /// A known local guard failure, kept distinct from an unconfirmed approval response.
+    public internal(set) var errorCode: String?
     var pid: Int32?
     /// Prepared and not expired, so Save in it can still send it.
     public var waitingForSave: Bool { state == "prepared" && (ISO8601DateFormatter.storebench.date(from: expiresAt).map { $0 > Date() } ?? false) }
@@ -330,7 +344,7 @@ public struct PublishReview: Sendable, Identifiable {
         var fields: [(String, JSONText)] = [("title", .string(title)), ("request", request.json), ("fingerprint", .string(fingerprint)), ("steps", .array(steps.map(\.json))),
                                             ("notes", .array(notes.map { .string($0) })), ("settled", .array(settled.map { .string($0) })), ("problems", .array(problems.map(\.json))), ("id", .string(id)), ("createdAt", .string(createdAt)), ("updatedAt", .string(updatedAt)),
                                             ("expiresAt", .string(expiresAt)), ("state", .string(state))]
-        for (key, value) in [("approvedAt", approvedAt), ("sentAt", sentAt), ("completedAt", completedAt), ("error", error)] { if let value { fields.append((key, .string(value))) } }
+        for (key, value) in [("approvedAt", approvedAt), ("sentAt", sentAt), ("completedAt", completedAt), ("error", error), ("errorCode", errorCode)] { if let value { fields.append((key, .string(value))) } }
         if let pid { fields += [("pid", .number(Double(pid))), ("lockProtocol", .number(2))] }
         return .object(fields)
     }
@@ -342,6 +356,12 @@ public struct PublishReview: Sendable, Identifiable {
         self.id = id; self.title = title; self.fingerprint = fingerprint; self.createdAt = created; self.expiresAt = expires; self.request = request
         self.steps = steps.compactMap(PublishStep.init); self.notes = WorkspaceSession.strings(value["notes"]); settled = WorkspaceSession.strings(value["settled"]); if case .array(let saved)? = value["problems"] { problems = saved.prefix(60).compactMap(AppleProblem.init(json:)) }; self.state = state; self.updatedAt = updated
         approvedAt = value["approvedAt"]?.text; sentAt = value["sentAt"]?.text; completedAt = value["completedAt"]?.text; error = value["error"]?.text
+        errorCode = value["errorCode"]?.text
+        if errorCode == nil, !problems.isEmpty { errorCode = "SB-PUBLISH-REFUSED" }
+        // Older reviews used an account-owner explanation for this local resource-scope guard.
+        if errorCode == nil, error == "Apple publishing resource has no approved app owner." {
+            errorCode = PublishFailure.ownership.recoveryCode; error = PublishFailure.ownership.message
+        }
         if case .number(let pid)? = value["pid"] { self.pid = Int32(pid) }
         guard self.steps.count == steps.count else { return nil }
     }

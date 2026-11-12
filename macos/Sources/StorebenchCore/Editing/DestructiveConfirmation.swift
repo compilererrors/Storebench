@@ -6,6 +6,7 @@ public enum DestructiveConfirmation: String, CaseIterable, Sendable, Hashable {
     case removeVersion = "remove-version", deleteRevision = "delete-revision", discardChanges = "discard-changes"
     case removeKeywordIdeas = "remove-keyword-ideas", removePriceDraft = "remove-price-draft", deletePricingProfile = "delete-pricing-profile"
     case deleteCreatedMedia = "delete-created-media", removeLocalFile = "remove-local-file", removeReportPeriod = "remove-report-period", disconnectReporter = "disconnect-reporter"
+    case removeLanguage = "remove-language"
 
     /// What the setting in Settings asks before.
     public var title: String {
@@ -20,6 +21,7 @@ public enum DestructiveConfirmation: String, CaseIterable, Sendable, Hashable {
         case .removeLocalFile: "Removing local files and packages"
         case .removeReportPeriod: "Removing saved report periods"
         case .disconnectReporter: "Disconnecting Reporter"
+        case .removeLanguage: "Removing a language added on this Mac"
         }
     }
 }

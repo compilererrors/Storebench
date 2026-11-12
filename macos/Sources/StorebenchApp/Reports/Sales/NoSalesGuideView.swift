@@ -4,6 +4,7 @@ import SwiftUI
 /// Four-step review of local reductions; Apple changes still use App Store changes.
 struct NoSalesGuideView: View {
     let account: Account, app: Account.App, session: WorkspaceSession, profileId: String
+    var initialMethod: PricingMethod? = nil
     let blocked: Bool, sourceVersion: Int
     let onClose: () -> Void, onSaved: () -> Void, onBusy: (Bool) -> Void
     @State private var periods = ViewPeriods()
@@ -56,7 +57,7 @@ struct NoSalesGuideView: View {
             }.storebenchWorking(busy)
             if saved { Text("Saved locally. Review these prices in App Store changes before approving any Apple update.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
         }
-        .task { await periods.load(session, scope: try? PeriodScope(accountId: account.id, appId: app.id)); await load() }
+        .task { if let initialMethod { method = initialMethod.rawValue }; await periods.load(session, scope: try? PeriodScope(accountId: account.id, appId: app.id)); await load() }
         .onChange(of: days) { chosen = nil; Task { await load() } }
         .onChange(of: qualify) { chosen = nil }
         .onChange(of: limit) { chosen = nil }

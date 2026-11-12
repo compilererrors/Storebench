@@ -52,7 +52,7 @@ import SwiftUI
                 Text("Review before saving locally").font(.sbHeadline)
                 themeDetails(review.theme)
                 Text("Expires at \(review.expiresAt). Changed feedback, releases or saved themes require a new review.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
-                Button("Save Theme") { run { id in await save(review, id) } }.help("Save Reviewed Theme Locally").accessibilityLabel("Save Reviewed Theme Locally").buttonStyle(StorebenchButtonStyle(.primary)).storebenchWorking(unavailable)
+                StorebenchFormFooter { Button("Save Theme") { run { id in await save(review, id) } }.help("Save Reviewed Theme Locally").accessibilityLabel("Save Reviewed Theme Locally").buttonStyle(StorebenchButtonStyle(.primary)).storebenchWorking(unavailable) }
             }
             }.collectionVisibility(expanded)
         }
@@ -79,9 +79,11 @@ import SwiftUI
                     themeDetails(item)
                     if editing == item.id { Text("Editing").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
                     else {
-                        Button("Edit Theme") {
-                            guard !unavailable, canDiscard() else { return }; setFields(item); original = input; review = nil; latest = nil; status = ""
-                        }.storebenchWorking(unavailable)
+                        StorebenchActionGroup {
+                            Button("Edit Theme") {
+                                guard !unavailable, canDiscard() else { return }; setFields(item); original = input; review = nil; latest = nil; status = ""
+                            }.storebenchWorking(unavailable)
+                        }
                     }
                 }
             }

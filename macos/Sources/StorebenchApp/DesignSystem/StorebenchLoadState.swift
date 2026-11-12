@@ -63,11 +63,25 @@ struct StorebenchLoadingStatus: View {
             .frame(maxWidth: 480).padding(.horizontal, StorebenchTheme.padding).padding(.top, StorebenchTheme.space(3))
             .accessibilityElement(children: .ignore).accessibilityLabel(message)
         } else {
-            ProgressView { StorebenchTextSlot(text: message, height: StorebenchLoadPhase.statusHeight, font: nil, color: nil, live: true) }
-                .progressViewStyle(StorebenchProgressStyle())
-                .frame(maxWidth: .infinity, alignment: .leading)
+            StorebenchProgressStatus(message: message)
         }
     }
+}
+
+/// The one progress line of a running operation: a bar when its amount is known, otherwise a spinner on the label's
+/// first line. The label keeps a fixed track, so updates never move the content below.
+struct StorebenchProgressStatus: View {
+    let message: String
+    var value: Double? = nil
+    var total: Double = 1
+    var height: CGFloat = StorebenchLoadPhase.statusHeight
+    var body: some View {
+        Group {
+            if let value { ProgressView(value: min(max(0, value), max(total, 0.000_001)), total: max(total, 0.000_001)) { label } }
+            else { ProgressView { label } }
+        }.progressViewStyle(StorebenchProgressStyle()).frame(maxWidth: .infinity, alignment: .leading)
+    }
+    private var label: some View { StorebenchTextSlot(text: message, height: height, font: nil, color: nil, live: true) }
 }
 
 extension View {
@@ -139,12 +153,18 @@ extension EnvironmentValues {
 
 private struct PageScrollKey: EnvironmentKey { static var defaultValue: ((String, UnitPoint) -> Void)? { nil } }
 private struct PageRevealKey: EnvironmentKey { static var defaultValue: ((String) -> Void)? { nil } }
+private struct PageDisclosureFocusKey: EnvironmentKey { static var defaultValue: ((String) -> Void)? { nil } }
+private struct PageFocusInteractionKey: EnvironmentKey { static var defaultValue: (() -> Void)? { nil } }
 extension EnvironmentValues {
     /// Scrolls the page to a view id with a visible animation; nil outside an app workspace.
     var pageScroll: ((String, UnitPoint) -> Void)? { get { self[PageScrollKey.self] } set { self[PageScrollKey.self] = newValue } }
     /// Brings an anchor to the middle of the page and keeps it there while the page restores its position and lays out, such as
     /// Send to Apple after Save prepared its review.
     var pageReveal: ((String) -> Void)? { get { self[PageRevealKey.self] } set { self[PageRevealKey.self] = newValue } }
+    /// Keeps the header a person expanded or collapsed visible after the content finishes laying out.
+    var pageDisclosureFocus: ((String) -> Void)? { get { self[PageDisclosureFocusKey.self] } set { self[PageDisclosureFocusKey.self] = newValue } }
+    /// An explicit control interaction cancels older page reveals and history restoration.
+    var pageFocusInteraction: (() -> Void)? { get { self[PageFocusInteractionKey.self] } set { self[PageFocusInteractionKey.self] = newValue } }
 }
 
 private struct ReleaseStepHistoryKey: EnvironmentKey { static var defaultValue: Binding<String?>? { nil } }
@@ -156,10 +176,13 @@ extension EnvironmentValues {
 /// A quiet frame around the field a release check opened. It sits outside the content, so showing it never moves the layout.
 struct ReleaseFocusFrame: View {
     let visible: Bool
+    var identifier = "release.focus-frame"
     var body: some View {
         RoundedRectangle(cornerRadius: StorebenchTheme.radius)
             .fill(StorebenchTheme.color("color-surface-accent"))
             .overlay(RoundedRectangle(cornerRadius: StorebenchTheme.radius).strokeBorder(StorebenchTheme.color("color-border-accent")))
-            .padding(-10).opacity(visible ? 1 : 0).allowsHitTesting(false).accessibilityHidden(true)
+            .storebenchControlID(identifier)
+            .padding(-StorebenchTheme.space(2))
+            .opacity(visible ? 1 : 0).allowsHitTesting(false).accessibilityHidden(true)
     }
 }

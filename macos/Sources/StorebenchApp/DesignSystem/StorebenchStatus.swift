@@ -33,6 +33,34 @@ struct StorebenchFact: View {
     }
 }
 
+/// A step's state on the trailing edge of its row: a spinner while it runs, then its state name, in a fixed track.
+struct StorebenchStepState: View {
+    let text: String
+    var running = false
+    var problem = false
+    var width: CGFloat = 100
+    var body: some View {
+        HStack(spacing: 6) {
+            if running { StorebenchSpinner() }
+            Text(text).font(.sbCaption).foregroundStyle(problem ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted)
+        }.frame(width: width, height: 22, alignment: .trailing)
+    }
+}
+
+/// One ranked group: its name and amount on one line, and its share of the total as a bar under them.
+struct StorebenchShareRow: View {
+    let title: String, value: String, share: Double
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top) {
+                StorebenchTextSlot(text: title, height: 40, font: .sbCallout, color: nil)
+                Text(value).monospacedDigit().frame(width: 120, alignment: .trailing)
+            }
+            ProgressView(value: min(1, max(0, share))).progressViewStyle(StorebenchProgressStyle())
+        }.accessibilityElement(children: .combine).accessibilityLabel(title).accessibilityValue(value)
+    }
+}
+
 /// A compact source header with contained copy; recovery and expanded details span the complete row. Every row keeps its status
 /// in one fixed column and its command, such as Open, at the shared button width in the trailing column, so rows line up.
 struct StorebenchStatusRow<Status: View, Action: View, Details: View>: View {

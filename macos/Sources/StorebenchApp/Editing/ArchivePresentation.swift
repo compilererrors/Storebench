@@ -25,7 +25,7 @@ struct VersionCard: View {
                     selectionOptions(version.localizations) { SelectionOption(StoreLocales.name($0.locale), value: $0.locale) }
                 }
             }
-            HStack(spacing: 12) {
+            StorebenchActionGroup {
                 Button("Add Language") {
                     guard !languageWorking, !newLocale.isEmpty, protection?.allowLeaving() != false, let session else { return }
                     let target = newLocale, source = copyFrom.isEmpty ? nil : copyFrom
@@ -47,8 +47,7 @@ struct VersionCard: View {
     private var selected: Revision.Localization? { version.localizations.first { $0.locale == locale } }
 
     var body: some View {
-        Card(title: version.title, subtitle: version.state) {
-            if !scope.local && !adding && !available.isEmpty { Button("Add Language…") { if protection?.allowLeaving() != false { adding = true; status = "" } } }
+        Card(title: version.title, subtitle: version.state, accessory: !scope.local && !adding && !available.isEmpty ? AnyView(Button("Add Language…") { if protection?.allowLeaving() != false { adding = true; status = "" } }) : nil) {
             if adding { addLanguage }
             StorebenchFeedback(text: status, height: 34)
             if mode == .media {
@@ -83,8 +82,7 @@ struct ScreenshotThumbnail: View {
             RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius).fill(canvasColor)
             if let image { Image(decorative: image.image, scale: 1).resizable().interpolation(.high).aspectRatio(contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius)) }
-            else if missing { Text("Not saved").font(.sbCaption).foregroundStyle(StorebenchTheme.muted) }
-            else { ProgressView().controlSize(.small).accessibilityLabel("Reading Saved Media") }
+            else { StorebenchMediaStatus(message: missing ? "Not saved" : "", loading: !missing).accessibilityLabel(missing ? "Not saved" : "Reading Saved Media") }
         }
         .frame(width: canvasHeight == nil ? 140 * min(ratio, 2) : nil, height: canvasHeight ?? 140 * min(1 / ratio, 2.2))
         .frame(maxWidth: canvasHeight == nil ? nil : .infinity)

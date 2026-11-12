@@ -68,6 +68,79 @@ import Testing
         let invalid = selection.reorder([items[0].id, items[0].id], expectedRevision: selection.revision); #expect(!invalid)
     }
 
+    @Test func commandSelectionRangesAndDraggingAnExistingSelectionBehaveLikeACollection() {
+        let ids = (1...9).map { "synthetic-\($0)" }, model = MaterialReorder()
+        model.select(ids[1], order: ids)
+        model.select(ids[6], order: ids, toggle: true)
+        #expect(model.selection == [ids[1], ids[6]])
+        model.select(ids[1], order: ids, preserving: true)
+        #expect(model.selection == [ids[1], ids[6]], "Pressing a selected drag source keeps the group")
+        model.select(ids[8], order: ids, extending: true)
+        #expect(model.selection == Set(ids[6...8]))
+        model.select(ids[7], order: ids, toggle: true)
+        #expect(model.selection == [ids[6], ids[8]])
+        model.select(ids[2], order: ids)
+        #expect(model.selection == [ids[2]])
+        model.selectAll(ids); #expect(model.selection == Set(ids))
+        model.reconcileSelection(Array(ids.prefix(4))); #expect(model.selection == Set(ids.prefix(4)))
+        model.clearSelection(); #expect(model.selection.isEmpty)
+    }
+
+    @Test func aNoncontiguousDragMovesTheWholeSelectionInItsOriginalOrderOnlyOnDrop() throws {
+        let ids = (1...9).map { "synthetic-\($0)" }, model = MaterialReorder()
+        model.select(ids[7], order: ids)
+        model.select(ids[2], order: ids, toggle: true)
+        let token = try #require(model.begin(ids[7], order: ids, context: "synthetic-grid", enabled: true))
+        #expect(model.drag?.sources == [ids[2], ids[7]])
+        model.hover(ids[5], after: false, order: ids, context: "synthetic-grid", enabled: true)
+        #expect(model.drag?.baseline == ids && model.active)
+        let next = try #require(model.commit(token: token, order: ids, context: "synthetic-grid", enabled: true))
+        #expect(next == [ids[0], ids[1], ids[3], ids[4], ids[2], ids[7], ids[5], ids[6], ids[8]])
+        #expect(Set(next) == Set(ids) && next.count == ids.count && !model.active)
+    }
+
+    @Test func beginningEndAndAdjacentCommandsKeepTheSelectedGroupAndEveryOtherItem() {
+        let ids = (1...9).map { "synthetic-\($0)" }, selected: Set<String> = [ids[2], ids[7]]
+        #expect(MaterialReorder.moving(ids, sources: selected, destination: .beginning) == [ids[2], ids[7], ids[0], ids[1], ids[3], ids[4], ids[5], ids[6], ids[8]])
+        #expect(MaterialReorder.moving(ids, sources: selected, destination: .end) == [ids[0], ids[1], ids[3], ids[4], ids[5], ids[6], ids[8], ids[2], ids[7]])
+        #expect(MaterialReorder.moving(ids, sources: selected, destination: .earlier) == [ids[0], ids[2], ids[7], ids[1], ids[3], ids[4], ids[5], ids[6], ids[8]])
+        #expect(MaterialReorder.moving(ids, sources: Set(ids), destination: .end) == nil)
+        #expect(MaterialReorder.moving(ids, sources: ["foreign"], destination: .beginning) == nil)
+        #expect(MaterialReorder.placing(ids, sources: selected, target: ids[2], after: false) == nil)
+    }
+
+    @Test func movingNineBeforeSixMarksTheTrailingEdgeOfFive() throws {
+        let ids = (1...9).map { "synthetic-\($0)" }, model = MaterialReorder()
+        let token = try #require(model.begin(ids[8], order: ids, context: "synthetic-grid", enabled: true))
+        model.hover(ids[5], after: false, order: ids, context: "synthetic-grid", enabled: true)
+        #expect(model.drag?.indicator?.id == ids[4] && model.drag?.indicator?.after == true)
+        model.hover(ids[4], after: true, order: ids, context: "synthetic-grid", enabled: true)
+        #expect(model.drag?.indicator?.id == ids[4] && model.drag?.indicator?.after == true)
+        #expect(model.commit(token: token, order: ids, context: "synthetic-grid", enabled: true) == Array(ids.prefix(5)) + [ids[8]] + Array(ids[5...7]))
+    }
+
+    @Test func insertionEdgesSkipDraggedAndHiddenCardsAndHandleTheFirstPosition() throws {
+        let ids = (1...9).map { "synthetic-\($0)" }, model = MaterialReorder()
+        _ = try #require(model.begin(ids[8], order: ids, context: "synthetic-grid", enabled: true))
+        model.hover(ids[5], after: false, order: ids, context: "synthetic-grid", enabled: true, visibleOrder: [ids[0], ids[2], ids[5], ids[8]])
+        #expect(model.drag?.indicator?.id == ids[2] && model.drag?.indicator?.after == true)
+        model.hover(ids[0], after: false, order: ids, context: "synthetic-grid", enabled: true)
+        #expect(model.drag?.indicator?.id == ids[0] && model.drag?.indicator?.after == false)
+        model.exit(); #expect(model.drag?.indicator == nil)
+    }
+
+    @Test func cancellingOrChangingTheScopeNeverCommitsAPartialGroupMove() throws {
+        let ids = (1...9).map { "synthetic-\($0)" }, model = MaterialReorder()
+        model.select(ids[1], order: ids); model.select(ids[5], order: ids, toggle: true)
+        let token = try #require(model.begin(ids[5], order: ids, context: "synthetic-grid", enabled: true))
+        model.hover(ids[8], after: true, order: ids, context: "synthetic-grid", enabled: true)
+        #expect(model.commit(token: token, order: ids, context: "another-grid", enabled: true) == nil)
+        #expect(!model.active && model.selection == [ids[1], ids[5]])
+        let next = try #require(model.begin(ids[1], order: ids, context: "synthetic-grid", enabled: true))
+        model.cancel(token: token); #expect(model.drag?.token == next)
+        model.cancel(token: next); #expect(!model.active && model.selection.count == 2)
+    }
+
     /// A three-column grid of 300 × 400 cards with 20 pt gaps; the last row holds only "synthetic-four".
     @Test func dropsInGapsAndAfterTheLastCardLandBesideTheNearestCardInThatRow() throws {
         let frames = ["synthetic-one", "synthetic-two", "synthetic-three", "synthetic-four"].enumerated().map { index, id in

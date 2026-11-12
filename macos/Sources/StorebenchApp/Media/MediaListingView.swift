@@ -8,6 +8,7 @@ struct MediaListingView: View {
     let targetMode: String, session: WorkspaceSession?, openReview: (LanguageListingReview) -> Bool
     var providedModel: MediaListingEditor? = nil
     var didSync: () -> Void = {}
+    var didCheck: () -> Void = {}
     private enum FileTarget: Sendable { case screenshots(setId: String?, displayType: String?), preview(String) }
     private struct Prepared { let review: LanguageListingReview, result: ListingSaveWorkflow.Result }
     @State private var model: MediaListingEditor?
@@ -19,6 +20,8 @@ struct MediaListingView: View {
     @State private var inlineReview: PublishReview?
     @State private var publishing = false
     @State private var reviewedSignature: String?
+    @State private var checkingSync = false
+    @State private var syncCheck: (signature: String, time: Date, matches: Bool, message: String)?
     @State private var operation: Task<Void, Never>?
     @State private var protectionId = UUID().uuidString
     @State private var observer: UUID?
@@ -30,14 +33,16 @@ struct MediaListingView: View {
             if let model {
                 let currentReview = reviewedSignature == model.syncSignature
                 VStack(alignment: .leading, spacing: 16) {
-                    if model.catalogFailed { StorebenchReadButton("Read Media") { await model.retryCatalog() } }
+                    if model.catalogFailed { StorebenchActionGroup { StorebenchReadButton("Read Media") { await model.retryCatalog() } } }
                     PreviewsEditor(scope: scope, model: model, others: others, session: session, add: { begin(.preview($0)) })
                     ScreenshotsEditor(scope: scope, model: model, others: others, session: session, add: { begin(.screenshots(setId: $0, displayType: $1)) }, drop: { receive($0, setId: $1, displayType: $2) }, fix: { upload = $0 }, library: scope.local ? nil : { pickingFromLibrary = true })
                     if !scope.local {
                         StorebenchEditorFooter(title: "App Previews and Screenshots · " + StoreLocales.name(localization.locale),
-                            detail: model.dirty ? "Unsaved media changes." : currentReview && inlineReview?.state == "complete" ? "Synced with Apple." : currentReview && inlineReview?.steps.isEmpty == true ? "Up to date with Apple." : model.status.isEmpty ? (model.needsSync ? "Saved on this Mac · Changes to sync." : "Your previews and screenshots are saved on this Mac.") : model.status,
-                            hint: "Save Draft keeps changes on this Mac. Sync to Apple saves automatically and asks you to confirm the changes.") {
-                            MediaDraftCommands(model: model, blocked: inheritedBusy || publishing, syncing: publishing, sync: { run(model, upload: true) })
+                            detail: mediaSyncDetail(model, currentReview: currentReview),
+                            hint: "Save Draft keeps changes on this Mac. Sync to Apple saves automatically and asks you to confirm the changes.",
+                            reservesStatusIcon: true, statusIcon: !model.dirty && (currentReview && inlineReview?.state == "complete" || currentCheck(model)?.matches == true) ? "check" : nil,
+                            statusColor: !model.dirty && (currentReview && inlineReview?.state == "complete" || currentCheck(model)?.matches == true) ? StorebenchTheme.color("color-success") : nil) {
+                            MediaDraftCommands(model: model, blocked: inheritedBusy || publishing || checkingSync, syncing: publishing, sync: { run(model, upload: true) })
                         }
                     }
                     if let app = account.apps.first(where: { $0.id == scope.appId }) {
@@ -45,10 +50,10 @@ struct MediaListingView: View {
                             if let review = inlineReview, let signature = reviewedSignature {
                                 Task {
                                     await model.acknowledgeSync(signature: signature, review: review)
-                                    if review.state == "complete" { didSync() }
+                                    if review.approvedAt != nil { didSync() }
                                 }
                             }
-                        }, busyChanged: { publishing = $0 }, actionsBusy: model.busy || inheritedBusy || model.workflow.dirty || model.workflow.blocked, syncConfirmation: true)
+                        }, busyChanged: { publishing = $0 }, actionsBusy: model.busy || inheritedBusy || !model.partReady, syncConfirmation: true)
                     }
                 }
                 .padding(StorebenchTheme.padding)
@@ -69,6 +74,18 @@ struct MediaListingView: View {
             let result = await owner.run()
             return result.complete && owner.active && !owner.dirty
         })
+        .pageRefreshParticipant(identity + "/" + (model.map { String(describing: ObjectIdentifier($0)) } ?? "loading"),
+            state: { .init(dirty: model?.dirty == true, busy: model == nil || model?.busy == true || publishing || checkingSync, signature: mediaSignature) },
+            save: {
+                guard let model, model.active, !model.busy, !publishing else { return false }
+                return await model.run(onlyThisPart: true).complete
+            }, discard: {
+                guard let model, !publishing else { return false }
+                prepared = nil; inlineReview = nil; syncCheck = nil; return model.discardUnsaved()
+            }, refresh: {
+                guard let model, await model.refreshSaved() else { return false }
+                return await checkApple(model)
+            })
         .task(id: identity) {
             guard let session, !Task.isCancelled else { return }
             let owner = providedModel ?? MediaListingEditor(scope: .init(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId), localization: localization, platform: version.platform, session: session)
@@ -120,30 +137,70 @@ struct MediaListingView: View {
         Task { await model.addScreenshots(urls, setId: setId, displayType: displayType) }; return true
     }
     private func run(_ model: MediaListingEditor, upload: Bool) {
-        guard model.active, !model.busy, !inheritedBusy, !publishing, !scope.local else { return }
-        prepared = nil; inlineReview = nil; operation?.cancel()
+        guard model.active, !model.busy, !inheritedBusy, !publishing, !checkingSync, !scope.local else { return }
+        prepared = nil; inlineReview = nil; syncCheck = nil; operation?.cancel()
         operation = Task {
             guard model.active, !Task.isCancelled else { return }
             var review: LanguageListingReview?
+            var matches = false
             let result: ListingSaveWorkflow.Result
             if upload, let session {
-                result = await model.run(prepare: {
+                result = await model.run(onlyThisPart: true, prepare: {
                     var request = PublishRequest(accountId: scope.accountId, appId: scope.appId, scope: .metadata, targetMode: targetMode, revisionId: scope.revisionId, versionId: version.id)
                     request.mediaStage = PublishRequest.screenshotsStage
                     request.listingLocale = localization.locale
-                    review = try await session.prepareLanguageListingReview(account: account, request: request, client: try await session.client(for: account))
+                    do { review = try await session.prepareLanguageListingReview(account: account, request: request, client: try await session.client(for: account)) }
+                    catch PublishFailure.noChanges { matches = true }
                 })
-            } else { result = await model.run() }
-            guard model.active, !Task.isCancelled, result.reviewReady, let review, model.workflow.owns(result), model.workflow.ready, !model.busy else { return }
+            } else { result = await model.run(onlyThisPart: true) }
+            guard model.active, !Task.isCancelled, result.reviewReady, model.workflow.owns(result), model.partReady, !model.busy else { return }
+            if matches { syncCheck = (model.syncSignature, Date(), true, "Up to Date with Apple"); didCheck(); return }
+            guard let review else { return }
             reviewedSignature = model.syncSignature
             let next = Prepared(review: review, result: result); prepared = next; open(next, model: model)
         }
     }
     private func open(_ prepared: Prepared, model: MediaListingEditor) {
-        guard model.active, !model.busy, !inheritedBusy, model.workflow.ready, model.workflow.owns(prepared.result),
+        guard model.active, !model.busy, !publishing, model.partReady, model.workflow.owns(prepared.result),
               prepared.review.matches(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId, versions: [version.id], targetMode: targetMode) else { return }
         // Readiness and its close protection are updated synchronously before navigation.
         protection?.policy.update(id: protectionId, dirty: model.dirty, busy: model.busy)
         inlineReview = prepared.review.review
+        if prepared.review.review.steps.isEmpty { didCheck() }
+    }
+    private var mediaSignature: String {
+        guard let model else { return "loading" }
+        return JSONText.array([.string(model.syncSignature)] + model.screenshotSelections.map { .string($0.selection?.revision ?? $0.id.uuidString) } + model.previewSelections.filter(\.pending).map { .string($0.id.uuidString) }).sha256
+    }
+    private func currentCheck(_ model: MediaListingEditor) -> (signature: String, time: Date, matches: Bool, message: String)? {
+        guard !model.dirty, syncCheck?.signature == model.syncSignature else { return nil }; return syncCheck
+    }
+    private func mediaSyncDetail(_ model: MediaListingEditor, currentReview: Bool) -> String {
+        if checkingSync { return "Checking these previews and screenshots with App Store Connect…" }
+        if model.dirty { return "Unsaved media changes." }
+        if let check = currentCheck(model) { return check.message + " · " + check.time.formatted(date: .omitted, time: .standard) }
+        if currentReview, inlineReview?.state == "complete" { return "Synced with Apple." }
+        if currentReview, inlineReview?.steps.isEmpty == true { return "Up to Date with Apple." }
+        return model.status.isEmpty ? (model.needsSync ? "Saved on this Mac · Changes to sync." : "Your previews and screenshots are saved on this Mac.") : model.status
+    }
+    private func checkApple(_ model: MediaListingEditor) async -> Bool {
+        guard model.active, !model.busy, !model.dirty, !checkingSync, !publishing, let session else { return false }
+        let signature = model.syncSignature
+        checkingSync = true; defer { checkingSync = false }
+        do {
+            var request = PublishRequest(accountId: scope.accountId, appId: scope.appId, scope: .metadata, targetMode: targetMode, revisionId: scope.revisionId, versionId: version.id)
+            request.mediaStage = PublishRequest.screenshotsStage; request.listingLocale = localization.locale
+            let compared = try await session.prepareLanguageListingReview(account: account, request: request, client: try await session.client(for: account))
+            guard model.active, !Task.isCancelled, !model.dirty, model.syncSignature == signature else { return false }
+            inlineReview = nil; prepared = nil
+            syncCheck = (signature, Date(), compared.review.steps.isEmpty, compared.review.steps.isEmpty ? "Up to Date with Apple" : "Saved on this Mac · Changes to sync")
+            return true
+        } catch PublishFailure.noChanges {
+            guard model.active, !Task.isCancelled, !model.dirty, model.syncSignature == signature else { return false }
+            inlineReview = nil; prepared = nil; syncCheck = (signature, Date(), true, "Up to Date with Apple"); return true
+        } catch {
+            guard model.active, !Task.isCancelled else { return false }
+            syncCheck = (signature, Date(), false, "Apple’s media could not be checked. Your local draft is kept"); return false
+        }
     }
 }

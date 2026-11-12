@@ -59,7 +59,7 @@ public enum ReleaseGuide {
     static let definitions: [Definition] = [
         .init(id: "plan", title: "New Version", purpose: "Enter the version number and choose how Apple releases it. Text and screenshots are copied from the current version, as in App Store Connect. Nothing is sent to Apple yet.", matches: { $0 == "plan" }),
         .init(id: "listing", title: "Text and Screenshots", purpose: "What's New in This Version, Promotional Text, Description, Keywords, and Previews and Screenshots for each language. Saved on this Mac.", matches: { $0.hasPrefix("local:") || $0.hasPrefix("editorial:") }),
-        .init(id: "send", title: "Save to App Store Connect", purpose: "The changes for App Store Connect are listed below as soon as you open this step. Read them, then choose Send to Apple. This creates the version there and saves its text and screenshots.",
+        .init(id: "send", title: "Save to App Store Connect", purpose: "Compare saved text, screenshots and app previews with App Store Connect. Only remaining changes need a sync; content already synced individually is not sent again. Copyright is entered here. Nothing is sent until you approve its review.",
               matches: { ["version", "copyright"].contains($0) || $0.hasPrefix("apple-text:") || $0.hasPrefix("apple-info:") || $0.hasPrefix("media:") }),
         .init(id: "build", title: "Build", purpose: "Choose the build for this version and answer its export compliance questions.", matches: { ["build", "export-compliance"].contains($0) }),
         .init(id: "review-information", title: "App Review Information", purpose: "Contact details, sign-in information and notes for Apple's reviewer.", matches: { $0 == "review-info" }),
@@ -91,7 +91,8 @@ public enum ReleaseGuide {
         // Before a submission the release check is blocked only because the version is not submitted yet, so it waits for every
         // earlier step Apple has not confirmed rather than becoming the next step past them.
         func waits(_ index: Int) -> Bool {
-            definitions[index].id == "release" && !submitted
+            if definitions[index].id == "release", let state, submitted, ReleaseReadiness.waiting.contains(state) { return true }
+            return definitions[index].id == "release" && !submitted
                 && definitions.indices.contains { $0 < index && !locked(definitions[$0].id) && grouped[$0].contains { [.waiting, .unknown].contains($0.state) } }
         }
         let blockedNext = definitions.indices.lazy.filter { !locked(definitions[$0].id) && !waits($0) }.compactMap { grouped[$0].first { $0.state == .blocked } }.first

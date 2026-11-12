@@ -15,18 +15,20 @@ private final class MediaAIStubProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) private static var pending: [@Sendable () -> Void] = []
     nonisolated(unsafe) private static var sentModels: [String] = []
     nonisolated(unsafe) private static var bodies: [JSONText] = []
+    nonisolated(unsafe) private static var failedLanguages = Set<String>()
     private let deliveryLock = NSLock()
     private var stopped = false, delivered = false
     static func reset(quota: Bool = false, outcome: Outcome = .success, maximumRequests: Int = 2, hold: Bool = false) {
         lock.withLock {
             #expect(pending.isEmpty, "Every owned response gate must be released before the next journey")
-            calls = 0; self.outcome = quota ? .quota : outcome; limit = maximumRequests; holding = hold; sentModels = []; bodies = []
+            calls = 0; self.outcome = quota ? .quota : outcome; limit = maximumRequests; holding = hold; sentModels = []; bodies = []; failedLanguages = []
         }
     }
     static var count: Int { lock.withLock { calls } }
     static var models: [String] { lock.withLock { sentModels } }
     static var requests: [JSONText] { lock.withLock { bodies } }
     static func respond(with outcome: Outcome) { lock.withLock { self.outcome = outcome } }
+    static func failTranslations(to languages: Set<String>) { lock.withLock { failedLanguages = languages } }
     static func release() {
         let work = lock.withLock { holding = false; let work = pending; pending = []; return work }
         for send in work { send() }
@@ -76,10 +78,13 @@ private final class MediaAIStubProtocol: URLProtocol, @unchecked Sendable {
             let language = requestBody["instructions"]?.text?.contains("to de-DE.") == true ? "de" : "sv"
             result = .object([("translations", .array(texts.indices.map { .string(language + "-\($0)") }))])
         }
-        if outcome == .malformed { result = .object([("cards", .array([]))]) }
+        let requestOutcome = Self.lock.withLock {
+            Self.failedLanguages.contains { requestBody["instructions"]?.text?.contains("to " + $0 + ".") == true } ? Outcome.unavailable : outcome
+        }
+        if requestOutcome == .malformed { result = .object([("cards", .array([]))]) }
         let content = result.stringify()
         let response = JSONText.object([("status", .string("completed")), ("output", .array([.object([("content", .array([.object([("type", .string("output_text")), ("text", .string(content))])]))])]))]).data
-        let status = outcome == .quota ? 429 : outcome == .unavailable ? 503 : 200
+        let status = requestOutcome == .quota ? 429 : requestOutcome == .unavailable ? 503 : 200
         let send: @Sendable () -> Void = { [self] in deliver(status: status, bytes: status == 200 ? response : Data()) }
         let deferred = Self.lock.withLock { if Self.holding { Self.pending.append(send); return true }; return false }
         if !deferred { send() }
@@ -118,7 +123,12 @@ private extension WorkspaceSession {
     }
     func wait(file: StaticString = #fileID, line: UInt = #line, _ predicate: @MainActor () async throws -> Bool) async throws {
         let deadline = ContinuousClock.now + .seconds(15)
-        while !(try await predicate()) {
+        while true {
+            if try await predicate() {
+                try await settle()
+                // Native tasks may start during layout; a transient enabled state is not ready to click.
+                if try await predicate() { return }
+            }
             guard ContinuousClock.now < deadline else {
                 if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
                     host.cacheDisplay(in: host.bounds, to: bitmap)
@@ -135,7 +145,6 @@ private extension WorkspaceSession {
             }
             try await settle()
         }
-        try await settle()
     }
     func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
     private var roots: [NSView] { [host] + window.sheets.compactMap(\.contentView) }
@@ -179,7 +188,7 @@ private extension WorkspaceSession {
                 print("Synthetic target click: \(label), window point: \(point), visible: \(host.bounds.contains(local)), hit: \(String(describing: host.hitTest(local).map { type(of: $0) }))")
             }
             let row = marker.convert(marker.bounds, to: nil)
-            let disclosure = ["ai-history.instructions", "ai-history.response"].contains(label)
+            let disclosure = ["ai-history.instructions", "ai-history.response", "ai-cards.prompt-instructions", "ai-languages.targets"].contains(label)
             if !disclosure, !label.hasPrefix("ai-languages.target."), let native = descendants(targetWindow.contentView ?? host).compactMap({ $0 as? NSControl }).first(where: {
                 let bounds = $0.convert($0.bounds, to: nil)
                 return $0.window === targetWindow && $0.cell is NSButtonCell && !$0.isHiddenOrHasHiddenAncestor && (bounds.contains(point) || (bounds.intersects(row) && abs(bounds.midY - row.midY) < max(2, row.height / 2)))
@@ -200,7 +209,9 @@ private extension WorkspaceSession {
         guard action(node, selector) else { throw Failure.disabledControl(label) }
     }
     private func reveal(_ marker: NSView) async throws {
-        for _ in 0..<2 {
+        let deadline = ContinuousClock.now + .seconds(5)
+        var previous: CGRect?, stable = 0
+        while ContinuousClock.now < deadline {
             var ancestor = marker.superview
             while let view = ancestor {
                 if let scroll = view as? NSScrollView, let document = scroll.documentView {
@@ -214,7 +225,15 @@ private extension WorkspaceSession {
                 ancestor = view.superview
             }
             try await settle()
+            let frame = marker.convert(marker.bounds, to: nil)
+            if let previous, abs(previous.minX - frame.minX) < 0.5, abs(previous.minY - frame.minY) < 0.5,
+               abs(previous.width - frame.width) < 0.5, abs(previous.height - frame.height) < 0.5 { stable += 1 }
+            else { stable = 0 }
+            // Sheets have their own animation transaction. Click only after scrolling and disclosure layout have settled.
+            if stable >= 3 { return }
+            previous = frame
         }
+        throw Failure.timeout("Control layout did not settle: " + (marker.identifier?.rawValue ?? "unnamed"))
     }
     func enabled(_ label: String) -> Bool {
         guard let node = control(label) else { return false }
@@ -260,6 +279,12 @@ private extension WorkspaceSession {
         guard let menu = modelMenu(title), menu.isEnabled, let action = menu.action else { throw Failure.missingControl("AI Model") }
         menu.selectItem(withTitle: title)
         guard menu.sendAction(action, to: menu.target) else { throw Failure.disabledControl("AI Model") }
+    }
+    func chooseSheetOption(_ title: String) throws {
+        guard let menu = window.sheets.compactMap(\.contentView).flatMap(descendants).compactMap({ $0 as? NSPopUpButton }).first(where: { $0.itemTitles.contains(title) }),
+              menu.isEnabled, let action = menu.action else { throw Failure.missingControl(title) }
+        menu.selectItem(withTitle: title)
+        guard menu.sendAction(action, to: menu.target) else { throw Failure.disabledControl(title) }
     }
     func chooseColor(_ id: String, color: NSColor) throws {
         guard let marker = control(id) as? StorebenchControlMarker, marker.available else { throw Failure.missingControl(id) }
@@ -460,6 +485,7 @@ private extension WorkspaceSession {
         let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
         let ui = OwnedMediaWindow(f.view()); defer { ui.close() }
         try await fill(ui, f)
+        try await ui.wait { ui.enabled("ai-cards.prompt-instructions") }
         try await ui.press("ai-cards.prompt-instructions")
         try await ui.wait { ui.enabled("ai-cards.edit-prompt") }; try await ui.press("ai-cards.edit-prompt")
         try await ui.wait { ui.promptEditor() != nil }
@@ -596,6 +622,74 @@ private extension WorkspaceSession {
         #expect(swedish.fields["description"] == "Existing synthetic Swedish text" && swedish.fields["keywords"] == "sv-0,sv-1")
         #expect(MediaAIStubProtocol.count == 2)
         #expect(try await f.session.translationRequest(accountId: f.account.id, appId: f.app.id, revisionId: revision, versionId: "version-1", sourceLocale: "en-US") == source)
+        #expect(try await f.session.publishHistory(accountId: f.account.id, appId: f.app.id).isEmpty)
+    }
+
+    @Test func UIShowsFailedLanguagesWithoutReportingTranslationSuccess() async throws {
+        MediaAIStubProtocol.reset(outcome: .unavailable)
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let revision = try #require(try await f.session.revisions(accountId: f.account.id, appId: f.app.id).first { $0.id == "00000000-0000-4000-8000-000000000002" })
+        let version = try #require(revision.versions.first { $0.id == "version-1" })
+        let ui = OwnedMediaWindow(AIListingTranslationView(account: f.account, appId: f.app.id, revisionId: revision.id, version: version, session: f.session)); defer { ui.close() }
+        try await ui.wait { ui.enabled("ai-languages.targets") }; try await ui.press("ai-languages.targets")
+        try await ui.wait { ui.enabled("ai-languages.target.sv") }
+        try await ui.press("ai-languages.target.sv"); try await ui.press("ai-languages.target.de-DE")
+        try await ui.wait { ui.enabled("ai-languages.populate") }; try await ui.press("ai-languages.populate")
+        try await ui.wait { ui.containsText("No languages were translated. 2 failed.") }
+        #expect(!ui.containsText("Translation finished"))
+        #expect(try await f.session.aiJobs(accountId: f.account.id, appId: f.app.id).filter { $0.state == .failed }.count == 2)
+        let current = try await f.session.workspaceRevision(revision, accountId: f.account.id, appId: f.app.id)
+        #expect(current.versions.first { $0.id == version.id }?.localizations.contains { ["sv", "de-DE"].contains($0.locale) } == false)
+        #expect(try await f.session.publishHistory(accountId: f.account.id, appId: f.app.id).isEmpty)
+    }
+
+    @Test func UIRetriesOnlyFailedLanguagesAndKeepsSuccessfulDrafts() async throws {
+        MediaAIStubProtocol.reset(maximumRequests: 3); MediaAIStubProtocol.failTranslations(to: ["de-DE"])
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let revision = try #require(try await f.session.revisions(accountId: f.account.id, appId: f.app.id).first { $0.id == "00000000-0000-4000-8000-000000000002" })
+        let version = try #require(revision.versions.first { $0.id == "version-1" })
+        let ui = OwnedMediaWindow(AIListingTranslationView(account: f.account, appId: f.app.id, revisionId: revision.id, version: version, session: f.session)); defer { ui.close() }
+        try await ui.wait { ui.enabled("ai-languages.targets") }; try await ui.press("ai-languages.targets")
+        try await ui.wait { ui.enabled("ai-languages.target.sv") }
+        try await ui.press("ai-languages.target.sv"); try await ui.press("ai-languages.target.de-DE")
+        try await ui.wait { ui.enabled("ai-languages.populate") }; try await ui.press("ai-languages.populate")
+        try await ui.wait { ui.containsText("1 failed; retry those languages") }
+        let swedish = try await f.session.aiTranslationTarget(accountId: f.account.id, appId: f.app.id, revisionId: revision.id, versionId: version.id, locale: "sv")
+        #expect(MediaAIStubProtocol.count == 2)
+        MediaAIStubProtocol.failTranslations(to: [])
+        try await ui.wait { ui.enabled("ai-languages.populate") }; try await ui.press("ai-languages.populate")
+        try await ui.wait { ui.containsText("1 skipped because their text was already filled") }
+        #expect(MediaAIStubProtocol.count == 3)
+        let current = try await f.session.aiTranslationTarget(accountId: f.account.id, appId: f.app.id, revisionId: revision.id, versionId: version.id, locale: "sv")
+        #expect(current.map(\.draft.fields) == swedish.map(\.draft.fields))
+        #expect(try await f.session.publishHistory(accountId: f.account.id, appId: f.app.id).isEmpty)
+    }
+
+    @Test func UILanguageChangesOpensFromTheEditorAndComparesBothBaselinesWithoutSaving() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        let revision = try #require(try await f.session.revisions(accountId: f.account.id, appId: f.app.id).first { $0.id == "00000000-0000-4000-8000-000000000002" })
+        let version = try #require(revision.versions.first { $0.id == "version-1" })
+        let initial = try await f.session.textDraft(accountId: f.account.id, appId: f.app.id, revisionId: revision.id, localizationId: "version-locale-1", scope: .version)
+        var fields = initial.fields; fields["description"] = "Synthetic saved wording"; fields["keywords"] = "saved,keywords"
+        _ = try await f.session.saveTextDraft(accountId: f.account.id, appId: f.app.id, revisionId: revision.id, localizationId: "version-locale-1", scope: .version, fields: fields, fingerprint: initial.fingerprint)
+        let draft = try LanguageDraftEditor(scope: .init(accountId: f.account.id, appId: f.app.id, revisionId: revision.id), revision: revision, versionId: version.id, locale: "en-US", session: f.session)
+        await draft.load(); defer { draft.retire() }
+        let description = try #require(draft.editor?.fields.first { $0.key == "description" })
+        try draft.change(description, to: "Synthetic current wording")
+        let signature = try #require(draft.editor?.signature), imported = draft.editor?.original(description)
+        let presentationModel = WorkspaceController(workspace: Workspace(root: f.root), writer: VaultWriter(dataRoot: f.root, storage: MemoryVaultStorage()), releaseWarmDelay: nil)
+        let ui = OwnedMediaWindow(LanguageEditor(account: f.account, revision: revision, version: version,
+            scope: .init(accountId: f.account.id, appId: f.app.id, revisionId: revision.id, local: false), locale: "en-US", targetMode: "apple-version", session: f.session,
+            openReview: { _ in false }, providedModel: draft, contained: true).environment(presentationModel)); defer { ui.close() }
+        try await ui.wait { ui.enabled("language.diff") }; try await ui.press("language.diff")
+        try await ui.wait { !ui.window.sheets.isEmpty && ui.control("language.diff.field.keywords") != nil }
+        try ui.captureSheet("listing-text-diff")
+        try ui.chooseSheetOption("Loaded Draft"); try await ui.settle()
+        try await ui.wait { ui.control("language.diff.field.description") != nil && ui.control("language.diff.field.keywords") == nil }
+        try await ui.press("language.diff.close")
+        try await ui.wait { ui.window.sheets.isEmpty }
+        #expect(draft.editor?.signature == signature && draft.dirty && draft.editor?.original(description) == imported)
+        #expect(try await f.session.textDraft(accountId: f.account.id, appId: f.app.id, revisionId: revision.id, localizationId: "version-locale-1", scope: .version).fields == fields)
         #expect(try await f.session.publishHistory(accountId: f.account.id, appId: f.app.id).isEmpty)
     }
 

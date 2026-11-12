@@ -123,15 +123,11 @@ struct AssetLibraryAssetsCard: View {
     }
     private func nameCell(_ row: AssetLibraryTable.Row) -> some View {
         HStack(spacing: 12) {
-            Button { open(row.asset) } label: {
+            StorebenchMediaButton(title: "Open " + row.asset.name, action: { open(row.asset) }) {
                 AppleLibraryThumbnail(account: account, appId: appId, asset: row.asset, session: session, fresh: fresh, height: Self.thumbnailHeight)
                     .frame(width: 96).background(StorebenchTheme.color("color-surface-sunken"), in: RoundedRectangle(cornerRadius: 6))
-                    .overlay(StorebenchControlOutline(border: .clear))
-            }.buttonStyle(StorebenchPressStyle()).help("Open " + row.asset.name).accessibilityLabel("Open " + row.asset.name)
-            Button { open(row.asset) } label: {
-                Text(row.asset.name).font(.sbCallout).foregroundStyle(StorebenchTheme.accent).multilineTextAlignment(.leading).lineLimit(3)
-                    .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            }.buttonStyle(StorebenchPressStyle()).help(row.asset.name == row.asset.fileName ? row.asset.fileName : row.asset.name + "\n" + row.asset.fileName).accessibilityLabel(row.asset.name)
+            }
+            StorebenchRecordLink(text: row.asset.name, help: row.asset.name == row.asset.fileName ? row.asset.fileName : row.asset.name + "\n" + row.asset.fileName) { open(row.asset) }
         }.padding(.horizontal, 12)
     }
     @ViewBuilder private func selectCell(_ asset: AssetLibrary.Asset) -> some View {
@@ -145,9 +141,9 @@ struct AssetLibraryAssetsCard: View {
         StorebenchCollection(items: shown, title: { $0.asset.name }, subtitle: { $0.status }, maximumColumns: 4, cardSurface: false, initialOpeningLimit: -1, empty: "No assets match these filters.") { row in
             StorebenchAssetCard(title: row.asset.name == row.asset.fileName ? row.asset.name : row.asset.name + "\n" + row.asset.fileName,
                 metadata: [row.sizeText, row.worksWithText, row.modifiedText, "Live Version: " + row.version.summary].joined(separator: " · "), status: row.status) {
-                Button { open(row.asset) } label: {
-                    AppleLibraryThumbnail(account: account, appId: appId, asset: row.asset, session: session, fresh: fresh).overlay(StorebenchControlOutline(border: .clear))
-                }.buttonStyle(StorebenchPressStyle()).help("Open " + row.asset.name).accessibilityLabel("Open " + row.asset.name)
+                StorebenchMediaButton(title: "Open " + row.asset.name, action: { open(row.asset) }) {
+                    AppleLibraryThumbnail(account: account, appId: appId, asset: row.asset, session: session, fresh: fresh)
+                }
             } actions: {
                 VStack(alignment: .leading, spacing: StorebenchTheme.space(2)) {
                     Button("Open Asset") { open(row.asset) }.buttonStyle(StorebenchButtonStyle(.quiet, stretch: true))

@@ -1,11 +1,13 @@
 import Foundation
 
 actor AIWorkQueue {
+    private let limit: Int
     private var active = 0
     private var waiting: [(UUID, CheckedContinuation<Void, Error>)] = []
+    init(limit: Int = 2) { self.limit = max(1, min(2, limit)) }
     private func acquire(_ id: UUID) async throws {
         try Task.checkCancellation()
-        if active < 2 { active += 1; return }
+        if active < limit { active += 1; return }
         guard waiting.count < 64 else { throw AIFailure.unavailable }
         try await withTaskCancellationHandler(operation: {
             try await withCheckedThrowingContinuation { waiting.append((id, $0)) }
@@ -41,7 +43,7 @@ extension WorkspaceSession {
         else { guard let value = try aiConnection(provider) else { throw AIFailure.configuration }; connection = value }
         let chosen = AIConnection(provider: provider, model: model ?? connection.model, credentialId: connection.credentialId, revision: connection.revision)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-        let signature = JSONText.object([("contract", .number(1)), ("request", try JSONText.parse(encoder.encode(request))),
+        let signature = JSONText.object([("contract", .number(request.purpose == "translation" ? 2 : 1)), ("request", try JSONText.parse(encoder.encode(request))),
             ("connection", try JSONText.parse(encoder.encode(chosen))), ("system", .string(provider == .apple ? ProcessInfo.processInfo.operatingSystemVersionString : ""))]).sha256
         let id = accountId + ":" + appId + ":" + signature
         if let active = aiTasks[id] { return try await active.value }
@@ -79,11 +81,23 @@ extension WorkspaceSession {
                 try await markAIJobRunning(id)
                 if connection.provider == .apple { return try await AppleLocalAI.generate(request) }
                 let key = try await (connection.provider == .chatgpt ? chatGPTAccess(connection) : aiCredential(connection))
-                let result = try await AIClient(provider: connection.provider, key: key, configuration: configuration?() ?? .ephemeral).generate(request, model: selected.model)
-                guard try await aiConnection(connection.provider) == connection else { throw AIFailure.changed }
-                return result
+                let client = try AIClient(provider: connection.provider, key: key, configuration: configuration?() ?? .ephemeral)
+                let generate: @Sendable (AIRequest) async throws -> JSONText = { [self] input in
+                    try Task.checkCancellation()
+                    try await requireHistoryScope(accountId: accountId, appId: appId)
+                    guard try await aiConnection(connection.provider) == connection else { throw AIFailure.changed }
+                    let result = try await client.generate(input, model: selected.model)
+                    try Task.checkCancellation()
+                    try await requireHistoryScope(accountId: accountId, appId: appId)
+                    guard try await aiConnection(connection.provider) == connection else { throw AIFailure.changed }
+                    return result
+                }
+                if request.purpose == "translation" { return try await TranslationFitting.generate(request, respond: generate) }
+                return try await generate(request)
             }
             try Task.checkCancellation()
+            try requireHistoryScope(accountId: accountId, appId: appId)
+            if connection.provider != .apple { guard try aiConnection(connection.provider) == connection else { throw AIFailure.changed } }
             if request.purpose == "translation", case .array(let source) = try JSONText.parse(Data(request.input.utf8)) { try request.validateTranslations(value, count: source.count) }
             if request.purpose == "cards" { _ = try AICards.checked(value, count: request.images.count) }
             try finish(); job.state = .complete; job.result = value; try save(); return value
@@ -91,7 +105,8 @@ extension WorkspaceSession {
             if connection.provider == .chatgpt, let failure = error as? AIFailure, [.subscriptionLimit, .signIn, .subscriptionPermission].contains(failure) { chatGPTBlocks[connection.credentialId] = failure }
             let cancelled = Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled
             try finish(); job.state = cancelled ? .paused : .failed
-            job.failure = cancelled ? .cancelled : error as? AIFailure ?? .unavailable
+            job.failure = cancelled ? .cancelled : error is TranslationLengthFailure ? .translationLength : error as? AIFailure ?? .unavailable
+            job.failureDetail = (error as? TranslationLengthFailure)?.message
             try save(); throw error
         }
     }

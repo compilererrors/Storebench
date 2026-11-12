@@ -15,7 +15,7 @@ struct CopiedTextReviewView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         StorebenchReadOnlyText(title: "Saved destination", text: review.targetValue, height: 90)
                         StorebenchReadOnlyText(title: "Current saved source", text: review.sourceValue, height: 90)
-                        Button("Confirm Wording") { acknowledge() }.help("Confirm Destination Wording").accessibilityLabel("Confirm Destination Wording").storebenchWorking(!(!disabled && review.canAcknowledge))
+                        StorebenchActionGroup { Button("Confirm Wording") { acknowledge() }.help("Confirm Destination Wording").accessibilityLabel("Confirm Destination Wording").storebenchWorking(!(!disabled && review.canAcknowledge)) }
                     }.padding(.top, 6)
                 }
             }

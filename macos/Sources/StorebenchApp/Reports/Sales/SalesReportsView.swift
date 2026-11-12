@@ -36,7 +36,7 @@ import UniformTypeIdentifiers
     private var visible: [SalesRecord] { Array(records.reversed().dropFirst((min(page, pages) - 1) * pageSize).prefix(pageSize)) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             ReportingSetupView(account: account, app: app, session: session, source: $source, disabled: blocked || working || downloadRunning,
                                onReady: { reportingReady = $0 }, onBusy: { reportingBusy = $0 }, onUseFile: { choose() })
             Card(title: "Download sales reports", subtitle: "Daily Summary Sales Reports are saved locally. Days Apple has not delivered stay unknown.", help: "sales") {
@@ -59,9 +59,8 @@ import UniformTypeIdentifiers
                     .frame(height: 44).accessibilityLabel("Selected report file")
                 Text("CSV, TXT, TSV or GZ · 4 MB per file, 8 MB after decompression. Only this app's rows are saved. Summary CSV does not mark a day as checked by Apple.")
                     .font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
-                if working { Button("Stop Waiting") { stop() }.storebenchWorking(blocked) }
-                ScrollView { Text(status).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
-                    .frame(height: 64).accessibilityLabel("Sales report operation status")
+                if working { StorebenchActionGroup { Button("Stop Waiting") { stop() }.storebenchWorking(blocked) } }
+                StorebenchFeedback(text: status, height: 64).accessibilityLabel("Sales report operation status")
                 RecoveryActions(code: issueCode)
             }
             if failed {
@@ -73,13 +72,15 @@ import UniformTypeIdentifiers
             } else if !records.isEmpty {
                 Card(title: "Saved sales periods", subtitle: "Sales and Pricing use the same saved reports. Removing a period affects only local history.") {
                     DisclosureGroup("Manage saved periods (\(records.count))") {
-                        Button("Export Summary CSV") { export(nil, format: .summary) }.help("Export All Periods · Summary CSV").accessibilityLabel("Export All Periods · Summary CSV").storebenchWorking(unavailable)
+                        StorebenchActionGroup { Button("Export Summary CSV") { export(nil, format: .summary) }.help("Export All Periods · Summary CSV").accessibilityLabel("Export All Periods · Summary CSV").storebenchWorking(unavailable) }
                         StorebenchCollection(items: Array(records.reversed()).map { StorebenchCollectionEntry(id: $0.periodId, value: $0) }, title: { entry in let record = entry.value; return record.beginDate + " – " + record.endDate }, empty: "No saved sales periods yet. Download sales reports to save a period.") { entry in
                     let record = entry.value
                             VStack(alignment: .leading, spacing: 8) {
                                 Text("\(record.beginDate) – \(record.endDate)\(record.noSales == true ? " · No sales" : "")").font(.sbHeadline)
-                                StorebenchActionGroup { exportActions(record) }
-                                Button("Remove Period…", role: .destructive) { remove(record) }.help("Remove Local Period").accessibilityLabel("Remove Local Period").storebenchWorking(unavailable)
+                                StorebenchActionGroup {
+                                    exportActions(record)
+                                    Button("Remove Period…", role: .destructive) { remove(record) }.help("Remove Local Period").accessibilityLabel("Remove Local Period").storebenchWorking(unavailable)
+                                }
                             }.padding(.vertical, 8)
                             StorebenchDivider()
                         }
@@ -120,10 +121,11 @@ import UniformTypeIdentifiers
     }
     private var downloadProgress: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ProgressView(value: Double(downloadJob?.checked ?? 0), total: Double(max(1, downloadJob?.total ?? 0))).accessibilityLabel("Sales download progress")
-            ScrollView { Text(downloadProgressMessage).font(.sbCallout).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
-                .frame(height: 88).accessibilityLabel("Saved Sales download status")
-            StorebenchReadButton("Refresh Status") { await readDownloadJob(context: loadId) }.help("Refresh Download Status").accessibilityLabel("Refresh Download Status").storebenchWorking(blocked || working || session == nil)
+            StorebenchProgressStatus(message: downloadProgressMessage, value: Double(downloadJob?.checked ?? 0), total: Double(max(1, downloadJob?.total ?? 0)), height: 88)
+                .accessibilityLabel("Sales download progress")
+            StorebenchActionGroup {
+                StorebenchReadButton("Refresh Status") { await readDownloadJob(context: loadId) }.help("Refresh Download Status").accessibilityLabel("Refresh Download Status").storebenchWorking(blocked || working || session == nil)
+            }
         }
     }
     private var downloadProgressMessage: String {

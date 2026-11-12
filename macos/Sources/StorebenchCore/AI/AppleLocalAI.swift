@@ -2,12 +2,13 @@ import Foundation
 #if canImport(FoundationModels)
 import FoundationModels
 
-@available(macOS 26, *) @Generable private struct LocalTranslations {
-    @Guide(description: "One translation for each supplied input, in exactly the same order.") var translations: [String]
+@available(macOS 26, *) @Generable private struct LocalTranslation {
+    @Guide(description: "Only the translated source text, within the supplied text budget.") var text: String
 }
 #endif
 
 public enum AppleLocalAI {
+    private static let queue = AIWorkQueue(limit: 1)
     // Fixed properties give each screenshot one card; the model chooses importance, never source identity.
     #if canImport(FoundationModels)
     @available(macOS 26, *)
@@ -114,7 +115,10 @@ public enum AppleLocalAI {
         return values.contains(.string(AICardDirection.allowCropping.rawValue))
     }
     static func executionSnapshot(_ input: AIRequest) -> AIExecutionSnapshot {
-        guard input.purpose == "cards" else { return .init(instructions: input.instructions, input: input.input, format: "Native structured translations") }
+        guard input.purpose == "cards" else {
+            let instructions = (try? LocalTranslationPlan(input).instructions) ?? input.instructions
+            return .init(instructions: instructions, input: input.input, format: "One native text response per complete source field. A field is split only if Apple reports that its context window was exceeded. Complete fields and combined keyword bytes are checked. Oversized wording receives up to three rewording rounds; text is never truncated.")
+        }
         let source = (try? JSONText.parse(Data(input.input.utf8))) ?? .null
         let directions = (try? AICardDirection.selected(in: source)) ?? AICardDirection.defaults
         let language = input.language ?? "en-US"
@@ -125,6 +129,9 @@ public enum AppleLocalAI {
     }
     static func generate(_ input: AIRequest) async throws -> JSONText {
         guard available else { throw AIFailure.localUnavailable }
+        return try await queue.run { try await generateAvailable(input) }
+    }
+    private static func generateAvailable(_ input: AIRequest) async throws -> JSONText {
         #if canImport(FoundationModels)
         if #available(macOS 26, *) {
             if let language = input.language, !SystemLanguageModel.default.supportsLocale(Locale(identifier: language)) { throw AIFailure.languageUnsupported }
@@ -135,10 +142,17 @@ public enum AppleLocalAI {
                     let response = try await session.respond(to: execution.input, schema: cardSchema(count: input.images.count, allowCropping: allowsCropping(input)))
                     return try checkedCardResponse(JSONText.parse(Data(response.content.jsonString.utf8)), count: input.images.count)
                 }
-                let session = LanguageModelSession(instructions: input.instructions)
-                let response = try await session.respond(to: input.input, generating: LocalTranslations.self)
-                return .object([("translations", .array(response.content.translations.map(JSONText.string)))])
+                return try await translate(input) { instructions, text in
+                    do {
+                        let session = LanguageModelSession(instructions: instructions)
+                        let response = try await session.respond(to: JSONText.object([("sourceText", .string(text))]).stringify(), generating: LocalTranslation.self)
+                        return response.content.text
+                    } catch let error as CancellationError { throw error }
+                    catch { throw failure(error) }
+                }
             } catch let error as CancellationError {
+                throw error
+            } catch let error as TranslationLengthFailure {
                 throw error
             } catch {
                 throw failure(error)

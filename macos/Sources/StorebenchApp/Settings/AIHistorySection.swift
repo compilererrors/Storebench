@@ -10,15 +10,14 @@ struct AIHistorySection: View {
     @State private var loading = false
     @State private var status = ""
     var body: some View {
-        StorebenchFormSection("AI History", icon: "history", description: "Requests and results stay on this Mac, including previous card variants. Open a request to inspect its brief, instructions, screenshots and response.") {
+        StorebenchFormSection("AI History", icon: "history", description: "Requests and results stay on this Mac, including previous card variants. Open a request to inspect its brief, instructions, screenshots and response.", accessory: AnyView(
+            StorebenchIconButton(title: "Refresh AI History", icon: "refresh") { Task { await load() } }
+                .storebenchControlID("ai-history.refresh").storebenchWorking(loading)
+        )) {
             StorebenchCollection(items: entries, title: { $0.title }, subtitle: { entry in
                 (appNames[entry.accountId + ":" + entry.appId] ?? "App") + " · " + entry.provider.title + " · " + entry.stateTitle + " · " + entry.createdAt.formatted(date: .abbreviated, time: .shortened)
             }, preferenceID: "ai-history", empty: loading ? "Reading saved AI requests…" : "No AI requests are saved for your connected apps yet. Generate cards or translate text to start this history.", activate: { selected = $0 }, action: "View Request") { _ in EmptyView() }
-            StorebenchTextSlot(text: status, height: 44, font: .sbCallout, color: StorebenchTheme.muted, live: true)
-            StorebenchFormFooter {
-                Button("Refresh History") { Task { await load() } }.storebenchControlID("ai-history.refresh").storebenchWorking(loading)
-                    .help("Read saved requests, including those completed in another window")
-            }
+            StorebenchTextSlot(text: status, height: StorebenchTheme.design.number("status-height"), font: .sbCaption, color: StorebenchTheme.muted, live: true)
         }.task { await load() }
             .sheet(item: $selected) { entry in
                 AIHistoryDetail(session: session, entry: entry, appName: appNames[entry.accountId + ":" + entry.appId] ?? "App", close: { selected = nil })
@@ -59,7 +58,7 @@ struct AIHistoryDetail: View {
                 }
             }
             if let job {
-                if let failure = job.failure { StorebenchTextSlot(text: failure.message, height: 64, font: .sbCallout, color: StorebenchTheme.color("color-danger")) }
+                if let failure = job.failure { StorebenchTextSlot(text: job.failureDetail ?? failure.message, height: 64, font: .sbCallout, color: StorebenchTheme.color("color-danger")) }
                 if job.request.purpose == "cards" {
                     let input = (try? JSONText.parse(Data(job.request.input.utf8))) ?? .null
                     StorebenchCardSection(title: "Brief") {

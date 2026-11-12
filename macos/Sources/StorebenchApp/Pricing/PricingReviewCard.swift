@@ -33,7 +33,7 @@ struct PricingReviewCard<Form: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             Card(title: title, subtitle: subtitle, help: help) {
                 form().storebenchWorking(preparing || publishing)
                 StorebenchFormFooter {
@@ -52,6 +52,7 @@ struct PricingReviewCard<Form: View>: View {
             }
             ReviewPanel(account: account, app: app, session: session, review: $review, done: { if review?.state == "complete" { Task { await finished() } } }, busyChanged: { publishing = $0 }, syncConfirmation: choice == "Sync to Apple")
         }
+        .trackUnsavedChanges(false, busy: preparing || publishing || review?.state == "running")
         .onChange(of: reviewIdentity) { if review?.state == "prepared" { review = nil } }
     }
 

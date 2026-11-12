@@ -114,6 +114,39 @@ import Testing
         #expect(AnalyticsDownloadJob.failureCode(AppStoreConnectClient.Failure.agreement) == "SB-APPLE-AGREEMENT")
         #expect(ReviewsDownloadJob.failureCode(AppStoreConnectClient.Failure.agreement) == "SB-APPLE-AGREEMENT")
     }
+    @Test func publishingRecoveryOpensTheAnswerFormAndKeepsAccountAppAndUnsavedProtection() throws {
+        let scope = try RecoveryGuidance.Scope(accountId: "synthetic-recovery-account", appId: "1000000001")
+        let foreign = try RecoveryGuidance.Scope(accountId: scope.accountId, appId: "1000000002")
+        let cases: [(AppleProblem.Area, AppNavigation.Section, String?)] = [(.privacy, .appPrivacy, "app-privacy"), (.tax, .appPrivacy, "tax-category"), (.reviewInformation, .reviewInfo, nil), (.version, .release, "release-version")]
+        for (area, section, anchor) in cases {
+            let target = try #require(PublishingReviewPresentation.recoveryTarget(area))
+            #expect(target.requiresApp && target.section == section && target.anchor == anchor)
+            #expect(target.section != .publish && target.resolved(scope: nil) == nil)
+            let action = try #require(target.resolved(scope: scope))
+            let destination = try ConnectedApps.Destination(scope: scope, recovery: action)
+            #expect(destination.section == section && destination.scope == scope && destination.recoveryAction?.target.anchor == anchor)
+            #expect(action.allowed(current: scope, decision: .ready))
+            #expect(!action.allowed(current: foreign, decision: .ready))
+            #expect(!action.allowed(current: scope, decision: .wait))
+            #expect(!action.allowed(current: scope, decision: .confirmDiscard))
+            #expect(action.allowed(current: scope, decision: .confirmDiscard, discardConfirmed: true))
+        }
+        let (_, _, _, catalog) = try fixture()
+        #expect(ReportingMessages.normalized(PublishFailure.ownership.recoveryCode) == "SB-PUBLISH-SCOPE")
+        #expect(catalog.entry("SB-PUBLISH-SCOPE")?.message == PublishFailure.ownership.message)
+    }
+
+    @Test func legacyOwnershipFailuresUseScopeGuidanceWithoutClaimingAnAccountOwnerIsMissing() throws {
+        let request = PublishRequest(accountId: "synthetic-recovery-account", appId: "1000000001", scope: .reviewInfo, versionId: "version-1")
+        var value = PublishReview(plan: .init(title: "Synthetic review", request: request, fingerprint: "synthetic", steps: [], notes: []), id: "synthetic-review", now: Date()).json
+        value = value.setting("state", .string("failed")).setting("error", .string("Apple publishing resource has no approved app owner."))
+        let review = try #require(PublishReview(value))
+        #expect(review.errorCode == "SB-PUBLISH-SCOPE" && review.error == PublishFailure.ownership.message)
+        #expect(PublishReview(review.json)?.errorCode == review.errorCode)
+        let unknown = try #require(PublishReview(value.setting("error", .string("Synthetic interrupted approval"))))
+        #expect(unknown.errorCode == nil)
+    }
+
     @Test func guardedPageAndReportTransportPreserveAgreementFailure() async throws {
         let host = "recovery-agreement.appstoreconnect.test", account = Account(id: "synthetic-recovery-account", name: "Synthetic Recovery", keyId: "SAMPLE0001", keyType: "team", issuerId: "00000000-0000-4000-8000-000000000003", appIds: ["1000000001"], appNames: nil)
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [StubProtocol.self]

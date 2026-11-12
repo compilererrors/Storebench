@@ -36,6 +36,37 @@ import Testing
         }
         for row in try rows(fixture["matching"]) { #expect(JSONText.array(PublishingWorkspace.matchingBuilds(builds, version: versions.first { $0.id == row["versionId"]?.text }).map { .string($0.id) }) == row["expected"]) }
     }
+    @Test func aSubmittedAppleVersionExplainsWhyAnotherSubmissionIsUnnecessary() throws {
+        for state in ["WAITING_FOR_REVIEW", "IN_REVIEW", "PENDING_DEVELOPER_RELEASE", "PENDING_APPLE_RELEASE", "PROCESSING_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION", "READY_FOR_SALE", "WAITING_FOR_EXPORT_COMPLIANCE"] {
+            var editor = PublishingWorkspace.Editor(accountId: "synthetic-account", appId: "1000000001")
+            try editor.restore(.init(accountId: editor.accountId, appId: editor.appId, scope: .submit, versionId: "synthetic-version"))
+            try editor.receive(.init(accountId: editor.accountId, appId: editor.appId,
+                versions: [.init(id: "synthetic-version", platform: "IOS", number: "2.0", state: state)], sources: [], builds: nil, profiles: [], defaultProfile: nil, plan: nil))
+            #expect(editor.preparation.state == .settled && !editor.preparation.canPrepare)
+            #expect(editor.preparation.title == AppStoreNames.state(state))
+            #expect(editor.preparation.detail.contains("already been submitted") && editor.preparation.detail.contains(AppStoreNames.state(state)))
+            #expect(editor.versionId == "synthetic-version" && editor.buildId.isEmpty)
+        }
+    }
+    @Test func submissionPreparationKeepsMissingChoicesDistinctFromAnAlreadySubmittedVersion() throws {
+        var editor = PublishingWorkspace.Editor(accountId: "synthetic-account", appId: "1000000001")
+        editor.chooseAction(.submit)
+        #expect(editor.preparation.state == .blocked && editor.preparation.detail.contains("Read current publishing choices"))
+        func choices(_ state: String, builds: [PublishingWorkspace.Build]?) -> PublishingWorkspace.Snapshot {
+            .init(accountId: editor.accountId, appId: editor.appId, versions: [.init(id: "synthetic-version", platform: "IOS", number: "2.0", state: state)], sources: [], builds: builds, profiles: [], defaultProfile: nil, plan: nil)
+        }
+        try editor.receive(choices("PREPARE_FOR_SUBMISSION", builds: nil))
+        #expect(editor.preparation.state == .blocked && editor.preparation.detail.contains("Read the processed builds"))
+        try editor.receive(choices("PREPARE_FOR_SUBMISSION", builds: []))
+        #expect(editor.preparation.state == .available && editor.preparation.canPrepare)
+        try editor.receive(choices("READY_FOR_REVIEW", builds: []))
+        #expect(editor.preparation.state == .available, "Ready for Review still needs the explicit Submit for Review approval")
+        try editor.receive(choices("SYNTHETIC_UNKNOWN_STATE", builds: []))
+        #expect(editor.preparation.state == .blocked && editor.preparation.detail.contains("Refresh Status"))
+        let foreign = PublishingWorkspace.Snapshot(accountId: editor.accountId, appId: "1000000002", versions: [], sources: [], builds: [], profiles: [], defaultProfile: nil, plan: nil)
+        #expect(throws: PublishFailure.self) { try editor.receive(foreign) }
+        #expect(editor.snapshot?.appId == "1000000001" && editor.version?.state == "SYNTHETIC_UNKNOWN_STATE")
+    }
     @Test func historyLabelsExpiryAndAllPagesMatchActualPrimary() throws {
         let fixture = try fixture()
         guard case .number(let timestamp)? = fixture["now"] else { throw PublishFailure.invalid("Invalid synthetic clock.") }; let now = Date(timeIntervalSince1970: timestamp / 1000)
@@ -163,5 +194,35 @@ import Testing
         #expect(next.id != seen.id && apple.writes.count == 1)
         await #expect(throws: PublishFailure.self) { try await session.approvePublishing(account: account, appId: app, id: seen.id, fingerprint: seen.fingerprint, client: client) }
         #expect(apple.writes.count == 1)
+    }
+
+    @Test func rememberedReviewsKeepTheirScopeSourceLanguageAndMediaStage() {
+        let full = PublishRequest(accountId: "synthetic-account", appId: "1000000001", scope: .metadata, targetMode: "release-plan", revisionId: "synthetic-revision", versionId: "synthetic-version")
+        let original = PublishingWorkspace.reviewContext(full)
+        var text = full; text.mediaStage = PublishRequest.textStage
+        var media = full; media.mediaStage = PublishRequest.screenshotsStage
+        var language = text; language.listingLocale = "en-GB"
+        var other = full; other.versionId = "synthetic-other-version"
+        let copyright = PublishRequest(accountId: full.accountId, appId: full.appId, scope: .versionCopyright, versionId: "synthetic-version")
+        let contexts = [original, PublishingWorkspace.reviewContext(text), PublishingWorkspace.reviewContext(media), PublishingWorkspace.reviewContext(language),
+                        PublishingWorkspace.reviewContext(other), PublishingWorkspace.reviewContext(copyright)]
+        #expect(Set(contexts).count == contexts.count, "A completed text review must not replace Copyright or a remaining-media review")
+        #expect(original == PublishingWorkspace.reviewContext(full))
+    }
+
+    @Test func copyrightLoadsForTheRequestedVersionAndLaterReadsKeepTypedEdits() throws {
+        var editor = PublishingWorkspace.Editor(accountId: "synthetic-account", appId: "1000000001")
+        try editor.restore(.init(accountId: "synthetic-account", appId: "1000000001", scope: .versionCopyright, versionId: "synthetic-version"))
+        let choices = PublishingWorkspace.Snapshot(accountId: "synthetic-account", appId: "1000000001",
+            versions: [.init(id: "synthetic-version", platform: "MAC_OS", number: "1.0", state: "PREPARE_FOR_SUBMISSION", copyright: "2025 Synthetic Studio")],
+            sources: [], builds: [], profiles: [], defaultProfile: nil, plan: nil)
+        try editor.receive(choices)
+        #expect(editor.copyright == "2025 Synthetic Studio" && !editor.dirty)
+        editor.copyright = "2026 Synthetic Studio"
+        try editor.receive(choices)
+        #expect(editor.copyright == "2026 Synthetic Studio" && editor.dirty)
+        editor.copyright = ""
+        try editor.receive(choices)
+        #expect(editor.copyright.isEmpty && editor.dirty, "A later read must not replace an intentional edit")
     }
 }

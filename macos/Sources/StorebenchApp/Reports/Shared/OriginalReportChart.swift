@@ -60,7 +60,7 @@ struct OriginalReportChart: View {
                 }
                 SavedReportChart(series: series, format: label, note: "The inspection shows original amounts. Gaps and unavailable details are never filled with zero.")
             } else if prepared?.input != input {
-                ProgressView("Preparing saved reports…").frame(maxWidth: .infinity, minHeight: 320)
+                StorebenchLoadingStatus(message: "Preparing saved reports…", surface: false).frame(maxWidth: .infinity, minHeight: 320, alignment: .topLeading)
             } else {
                 Text("Saved report intervals could not be validated. Read the original reports before continuing.").foregroundStyle(StorebenchTheme.muted)
             }

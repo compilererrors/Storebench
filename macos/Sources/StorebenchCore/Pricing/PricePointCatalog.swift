@@ -27,7 +27,7 @@ enum PricePointCatalog {
             guard ProductPricing.opaque(id) else { throw PricingFailure.invalid("Invalid in-app purchase.") }
             (path, type) = ("/v2/inAppPurchases/\(id)/pricePoints", "inAppPurchasePricePoints")
         }
-        return try await list("\(path)?filter%5Bterritory%5D=\(codes.joined(separator: "%2C"))&limit=200").compactMap { point in
+        return try await list("\(path)?filter%5Bterritory%5D=\(codes.joined(separator: "%2C"))&include=territory&fields%5B\(type)%5D=customerPrice%2Cterritory&limit=200").compactMap { point in
             guard point.type == type, let territory = WorkspaceSession.linked(point, "territory"), codes.contains(territory) else { return nil }
             switch point.attributes?["customerPrice"] {
             case .string(let price)?: return PricePoint(id: point.id, territory: territory, customerPrice: price)
@@ -42,16 +42,37 @@ enum PricePointCatalog {
     static func readAll(appId: String, territories: [String], client: AppStoreConnectClient) async throws -> (points: [PricePoint], failed: Set<String>) {
         try await readAll(.app(appId), territories: territories, client: client)
     }
-    static func readAll(_ owner: Owner, territories: [String], client: AppStoreConnectClient) async throws -> (points: [PricePoint], failed: Set<String>) {
-        var points: [PricePoint] = [], failed = Set<String>()
-        for start in stride(from: 0, to: territories.count, by: batchSize) {
-            let batch = Array(territories[start..<min(start + batchSize, territories.count)])
-            do { points += try await read(owner, territories: batch, list: { try await client.list($0) }) }
-            catch let error as CancellationError { throw error }
-            catch let error as URLError where error.code == .cancelled { throw error }
-            catch { failed.formUnion(batch) }
-            try Task.checkCancellation()
+    static func readAll(_ owner: Owner, territories: [String], client: AppStoreConnectClient,
+                        progress: @escaping @Sendable (Int, Int) async -> Void = { _, _ in },
+                        completed: @escaping @Sendable ([PricePoint], Set<String>) async throws -> Void = { _, _ in }) async throws -> (points: [PricePoint], failed: Set<String>) {
+        let codes = Array(Set(territories)).sorted()
+        let batches = stride(from: 0, to: codes.count, by: batchSize).map { Array(codes[$0..<min($0 + batchSize, codes.count)]) }
+        return try await withThrowingTaskGroup(of: (Int, [PricePoint], Set<String>).self) { group in
+            func add(_ index: Int) {
+                group.addTask {
+                    try Task.checkCancellation()
+                    let batch = batches[index]
+                    do {
+                        let points = try await read(owner, territories: batch, list: { try await client.list($0) })
+                        return (index, points, [])
+                    } catch {
+                        try Task.checkCancellation()
+                        if error is CancellationError || (error as? URLError)?.code == .cancelled { throw CancellationError() }
+                        return (index, [], Set(batch))
+                    }
+                }
+            }
+            var next = 0, finished = 0, results: [Int: [PricePoint]] = [:], failed = Set<String>()
+            // The shared Apple admission queue still governs all requests; at most three batches are active here.
+            for _ in 0..<min(3, batches.count) { add(next); next += 1 }
+            for try await (index, points, missing) in group {
+                try Task.checkCancellation()
+                results[index] = points; failed.formUnion(missing); finished += batches[index].count
+                try await completed(points, missing)
+                await progress(finished, codes.count)
+                if next < batches.count { add(next); next += 1 }
+            }
+            return (batches.indices.flatMap { results[$0] ?? [] }, failed)
         }
-        return (points, failed)
     }
 }

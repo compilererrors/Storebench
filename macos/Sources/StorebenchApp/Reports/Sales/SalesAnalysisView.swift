@@ -52,7 +52,7 @@ struct SalesAnalysisView: View {
     }
     @ViewBuilder private var content: some View {
         if let prepared, prepared.input.reports == reports, let selected = prepared.selected {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
                 StorebenchFeedback(text: prepared.input == input ? "" : "Updating analysis… Figures below still use the previous selection.", height: 26)
                 if selected.analysis.coverage != nil {
                     summary(selected)
@@ -75,7 +75,7 @@ struct SalesAnalysisView: View {
     }
     static let summarySubtitle = "App purchases in the selected saved reports, before refunds. In-app products are shown separately."
     static func placeholder(filters: AnyView?, actions: AnyView?) -> some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             StorebenchFeedback(text: "", height: 26)
             Card(title: "Sales summary", subtitle: summarySubtitle, actions: actions) {
                 filters
@@ -175,7 +175,7 @@ struct SalesAnalysisView: View {
                 ForEach(analysis.insights) { item in
                     VStack(alignment: .leading, spacing: 6) {
                         Text(item.title).font(.sbHeadline); Text(item.evidence).fixedSize(horizontal: false, vertical: true); Text(item.suggestion).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
-                        if let section = item.section, let openSection { Button(section == "pricing" ? "Open Pricing" : "Open Localizations") { openSection(section) } }
+                        if let section = item.section, let openSection { StorebenchActionGroup { Button(section == "pricing" ? "Open Pricing" : "Open Localizations") { openSection(section) } } }
                     }.padding(.vertical, 6)
                 }
                 if analysis.insights.isEmpty { Text("No observations meet these criteria.").foregroundStyle(StorebenchTheme.muted) }

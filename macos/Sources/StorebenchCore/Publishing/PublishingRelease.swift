@@ -17,7 +17,15 @@ extension WorkspaceSession {
         return fields
     }
 
-    static func describe(_ fields: [(String, String)]) -> String { fields.map { "\($0.0): \($0.1)" }.joined(separator: "\n\n") }
+    static func describe(_ fields: [(String, String)]) -> String { fields.map { "\($0.0): \($0.0.hasSuffix("Url") && $0.1.isEmpty ? "Not Set" : $0.1)" }.joined(separator: "\n\n") }
+
+    /// Apple's nullable URL attributes use null to clear an address, never an empty URI.
+    static func publishedTextAttributes(_ fields: [(String, String)], creating: Bool = false) -> [(String, JSONText)] {
+        fields.compactMap { field, value in
+            if field.hasSuffix("Url"), value.isEmpty { return creating ? nil : (field, .null) }
+            return (field, .string(value))
+        }
+    }
 
     static func fieldPairs(_ value: JSONText?) -> [(String, String)] {
         guard case .object(let pairs)? = value else { return [] }
@@ -31,7 +39,7 @@ extension WorkspaceSession {
         guard !changed.isEmpty else { return }
         planner.add(.api, method: "PATCH", path: [.string(current.type), .string(current.id)], label: "Update \(current.type == "appInfoLocalizations" ? "app information" : "version text") · \(code)",
                     detail: changed.map(\.0).joined(separator: ", "), before: describe(changed.map { ($0.0, Apple.text(current.attributes?[$0.0]) ?? "") }), after: describe(changed),
-                    body: .object([("data", .object([("type", .string(current.type)), ("id", .string(current.id)), ("attributes", .object(changed.map { ($0.0, .string($0.1)) }))]))]))
+                    body: .object([("data", .object([("type", .string(current.type)), ("id", .string(current.id)), ("attributes", .object(publishedTextAttributes(changed)))]))]))
     }
 
     func planRelease(_ planner: Planner, account: Account) async throws -> String {
@@ -64,11 +72,16 @@ extension WorkspaceSession {
                             guard: .object([("kind", .string("release-settings")), ("digest", .string(digest))]))
                 return "Release settings · \(plan.targetVersion)"
             }
+            let currentVersions = versions.map { PublishingWorkspace.Version(id: $0.id, platform: $0.attributes?["platform"]?.string ?? "", number: $0.attributes?["versionString"]?.string ?? "", state: Apple.state($0)) }
+            if let blocker = ReleaseCreation.blocker(platform: plan.platform, number: plan.targetVersion, versions: currentVersions) {
+                let problem = AppleProblem(code: "STATE_ERROR.VERSION_CREATION_BLOCKED", resource: "appStoreVersions", field: nil, detail: blocker.detail)
+                throw PublishFailure.refused(blocker.detail, problems: [problem])
+            }
             planner.add(.api, method: "POST", path: [.string("appStoreVersions")], label: "Create \(Releases.platformName(plan.platform)) version \(plan.targetVersion)",
                         detail: "Create a version in App Store Connect with the release method below. This does not submit it for review.", after: "\(plan.targetVersion) · \(after)",
                         body: .object([("data", .object([("type", .string("appStoreVersions")), ("attributes", .object([("platform", .string(plan.platform)), ("versionString", .string(plan.targetVersion))] + settings)),
                                                           ("relationships", .object([("app", Apple.relationship("apps", .string(request.appId)))]))]))]))
-            planner.notes.append("This review only creates the Apple version. Apple can leave fields such as Promotional Text and What's New empty on it. Save to App Store Connect, the next step, sends every field, screenshot and app preview of this plan, so nothing stays empty.")
+            planner.notes.append("This review only creates the Apple version. Apple can leave fields such as Promotional Text and What's New empty on it. Sync each part separately or review all remaining text and media in Save to App Store Connect. Content already saved at Apple is not sent again.")
             return "Create version \(plan.targetVersion)"
         }
 
@@ -142,15 +155,15 @@ extension WorkspaceSession {
                 let fields = try Self.publishedText(sendable(text ?? []), appInfo: false)
                 addedLanguages.append(code)
                 remoteLocale = Apple.ref(planner.add(.api, method: "POST", path: [.string("appStoreVersionLocalizations")], label: "Add language · \(code)", detail: "Version \(remote.attributes?["versionString"]?.string ?? "")",
-                                                     after: Self.describe(fields), body: .object([("data", .object([("type", .string("appStoreVersionLocalizations")), ("attributes", .object([("locale", .string(code))] + fields.map { ($0.0, .string($0.1)) })),
+                                                     after: Self.describe(fields), body: .object([("data", .object([("type", .string("appStoreVersionLocalizations")), ("attributes", .object([("locale", .string(code))] + Self.publishedTextAttributes(fields, creating: true))),
                                                                                                                   ("relationships", .object([("appStoreVersion", Apple.relationship("appStoreVersions", .string(remote.id)))]))]))])))
             }
             if !textOnly { try await planMedia(planner, media: media, locale: locale, remoteLocale: remoteLocale, draft: draft, revisionId: sourceMeta.id, copyAll: copyAll || current == nil, archive: archive) }
         }
         if screenshotsOnly {
             guard !planner.steps.isEmpty else { throw PublishFailure.noChanges }
-            let text = addedLanguages.isEmpty ? "Text and copyright are saved in step 3."
-                : "Screenshots need their language on the version, so this Save also adds \(addedLanguages.joined(separator: ", ")) with its text. Copyright and other text changes are saved in step 3."
+            let text = addedLanguages.isEmpty ? "Any remaining text and Copyright can be synced individually or in step 3; matching content is not sent again."
+                : "Screenshots need their language on the version, so this Save also adds \(addedLanguages.joined(separator: ", ")) with its text. Only remaining text and Copyright changes need another review; matching content is not sent again."
             planner.notes.append("Save uploads files Apple does not have yet to Asset Library, then adds them to App Previews and Screenshots in the order you chose. " + text)
             return "Save to App Previews and Screenshots · \(Releases.platformName(remote.attributes?["platform"]?.string ?? "")) \(remote.attributes?["versionString"]?.string ?? "")"
         }
@@ -190,7 +203,7 @@ extension WorkspaceSession {
                 else {
                     guard fields.contains(where: { $0.0 == "name" }) else { throw PublishFailure.invalid("Add the app name for \(code) in Localizations before publishing.") }
                     planner.add(.api, method: "POST", path: [.string("appInfoLocalizations")], label: "Add app information · \(code)", detail: "Name, subtitle and privacy information.", after: Self.describe(fields),
-                                body: .object([("data", .object([("type", .string("appInfoLocalizations")), ("attributes", .object([("locale", .string(code))] + fields.map { ($0.0, .string($0.1)) })),
+                                body: .object([("data", .object([("type", .string("appInfoLocalizations")), ("attributes", .object([("locale", .string(code))] + Self.publishedTextAttributes(fields, creating: true))),
                                                                   ("relationships", .object([("appInfo", Apple.relationship("appInfos", .string(info.id)))]))]))]))
                 }
             }
@@ -319,18 +332,20 @@ extension WorkspaceSession {
         guard Apple.editable.contains(Apple.state(version)) else { throw PublishFailure.invalid("This version is not ready to prepare for review.") }
         if request.scope == .versionBuild { return try await planVersionBuild(planner, version: version, name: name) }
         guard case .string(let copyright)? = version.attributes?["copyright"], !copyright.trimmingCharacters(in: .whitespaces).isEmpty else {
-            throw PublishFailure.invalid("Version copyright is missing at Apple. In App Store Connect, click this version in the app's sidebar and add Copyright, then submit this version.")
+            throw PublishFailure.refused("Copyright is missing for this version. Open Copyright, enter the year and rights holder, then review and sync that change before submitting.",
+                                         problems: [AppleProblem(code: "ENTITY_ERROR.ATTRIBUTE.REQUIRED", resource: "appStoreVersions", field: "copyright")])
         }
         // Apple adds a version for review only when every Age Ratings question is answered, so say which ones before anything is sent.
         if let declaration = try? await ageRatingDeclaration(appId: request.appId, client: client, planner: planner) {
             let unanswered = AgeRating.unanswered(Planner.resource(declaration)["attributes"])
             if !unanswered.isEmpty { throw PublishFailure.refused("Answer \(unanswered.count) Age Ratings \(unanswered.count == 1 ? "question" : "questions") first: " + unanswered.map(AgeRating.label).joined(separator: ", ") + ". Apple adds a version for review only when every question has an answer.", problems: unanswered.map { AppleProblem(code: "ENTITY_ERROR.ATTRIBUTE.REQUIRED", resource: "ageRatingDeclarations", field: $0) }) }
         }
-        let incomplete = "App Review Information is incomplete at Apple. In App Store Connect, click this version in the app's sidebar and complete App Review Information, then submit this version."
-        guard let detail = try await reviewDetail(versionId: version.id, client: client) else { throw PublishFailure.invalid(incomplete) }
+        let incomplete = PublishFailure.refused("App Review Information is incomplete. Open App Review Information, complete the required fields and sync them before submitting.",
+                                               problems: [AppleProblem(code: "ENTITY_ERROR.ATTRIBUTE.REQUIRED", resource: "appStoreReviewDetails", field: nil)])
+        guard let detail = try await reviewDetail(versionId: version.id, client: client) else { throw incomplete }
         planner.evidence.append(.object([("reviewDetail", Planner.resource(detail))]))
         let informationDigest: String
-        do { informationDigest = try Self.reviewInformationDigest(detail) } catch { throw PublishFailure.invalid(incomplete) }
+        do { informationDigest = try Self.reviewInformationDigest(detail) } catch { throw incomplete }
         let attachmentsDigest = try Self.attachmentsDigest(try await planner.list("/v1/appStoreReviewDetails/\(detail.id)/appStoreReviewAttachments?limit=200"), detailId: detail.id)
         let libraryReview = try await versionLibraryReview(reader: libraryReader(planner), version: version)
         if !libraryReview.descriptions.isEmpty { planner.notes.append("Assigned Asset Library media included in this version's review:\n" + libraryReview.descriptions.joined(separator: "\n")) }

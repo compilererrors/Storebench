@@ -8,7 +8,7 @@ public enum ScreenReads {
     public static func reading<T>(fresh: Bool, isolation: isolated (any Actor)? = #isolation, _ body: () async throws -> T) async rethrows -> T {
         let revalidation = fresh ? nil : AppStoreReadCache.revalidatedSince ?? (AppleReadPriority.current == .visible ? .now : nil)
         return try await AppStoreReadCache.$revalidatedSince.withValue(revalidation) {
-            try await AppStoreReadCache.$refreshedSince.withValue(fresh ? .now : AppStoreReadCache.refreshedSince, operation: body, isolation: isolation)
+            try await AppStoreReadCache.$refreshedSince.withValue(fresh ? AppStoreReadCache.refreshedSince ?? .now : AppStoreReadCache.refreshedSince, operation: body, isolation: isolation)
         }
     }
     /// Runs `body` as reads for the step the user is likely to open next.

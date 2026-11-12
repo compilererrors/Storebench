@@ -61,6 +61,8 @@ import Testing
         }
         let account = try await session.connectAccount(name: " Synthetic Studio ", keyType: "team", issuerId: "00000000-0000-4000-8000-000000000009", keyId: "SYNTHKEY01", privateKeyPEM: pem, writer: writer, origin: origin, configuration: stubbed())
         #expect(account.name == "Synthetic Studio" && account.appIds == ["1000000007"] && account.appNames == ["1000000007": "Duplicate"])
+        #expect(try await session.catalogIsDue(account, now: Date()) == false)
+        #expect(StubProtocol.requests(host).count == 1, "Connecting already discovers the apps; background reading reuses its receipt")
         #expect(try writer.read().entries["apple:\(account.id)"] == pem)
         #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("credential-state/vault.generation").path))
         let accounts = try await session.accounts()

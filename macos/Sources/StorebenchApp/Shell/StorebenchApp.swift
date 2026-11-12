@@ -21,6 +21,7 @@ struct StorebenchApp: App {
                     .frame(minWidth: 760, minHeight: 520)
                     .task {
                         applicationDelegate.prepareToTerminate = { await model.prepareToTerminate() }
+                        model.allowsAutomaticCatalogUpdates = { EditorWindows.decision == .ready }
                         model.cachePolicy = CachePolicy.stored(in: .standard); await model.start()
                     }
             }

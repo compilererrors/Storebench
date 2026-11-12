@@ -28,10 +28,11 @@ import StorebenchCore
             let marker = Array("held".utf8), written = write(descriptor, marker, marker.count)
             close(descriptor)
             guard written == marker.count else { throw FileMutex.Failure.unavailable }
-            // This owned helper starts before the suites; allow time for other isolated tests to run first.
-            let deadline = ContinuousClock.now + .seconds(90)
+            // Keep ownership until this test releases it. The runner signals when every test has finished;
+            // an exited parent also proves that this owned fixture can stop.
+            let parent = getppid(), finished = root.appendingPathComponent(".test-complete")
             while !FileManager.default.fileExists(atPath: urls[2].path) {
-                guard ContinuousClock.now < deadline else { throw FileMutex.Failure.timeout }
+                guard getppid() == parent, !FileManager.default.fileExists(atPath: finished.path) else { throw FileMutex.Failure.timeout }
                 Thread.sleep(forTimeInterval: 0.01)
             }
             // Synthetic interruption: close the process without running the lock defer.

@@ -163,10 +163,7 @@ struct AllAppsSyncButton: View {
                 StorebenchActionGroup(alignment: .trailing) { button; if let additionalActions { additionalActions } }
             }
             StorebenchTextSlot(text: feedback, height: 32, font: .sbCaption, color: StorebenchTheme.muted, live: true)
-            ProgressView(value: working ? 0 : activity?.fractionChecked ?? 0, total: 1) {
-                StorebenchTextSlot(text: progressLabel, height: 18, font: .sbCaption, color: StorebenchTheme.muted, live: true)
-            }
-            .progressViewStyle(StorebenchProgressStyle())
+            StorebenchProgressStatus(message: progressLabel, value: working ? 0 : activity?.fractionChecked ?? 0, height: 18)
             .frame(height: 32)
             .opacity(progressVisible ? 1 : 0)
             .accessibilityLabel("All apps sync progress")

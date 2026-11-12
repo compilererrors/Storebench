@@ -34,8 +34,8 @@ public enum ComponentLayout {
         public let horizontal, top: Double
     }
     public static func pageInsets(viewportWidth: Double, design: StorebenchDesign = .shared) -> PageInsets {
-        PageInsets(horizontal: viewportWidth > 1000 ? 48 : viewportWidth > 700 ? 28 : design.number("space-5"),
-                   top: design.number(viewportWidth > 700 ? "space-8" : "space-6"))
+        PageInsets(horizontal: design.number(viewportWidth > 1000 ? "space-6" : viewportWidth > 700 ? "space-5" : "space-4"),
+                   top: design.number(viewportWidth > 700 ? "space-6" : "space-4"))
     }
     public struct WorkflowCard: Sendable {
         public let heading, description, feedback, action: CGRect
@@ -78,8 +78,24 @@ public enum ComponentLayout {
     }
     /// Commands keep a shared width. Wrapped rows are balanced, without leaving one command on its own.
     /// `cell` is the group's shared command width (its widest label); without it commands use the shared action width.
-    public static func actionGrid(width: Double, heights: [Double], trailing: Bool = false, cell preferred: Double? = nil, design: StorebenchDesign = .shared) -> ActionGrid {
+    public static func actionGrid(width: Double, heights: [Double], trailing: Bool = false, cell preferred: Double? = nil, fullWidth: Set<Int> = [], design: StorebenchDesign = .shared) -> ActionGrid {
         let width = usableWidth(width), gap = design.number("action-gap"), cell = min(width, max(0, preferred ?? design.number("action-width")))
+        // A contextual editor footer is a complete row, never a button-sized cell. Commands on either side keep their usual grid.
+        if !fullWidth.isEmpty {
+            var frames: [CGRect] = [], y = 0.0, index = 0
+            while index < heights.count {
+                if fullWidth.contains(index) {
+                    let height = max(0, heights[index])
+                    frames.append(CGRect(x: 0, y: y, width: width, height: height)); y += height + gap; index += 1
+                } else {
+                    let start = index
+                    while index < heights.count && !fullWidth.contains(index) { index += 1 }
+                    let block = actionGrid(width: width, heights: Array(heights[start..<index]), trailing: trailing, cell: cell, design: design)
+                    frames += block.frames.map { $0.offsetBy(dx: 0, dy: y) }; y += block.height + gap
+                }
+            }
+            return ActionGrid(frames: frames, height: max(0, y - gap))
+        }
         let ratio = (width + gap) / max(1, cell + gap)
         let columns = ratio.isFinite ? max(1, min(heights.count, Int(min(ratio, 10_000)))) : 1
         guard !heights.isEmpty else { return ActionGrid(frames: [], height: 0) }
@@ -110,7 +126,7 @@ public enum ComponentLayout {
     /// Table search, ordering and page size share a control height and wrap as complete tracks.
     public static func tableControls(width: Double, pageSize: Bool = true, design: StorebenchDesign = .shared) -> Flow {
         let width = usableWidth(width), gap = design.number("space-2"), height = design.number("control-height")
-        let tools = pageSize ? [240.0, 154.0] : [240.0]
+        let tools = pageSize ? [height, 92.0] : [height]
         let toolsWidth = tools.reduce(0, +) + Double(tools.count - 1) * gap
         if width >= 240 + gap + toolsWidth {
             let search = width - gap - toolsWidth

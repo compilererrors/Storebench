@@ -23,8 +23,7 @@ struct SavedReportChart: View {
     /// A marker in the chosen period, shown as a command when it opens something.
     @ViewBuilder private func markerLine(_ marker: SavedTimeSeries.Marker, font: Font) -> some View {
         if let onMarker, let target = marker.target {
-            Button { onMarker(target) } label: { Text(marker.label).font(font).multilineTextAlignment(.leading) }
-                .buttonStyle(StorebenchButtonStyle(.quiet)).help("Show this in the list below")
+            StorebenchRecordLink(text: marker.label, help: "Show this in the list below") { onMarker(target) }
         } else { Text(marker.label).font(font) }
     }
     @State private var active: Int?
@@ -178,7 +177,7 @@ struct SavedReportChart: View {
                 }.frame(maxHeight: 300)
             }
         } else if prepared?.input != input {
-            ProgressView("Preparing saved chart…").frame(maxWidth: .infinity, minHeight: 320)
+            StorebenchLoadingStatus(message: "Preparing saved chart…", surface: false).frame(maxWidth: .infinity, minHeight: 320, alignment: .topLeading)
         } else { Text(emptyText).foregroundStyle(StorebenchTheme.muted) }
     }
     private func inspect(_ x: CGFloat, proxy: ChartProxy, geometry: GeometryProxy, layout: SavedTimeSeries.Layout) {

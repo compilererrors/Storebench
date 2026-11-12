@@ -62,7 +62,7 @@ struct AsoOutcomeView: View {
                     if let url = URL(string: review.source.url) { StorebenchTextLink(review.source.name, destination: url) }
                     Text(review.source.definition).fixedSize(horizontal: false, vertical: true)
                     Text(event.locales.isEmpty ? "The listing language for this change is not recorded." : "Recorded listing languages: \(event.locales.joined(separator: ", ")).").foregroundStyle(StorebenchTheme.muted)
-                    if let openJournal { Button("Open Journal Record") { openJournal(event.id) } }
+                    if let openJournal { StorebenchActionGroup { Button("Open Journal Record") { openJournal(event.id) } } }
                 }.font(.sbCallout)
                 if !review.reasons.isEmpty {
                     VStack(alignment: .leading, spacing: 6) { Text("Interpretation limits").font(.sbHeadline); ForEach(review.reasons, id: \.self) { Text($0).font(.sbCallout).fixedSize(horizontal: false, vertical: true) } }
@@ -87,7 +87,7 @@ struct AsoOutcomeView: View {
                     DisclosureGroup("Other changes in the report window · \(review.otherEventsTotal)") {
                         ScrollView { VStack(alignment: .leading, spacing: 8) {
                             StorebenchCollection(items: review.otherEvents, title: { $0.title }, subtitle: { $0.scope + " · " + $0.at }, empty: "No other changes in the report window.") { item in
-                                VStack(alignment: .leading, spacing: 2) { Text("\(item.title) · \(item.scope) · \(item.at)").font(.sbCaption).fixedSize(horizontal: false, vertical: true); if let openJournal { Button("Open Journal Record") { openJournal(item.id) }.help("Open Related Journal Record").accessibilityLabel("Open Related Journal Record") } }
+                                StorebenchActionRow { Text("\(item.title) · \(item.scope) · \(item.at)").font(.sbCaption).fixedSize(horizontal: false, vertical: true) } actions: { if let openJournal { Button("Open Journal Record") { openJournal(item.id) }.help("Open Related Journal Record").accessibilityLabel("Open Related Journal Record") } }
                             }
                             if review.otherEventsTotal > review.otherEvents.count { Text("Showing \(review.otherEvents.count) changes. The complete overlap remains in the evidence identity; open the journal for all records.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted) }
                         }.frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 240)

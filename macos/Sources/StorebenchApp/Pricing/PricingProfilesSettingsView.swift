@@ -19,6 +19,7 @@ struct PricingProfilesSettingsView: View {
                     .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
                 StorebenchFeedback(text: status, height: 34)
             }
+            .settingsSearchAnchor("pricing-profiles")
             if loaded && profiles.isEmpty { Text("No pricing profiles saved yet.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
             ForEach(profiles) { profile in
                 SharedPricingProfileEditor(profile: profile, defaultId: defaultId, removed: !liveIds.contains(profile.id), session: model.session, busy: $busy,
@@ -73,9 +74,9 @@ private struct SharedPricingProfileEditor: View {
             Text(removed ? "This profile was deleted elsewhere. Your inputs are retained here; copy anything you need before discarding this editor." : editor.dirty ? "Your profile edits are not saved." : "This profile is saved on this Mac.")
                 .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
             StorebenchFeedback(text: status, height: 34)
-            if removed { Button("Discard Editor", role: .destructive) {
+            if removed { StorebenchFormFooter { Button("Discard Editor", role: .destructive) {
                 if !busy, confirm(.discardChanges, title: "Discard this deleted profile's unsaved edits?", message: "The profile was deleted elsewhere. Its unsaved edits here are discarded.", action: "Discard Edits") { onDiscard() }
-            }.help("Discard Deleted Profile Editor").accessibilityLabel("Discard Deleted Profile Editor").storebenchWorking(busy) }
+            }.help("Discard Deleted Profile Editor").accessibilityLabel("Discard Deleted Profile Editor").storebenchWorking(busy) } }
             if !removed && session != nil {
                 StorebenchFormFooter {
                     Button("Duplicate") { Task { await change("duplicate") } }

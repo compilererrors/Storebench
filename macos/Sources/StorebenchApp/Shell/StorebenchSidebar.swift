@@ -22,7 +22,8 @@ struct StorebenchSidebar: View {
     private func toggle(_ group: String) {
         var next = collapsed
         if next.remove(group) == nil { next.insert(group) }
-        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.15)) { collapsedGroups = next.sorted().joined(separator: ",") }
+        var transaction = Transaction(animation: nil); transaction.disablesAnimations = true
+        withTransaction(transaction) { collapsedGroups = next.sorted().joined(separator: ",") }
     }
     private func active(_ destination: AppNavigation.Section) -> Bool { hasApp ? section == destination : librarySelection(destination) == selection }
 
@@ -120,6 +121,7 @@ struct StorebenchSidebar: View {
     }
     private func item(_ title: String, icon: String, active: Bool, action: @escaping () -> Void) -> some View {
         StorebenchSidebarRow(title: title, icon: icon, selected: active, focused: focused == title, action: action)
+            .storebenchControlID("sidebar." + title)
             .focusable(interactions: .activate).focusEffectDisabled().focused($focused, equals: title)
             .onKeyPress { press in
                 guard focused == title, press.modifiers.isEmpty, press.key == .return || press.key == .space else { return .ignored }
@@ -140,8 +142,8 @@ struct StorebenchTopbar: View {
         let insets = ComponentLayout.pageInsets(viewportWidth: width)
         HStack(spacing: StorebenchTheme.space(2)) {
             HStack(spacing: 4) {
-                Button { if canGoBack { back() } } label: { StorebenchIcon(name: "previous") }.buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).opacity(canGoBack ? 1 : 0).allowsHitTesting(canGoBack).accessibilityHidden(!canGoBack).help("Back").accessibilityLabel("Back")
-                Button { if canGoForward { forward() } } label: { StorebenchIcon(name: "next") }.buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).opacity(canGoForward ? 1 : 0).allowsHitTesting(canGoForward).accessibilityHidden(!canGoForward).help("Forward").accessibilityLabel("Forward")
+                Button { if canGoBack { back() } } label: { StorebenchIcon(name: "previous") }.buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).opacity(canGoBack ? 1 : 0).allowsHitTesting(canGoBack).accessibilityHidden(!canGoBack).help("Back").accessibilityLabel("Back").storebenchControlID("navigation.back").storebenchWorking(!canGoBack)
+                Button { if canGoForward { forward() } } label: { StorebenchIcon(name: "next") }.buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).opacity(canGoForward ? 1 : 0).allowsHitTesting(canGoForward).accessibilityHidden(!canGoForward).help("Forward").accessibilityLabel("Forward").storebenchControlID("navigation.forward").storebenchWorking(!canGoForward)
             }
             HStack(spacing: StorebenchTheme.space(2)) {
                 Button("Overview", action: overview).buttonStyle(StorebenchPressStyle()).font(.sbSubheadline).foregroundStyle(StorebenchTheme.muted).frame(height: StorebenchTheme.controlHeight).fixedSize(horizontal: true, vertical: false)

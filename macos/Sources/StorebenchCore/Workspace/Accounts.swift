@@ -86,7 +86,8 @@ extension WorkspaceSession {
                         var saved: [JSONText] = []
                         if let document = try current("accounts", "all") { guard case .array(let items) = try JSONText.parse(document.payload) else { throw AccountFailure.invalid }; saved = items }
                         guard !saved.contains(where: { $0["id"]?.text == connected.id }) else { throw AccountFailure.invalid }
-                        return [.put(namespace: "accounts", key: "all", json: JSONText.array(saved + [Self.json(connected)]).data)]
+                        return [.put(namespace: "accounts", key: "all", json: JSONText.array(saved + [Self.json(connected)]).data),
+                                try AppCatalogFreshness.success(connected, at: Date()).write(account: connected)]
                     }
                 }
             }
@@ -114,7 +115,7 @@ extension WorkspaceSession {
         } catch { throw AccountFailure.classify(error) }
     }
     /// An empty successful app list clears the selection, while saved app history remains available.
-    public func refreshAccountApps(_ account: Account, client: AppStoreConnectClient) async throws -> Account {
+    public func refreshAccountApps(_ account: Account, client: AppStoreConnectClient, now: @Sendable () -> Date = Date.init) async throws -> Account {
         do {
             _ = try currentAccount(account, client: client, exact: true)
             let selection = try await ScreenReads.reading(fresh: true) { try Self.appSelection(await client.list("/v1/apps?limit=200")) }
@@ -130,7 +131,8 @@ extension WorkspaceSession {
                         fields = fields.map { $0.0 == "appIds" ? ($0.0, ids) : $0.0 == "appNames" ? ($0.0, names) : $0 }
                         if !fields.contains(where: { $0.0 == "appNames" }), let at = fields.firstIndex(where: { $0.0 == "appIds" }) { fields.insert(("appNames", names), at: at + 1) }
                         items[index] = .object(fields)
-                        return [.put(namespace: "accounts", key: "all", json: JSONText.array(items).data)]
+                        return [.put(namespace: "accounts", key: "all", json: JSONText.array(items).data),
+                                try AppCatalogFreshness.success(updated, at: now()).write(account: updated)]
                     }
                 }
             }

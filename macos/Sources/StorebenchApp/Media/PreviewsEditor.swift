@@ -13,19 +13,21 @@ struct PreviewsEditor: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            StorebenchHeader {
+            StorebenchHeader(stackAt: 420) {
                 Text("App Previews").font(.sbHeadline)
             } actions: {
-                StorebenchActionGroup(alignment: .trailing) {
+                HStack(spacing: StorebenchTheme.space(2)) {
                     if !scope.local {
-                        if !others.isEmpty && model.workflow.ready {
-                            StorebenchMenu("Copy From Language", icon: "copy") {
-                                ForEach(others) { other in Button(StoreLocales.name(other.locale)) { Task { await model.copyPreviews(from: other.id) } } }
-                            }
-                        }
                         StorebenchMenu("Add Preview…", icon: "plus") {
                             ForEach(PreviewSpecs.types(platform: model.platform), id: \.self) { type in
                                 Button("\(PreviewSpecs.name(type)) · \(PreviewSpecs.dimensions(type))") { add(type) }
+                            }
+                        }
+                        if !others.isEmpty && model.workflow.shown.ready {
+                            StorebenchIconMenu(title: "App Preview Options for This Language") {
+                                StorebenchSubmenu("Copy From Language") {
+                                    ForEach(others) { other in Button(StoreLocales.name(other.locale)) { Task { await model.copyPreviews(from: other.id) } } }
+                                }
                             }
                         }
                     }
@@ -55,15 +57,15 @@ struct PreviewSetEditor: View {
     private var canReorder: Bool { !scope.local && !editor.state.blocked && !workflowBusy && !workflow.busy }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            StorebenchHeader {
+            StorebenchHeader(stackAt: 0) {
                 VStack(alignment: .leading, spacing: StorebenchTheme.space(1)) {
                     StorebenchTextSlot(text: "Preview order", height: StorebenchTheme.measure("sectionTitle"), font: .sbHeadline)
                     StorebenchTextSlot(text: "\(editor.included) of \(PreviewSpecs.maximum) included", height: StorebenchTheme.measure("fieldLabel"), font: .sbCaption, color: StorebenchTheme.muted)
                 }
             } actions: {
                 if !scope.local {
-                    StorebenchActionGroup(alignment: .trailing) {
-                        if editor.dirty && !editor.saving { Button("Revert") { editor.revert() } }
+                    StorebenchIconMenu(title: "Preview Order Options · " + PreviewSpecs.name(entry.type)) {
+                        Button("Revert Order and Selection") { if !reorder.active { editor.revert() } }.storebenchWorking(!editor.dirty || editor.saving || reorder.active)
                     }
                 }
             }
@@ -82,11 +84,7 @@ struct PreviewSetEditor: View {
                                         StorebenchToggle("Include", isOn: Binding(get: { !editor.inputs.hidden.contains(id) }, set: { if $0 { editor.inputs.hidden.remove(id) } else { editor.inputs.hidden.insert(id) } }))
                                             .accessibilityLabel("Include " + item.fileName)
                                             .storebenchWorking(reorder.active)
-                                        StorebenchReorderHandle(id: id, title: item.fileName, context: editor.reorderContext, order: inputs.order, enabled: canReorder, session: reorder, apply: changeOrder)
-                                        Button { move(id, by: -1) } label: { StorebenchIcon(name: "up", size: 16) }.buttonStyle(StorebenchButtonStyle(.quiet, size: .icon))
-                                            .opacity(index == 0 ? 0 : 1).allowsHitTesting(index > 0).accessibilityHidden(index == 0).storebenchWorking(reorder.active).help("Move earlier").accessibilityLabel("Move " + item.fileName + " earlier")
-                                        Button { move(id, by: 1) } label: { StorebenchIcon(name: "down", size: 16) }.buttonStyle(StorebenchButtonStyle(.quiet, size: .icon))
-                                            .opacity(index == inputs.order.count - 1 ? 0 : 1).allowsHitTesting(index < inputs.order.count - 1).accessibilityHidden(index == inputs.order.count - 1).storebenchWorking(reorder.active).help("Move later").accessibilityLabel("Move " + item.fileName + " later")
+                                        StorebenchMaterialToolbar()
                                     }
                                     StorebenchTextField("Poster frame (seconds)", value: Binding(get: { editor.inputs.posterTimes[id, default: 5] }, set: { editor.inputs.posterTimes[id] = MediaReadPolicy.poster($0, duration: item.duration) }), format: .number.precision(.fractionLength(2)))
                                         .environment(\.fieldHintHeight, 0).accessibilityLabel("Poster frame for " + item.fileName + " in seconds")
@@ -95,7 +93,8 @@ struct PreviewSetEditor: View {
                                 } else { Text("Saved preview · original available above").font(.sbCaption).foregroundStyle(StorebenchTheme.muted) }
                             }
                         }
-                        .materialDropTarget(id: id, session: reorder)
+                        .materialReorderCard(id: id, title: item.fileName, order: inputs.order, context: editor.reorderContext,
+                            enabled: canReorder, session: reorder, apply: changeOrder)
                     }
                 }
             }
@@ -110,10 +109,6 @@ struct PreviewSetEditor: View {
         .onChange(of: workflowBusy) { if workflowBusy { reorder.cancel() } }
         .onChange(of: workflow.busy) { if workflow.busy { reorder.cancel() } }
         .onDisappear { reorder.cancel() }
-    }
-    private func move(_ id: String, by amount: Int) {
-        guard canReorder, let index = inputs.order.firstIndex(of: id), let next = MaterialReorder.moving(inputs.order, source: id, to: index + amount) else { return }
-        _ = changeOrder(next, expected: inputs.order, context: editor.reorderContext)
     }
     private func changeOrder(_ next: [String], expected: [String], context: String) -> Bool { guard canReorder else { return false }; return editor.reorder(next, expected: expected, context: context) }
 

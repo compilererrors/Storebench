@@ -31,16 +31,16 @@ struct KeywordBulkView: View {
             }
             if terms.isEmpty || territories.isEmpty { Text("Enter terms and choose at least one territory to preview combinations.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
             else {
-                Button("Preview") {
+                StorebenchActionGroup { Button("Preview") {
                     do { preview = try Keywords.previewBulk(notebook, terms: terms, locale: locale, territories: territories.sorted()); selected = []; page = 1; message = "" }
                     catch let failure as KeywordFailure { message = failure.message; preview = nil }
                     catch { message = KeywordFailure.format.message; preview = nil }
-                }.help("Preview Combinations").accessibilityLabel("Preview Combinations")
+                }.help("Preview Combinations").accessibilityLabel("Preview Combinations") }
             }
             if let preview {
                 let newRows = preview.rows.filter { $0.duplicate == nil }
                 Text("\(preview.rows.count) combinations: \(newRows.count) new, \(preview.rows.count - newRows.count) duplicates. \(selected.count) selected; room for \(preview.available) ideas.").font(.sbCallout)
-                HStack {
+                StorebenchActionGroup {
                     if !newRows.isEmpty && newRows.count <= preview.available { Button("Select All New") { selected = Set(newRows.map(\.id)) } }
                     if !selected.isEmpty { Button("Clear") { selected = [] } }
                 }

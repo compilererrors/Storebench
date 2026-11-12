@@ -27,7 +27,7 @@ struct PricingView: View {
     private var shown: PricingModelKind? { PricingSetup.shown(chosen: chosen, state: setup) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             if let pages { menuPage(pages) }
             else {
                 header
@@ -37,6 +37,13 @@ struct PricingView: View {
             }
         }
         .task(id: account.id + "/" + app.id) { await load() }
+        .task(id: account.id + "/" + app.id) {
+            guard let changes = try? await session?.pricingChanges(account: account, appId: app.id) else { return }
+            for await change in changes {
+                guard !Task.isCancelled else { return }
+                if case .publicationFinished = change { await load() }
+            }
+        }
         .onChange(of: shown) { step = nil }
         .sheet(isPresented: $changing) { changeDialog }
     }
@@ -107,7 +114,7 @@ struct PricingView: View {
         StorebenchStepLayout {
             StorebenchStepRail(title: "\(model.title) steps", items: steps.map { .init(id: $0.id.rawValue, number: $0.number, title: $0.title, label: $0.status.label, complete: $0.status == .done, current: $0.status == .current) },
                                selected: open.id.rawValue, select: { go(PricingFlow.StepId(rawValue: $0)) })
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
                 Card(title: "Step \(open.number) of \(steps.count): \(open.title)", subtitle: open.purpose, help: "model") {
                     StorebenchFact(label: "Status", value: open.status == .current ? "Needed" : open.status.label, done: open.status == .done)
                 }.id("pricing-step-heading")
@@ -130,8 +137,10 @@ struct PricingView: View {
         case .inAppPurchases: PurchasesCard(account: account, app: app, session: session, state: setup, done: reload)
         case .inAppPurchasePrices: PurchasePricesCard(account: account, app: app, session: session, state: setup, done: reload)
         case .priceSchedule:
-            AppPriceCard(account: account, app: app, session: session, state: setup, model: model, done: reload)
-            if model.paidApp || setup.appPrice.isPaid { CountryPriceStrategy(account: account, app: app, session: session, base: setup.appPrice.territory ?? "USA") }
+            if model.paidApp || setup.appPrice.isPaid {
+                CountryPriceStrategy(account: account, app: app, session: session, base: setup.appPrice.territory ?? "USA", needsInitialPrice: !setup.appPrice.isPaid,
+                    applePrice: AnyView(AppPriceCard(account: account, app: app, session: session, state: setup, model: model, done: reload)))
+            } else { AppPriceCard(account: account, app: app, session: session, state: setup, model: model, done: reload) }
         case .temporaryPrice: TemporaryPriceCard(account: account, app: app, session: session, state: setup, done: reload)
         case .status: ReviewRequirementsCard(account: account, app: app, session: session, state: setup, done: reload)
         }
@@ -214,25 +223,46 @@ struct CountryPriceStrategy: View {
     let account: Account, app: Account.App, session: WorkspaceSession?
     /// The app's Base Country or Region, the guide country of a built-in model.
     let base: String
-    @State private var strategy = PriceStrategyModel()
+    let needsInitialPrice: Bool
+    var applePrice: AnyView? = nil
+    @State private var strategy: PriceStrategyModel
+    @State private var guideOpen = false
+    @State private var compareApple = false
     @State private var territories: [Territory] = []
     @State private var saving = false
     @State private var status = ""
     @State private var saved = 0
 
+    init(account: Account, app: Account.App, session: WorkspaceSession?, base: String, needsInitialPrice: Bool = false, applePrice: AnyView? = nil, model: PriceStrategyModel? = nil) {
+        self.account = account; self.app = app; self.session = session; self.base = base; self.needsInitialPrice = needsInitialPrice; self.applePrice = applePrice
+        _strategy = State(initialValue: model ?? PriceStrategyModel())
+    }
+
     var body: some View {
-        Card(title: "Prices by Country or Region", subtitle: "How the app's price is set in each country or region. Previewed prices are saved as Country Drafts; the country prices below review and send them.") {
-            PricingStrategyPicker(selection: Binding(get: { strategy.strategy }, set: { strategy.strategy = $0; status = "" }), profiles: strategy.profiles).storebenchFormColumn()
+        Card(title: "Prices by Country or Region", subtitle: "Choose a Price Model below. Its settings and preview stay together; changing the model never sends prices to Apple.", help: "methods", icon: "pricing", accessory: AnyView(
+            StorebenchIconMenu(title: "Country Price View Options") {
+                StorebenchMenuToggle(title: "Compare with Apple Prices", isOn: $compareApple)
+            }.storebenchWorking(guideOpen)
+        )) {
+            PricingStrategyPicker(selection: Binding(get: { strategy.strategy }, set: { strategy.strategy = $0; status = "" }), profiles: strategy.profiles)
             PriceStrategyFields(model: strategy, owner: .app(app.id), base: base, territories: territories, account: account, session: session, extra: AnyView(
                 StorebenchCommand(title: "Save as Country Drafts", running: "Saving…", busy: saving, unavailable: strategy.preview?.points.isEmpty == false ? nil : "Preview Prices first.", primary: strategy.preview != nil) { Task { await saveDrafts() } }
             ))
             StorebenchTextSlot(text: status, height: 36, font: .sbCallout, color: StorebenchTheme.muted, live: true)
         }
+        .storebenchControlID("pricing.model-card")
+        .storebenchWorking(saving || guideOpen)
+        .onChange(of: strategy.strategy) { compareApple = false }
+        .historyValue("country-price-strategy", Binding(get: { strategy.strategy }, set: { strategy.strategy = $0 }))
+        .historyValue("country-guide-price", Binding(get: { strategy.guide }, set: { strategy.guide = $0 }))
+        .historyValue("country-manual-prices", Binding(get: { strategy.typed }, set: { strategy.typed = $0 }))
         .task {
             await strategy.loadProfiles(session)
             if let session, territories.isEmpty { territories = (try? await session.territories(account: account)) ?? [] }
         }
-        if strategy.strategy != .apple { CountryPricesView(account: account, app: app, session: session).id("country-prices-\(saved)") }
+        if strategy.strategy == .apple || needsInitialPrice, let applePrice { applePrice.storebenchControlID("pricing.apple-base-price") }
+        CountryPricesView(account: account, app: app, session: session, focusedStrategy: strategy.strategy, compareApple: compareApple, selectedPreview: strategy.preview?.rows,
+                          onGuideState: { guideOpen = $0 }).id("country-prices-\(saved)")
     }
 
     /// Saves each previewed price as a Country Draft on this Mac. Nothing is sent to Apple until the country prices below are reviewed and approved.

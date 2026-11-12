@@ -28,15 +28,17 @@ struct ReleaseRecentSaves: View {
         }
         // A running Save advances in the background, so the list is read again while it shows.
         .task(id: app.id) { await StorebenchPolling.repeating(every: .seconds(3), while: { true }) { await load() } }
+        .pageRefreshParticipant("recent-saves/" + account.id + "/" + app.id, state: { .init() }, refresh: { await load() })
     }
 
-    private func load() async {
-        guard let session, let history = try? await session.publishHistory(accountId: account.id, appId: app.id) else { return }
+    @discardableResult private func load() async -> Bool {
+        guard let session, let history = try? await session.publishHistory(accountId: account.id, appId: app.id) else { return false }
         var recent = Array(history.filter { scopes.contains($0.request.scope) && $0.state != "prepared" }.sorted { $0.createdAt > $1.createdAt }.prefix(limit))
         // A Save left running by an app that quit is read through its status, which marks it stopped.
         for index in recent.indices where recent[index].state == "running" {
             if let current = try? await session.publishStatus(accountId: account.id, appId: app.id, id: recent[index].id) { recent[index] = current }
         }
         saves = recent
+        return true
     }
 }

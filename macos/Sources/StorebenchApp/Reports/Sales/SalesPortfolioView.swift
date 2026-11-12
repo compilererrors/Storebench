@@ -20,7 +20,7 @@ struct SalesPortfolioView: View {
     var body: some View {
         let selected = analysis
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
                 StorebenchPageHeader(title: "Sales across your apps", description: "Review the same reporting dates across all configured apps, then open an app for its country analysis.", eyebrow: "SALES AND TRENDS", actions: AnyView(
                     Button(loading ? "Reading…" : "Refresh Reports") { Task { await load() } }.help(loading ? "Reading…" : "Refresh Saved Reports").accessibilityLabel(loading ? "Reading…" : "Refresh Saved Reports").storebenchWorking(loading)
                 ))

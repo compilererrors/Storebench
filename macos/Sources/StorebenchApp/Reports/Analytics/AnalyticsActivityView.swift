@@ -89,7 +89,7 @@ struct AnalyticsActivityView: View {
                 if let leading = AnalyticsPresentation.leadingTerritory(top, metric: prepared.input.top) {
                     StorebenchCardSection(title: "Review your leading download territory", description: "An observation about reported first-time downloads, without inferred price or listing impact.") {
                         Text("\(leading.name) accounts for \(leading.share) of reported first-time downloads in this selection. Check its listing and screenshot coverage alongside Sales before prioritizing work. No prices or content are changed.").fixedSize(horizontal: false, vertical: true)
-                        if let openLocalizations { Button("Review Languages") { openLocalizations() } }
+                        if let openLocalizations { StorebenchActionGroup { Button("Review Languages") { openLocalizations() } } }
                     }
                 }
                 StorebenchCardSection(title: "Report definitions", description: "Analytics describes recorded activity, with privacy limits. Missing reports remain unknown.") {
@@ -129,13 +129,7 @@ struct AnalyticsActivityView: View {
             Text(title).font(.sbHeadline)
             if rows.isEmpty { Text("No reported activity for this selection.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
             ForEach(rows) { row in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(alignment: .top) {
-                        StorebenchTextSlot(text: countries ? territory(row.key) : row.key, height: 40, font: .sbCallout, color: nil)
-                        Text(row.count.formatted(.number.precision(.fractionLength(0)))).monospacedDigit().frame(width: 120, alignment: .trailing)
-                    }
-                    ProgressView(value: total > 0 ? row.count / total : 0).accessibilityLabel(countries ? territory(row.key) : row.key)
-                }
+                StorebenchShareRow(title: countries ? territory(row.key) : row.key, value: row.count.formatted(.number.precision(.fractionLength(0))), share: total > 0 ? row.count / total : 0)
             }
         }
     }

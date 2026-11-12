@@ -111,5 +111,6 @@ import Testing
         catch { #expect(error is CancellationError) }
         #expect(try await session.accounts() == before)
         #expect(StubProtocol.requests(host).isEmpty)
+        #expect(try await session.catalogIsDue(account, now: Date()))
     }
 }

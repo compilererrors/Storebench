@@ -6,11 +6,14 @@ struct StorebenchStepRail: View {
     struct Item: Identifiable {
         let id: String, number: Int, title: String, label: String
         let complete: Bool, current: Bool
+        var tone: StorebenchStatusTone? = nil
     }
     let title: String
     let items: [Item]
     let selected: String
     let select: (String) -> Void
+    var identifierPrefix = "guide.step."
+    var showsNumbers = false
     private var completed: Int { items.filter(\.complete).count }
 
     var body: some View {
@@ -29,8 +32,12 @@ struct StorebenchStepRail: View {
         return Button { select(item.id) } label: {
             HStack(alignment: .top, spacing: StorebenchTheme.space(2)) {
                 ZStack {
-                    Circle().fill(StorebenchTheme.color(item.complete ? "color-success" : selected || item.current ? "color-accent" : "color-surface-accent-strong"))
-                    if item.complete { StorebenchIcon(name: "check", size: 12).foregroundStyle(StorebenchTheme.color("color-on-accent")) }
+                    Circle().fill(item.tone?.color ?? StorebenchTheme.color(item.complete ? "color-success" : selected || item.current ? "color-accent" : "color-surface-accent-strong"))
+                    if showsNumbers {
+                        Text("\(item.number)").font(.sbCaption.weight(.semibold)).monospacedDigit().foregroundStyle(StorebenchTheme.color("color-on-accent"))
+                    }
+                    else if let tone = item.tone { StorebenchIcon(name: tone.icon, size: 12).foregroundStyle(StorebenchTheme.color("color-on-accent")) }
+                    else if item.complete { StorebenchIcon(name: "check", size: 12).foregroundStyle(StorebenchTheme.color("color-on-accent")) }
                     else {
                         Text("\(item.number)").font(.sbCaption.weight(.semibold)).monospacedDigit()
                             .foregroundStyle(StorebenchTheme.color(selected || item.current ? "color-on-accent" : "color-accent-muted"))
@@ -38,8 +45,10 @@ struct StorebenchStepRail: View {
                 }.frame(width: 24, height: 24).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.title).font(.sbCallout.weight(selected ? .semibold : .regular)).fixedSize(horizontal: false, vertical: true)
-                    Text(item.label).font(.sbCaption).fixedSize(horizontal: false, vertical: true)
-                        .foregroundStyle(item.current ? StorebenchTheme.color("color-accent-deep") : StorebenchTheme.muted)
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        if showsNumbers, let tone = item.tone { StorebenchIcon(name: tone.icon, size: 11).accessibilityHidden(true) }
+                        Text(item.label).font(.sbCaption).fixedSize(horizontal: false, vertical: true)
+                    }.foregroundStyle(item.tone?.color ?? (item.current ? StorebenchTheme.color("color-accent-deep") : StorebenchTheme.muted))
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(StorebenchTheme.space(2))
@@ -49,6 +58,7 @@ struct StorebenchStepRail: View {
         .buttonStyle(StorebenchPressStyle())
         .accessibilityLabel("Step \(item.number): \(item.title), \(item.label)")
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .storebenchControlID(identifierPrefix + item.id)
     }
 }
 
@@ -110,7 +120,7 @@ struct StorebenchStepPage<Content: View>: View {
             StorebenchStepLayout {
                 StorebenchStepRail(title: title, items: steps.map { .init(id: $0.id, number: $0.number, title: $0.title, label: $0.label, complete: $0.complete, current: $0.current) },
                                    selected: open.id, select: go)
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
                     Card(title: "Step \(open.number) of \(steps.count): \(open.title)", subtitle: open.purpose, actions: actions) {
                         if open.complete { StorebenchFact(label: "Status", value: "This step is done.", done: true) }
                         else if open.needed.isEmpty { StorebenchFact(label: "Status", value: open.optional ? "Optional. Skip it if you don't need it." : open.label) }

@@ -22,7 +22,7 @@ struct StorebenchDialog<Content: View, Actions: View>: View {
         VStack(spacing: 0) {
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
-                    StorebenchTextSlot(text: title, height: media ? 34 : 42, font: .system(size: media ? 16 : 18).bold(), centered: true)
+                    StorebenchTextSlot(text: title, height: 28, font: .system(size: media ? 16 : 18).weight(.semibold), centered: true)
                     if !subtitle.isEmpty { StorebenchTextSlot(text: subtitle, height: 18, font: .sbCaption, color: StorebenchTheme.muted) }
                 }
                 if let close {
@@ -30,7 +30,7 @@ struct StorebenchDialog<Content: View, Actions: View>: View {
                         .storebenchControlID("dialog.close")
                         .buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).storebenchWorking(busy).help("Close dialog").accessibilityLabel("Close dialog")
                 }
-            }.padding(.vertical, media ? 12 : 18).padding(.horizontal, media ? 16 : 22)
+            }.padding(.vertical, 12).padding(.horizontal, StorebenchTheme.padding)
             StorebenchDivider()
             Group {
                 if scrollBody {
@@ -46,7 +46,7 @@ struct StorebenchDialog<Content: View, Actions: View>: View {
             }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             if !inlineActions && Actions.self != EmptyView.self {
                 StorebenchDivider()
-                VStack(alignment: .trailing, spacing: 12) { actions() }.padding(.vertical, media ? 10 : 16).padding(.horizontal, StorebenchTheme.measure("dialogBodyPadding"))
+                VStack(alignment: .trailing, spacing: 12) { actions() }.padding(.vertical, media ? 10 : 12).padding(.horizontal, StorebenchTheme.measure("dialogBodyPadding"))
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }.frame(width: dimensions.width, height: dimensions.height)

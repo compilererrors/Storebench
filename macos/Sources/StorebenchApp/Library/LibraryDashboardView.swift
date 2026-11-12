@@ -15,17 +15,13 @@ struct LibraryDashboardView: View {
     @State private var failed = false
     @State private var readGate = PresentationWork()
     @State private var context = UUID()
-    /// Each plan's version as App Store Connect last reported it; shown at once from the last read, then read again.
-    @State private var planStates: [String: LibraryOverview.PlanState] = [:]
-    /// Plans App Store Connect has finished with, such as a version Ready for Distribution; listed with their app under Apple's state.
-    @State private var closedPlans: [LibraryOverview.Release] = []
     private var unavailable: Bool { failed || snapshot == nil }
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 20) {
+            LazyVStack(alignment: .leading, spacing: StorebenchTheme.gap) {
                 StorebenchPageHeader(title: section.rawValue, description: section == .history ? "Every successful import and local version draft is retained separately. Choose an app to compare its saved revisions." : "Track progress across your apps, continue a release and check what needs syncing.", eyebrow: section == .history ? "SAVED REVISIONS" : "AT A GLANCE", actions: AnyView(HStack {
                     Spacer(minLength: 0)
-                    LibraryAppRefreshButton(model: model, identity: section.rawValue) { await load(context, wait: true); await ScreenReads.reading(fresh: true) { await checkPlans() } }
+                    LibraryAppRefreshButton(model: model, identity: section.rawValue) { await load(context, wait: true); await ScreenReads.reading(fresh: true) { await checkPlans(fresh: true) } }
                     Button("Manage Apps", action: manageApps).buttonStyle(StorebenchButtonStyle(.quiet))
                 }), feedback: AnyView(StorebenchFeedback(text: model.appRefreshMessage, height: 34, error: model.appRefreshFailed)), help: section == .history ? "" : "sync")
                 if section == .overview { SampleDataNotice(model: model) }
@@ -71,19 +67,10 @@ struct LibraryDashboardView: View {
                                 StorebenchMenu("Create Release", icon: "release") { ForEach(snapshot.apps) { row in Button(row.name) { navigate(row, section: .release) } } }.storebenchWorking(unavailable || loading)
                             }
                         } else {
-                            Card(title: "Continue preparing", subtitle: "Version plans saved on this Mac. Open one to continue where you left off.", help: "versions") {
-                                // A few plans show directly as cards; only a longer list gets the browsing controls.
-                                if snapshot.releases.count <= 3 {
-                                    ForEach(snapshot.releases) { release in releaseCard(release, embedded: true) }
-                                } else {
-                                    StorebenchCollection(items: snapshot.releases, title: { $0.title }, subtitle: { LibraryOverview.planDescription($0.plan, state: planStates[$0.id]) + "\nEdited " + LibraryOverview.timestamp($0.plan.updatedAt) },
-                                                         icon: { appIcon($0.app) }, maximumColumns: 3, minimumWidth: 340, empty: "No release plans yet.",
-                                                         activate: { release in if !unavailable && !loading { navigate(release.app, section: .release, plan: release.plan) } }, action: "Continue release") { _ in EmptyView() }
-                                }
+                            ReleaseOverviewList(releases: snapshot.releases, session: model.session, unavailable: unavailable || loading, icon: appIcon) {
+                                navigate($0.app, section: .release, plan: $0.plan)
                             }
                         }
-                        // Plans still being prepared come first; a version Apple has released is only noted after them.
-                        if !closedPlans.isEmpty { closedCard }
                         StorebenchCardList(padded: true, spacing: StorebenchTheme.gap) {
                             AllAppsSyncButton(session: unavailable ? nil : model.session, showHeading: true).frame(maxWidth: .infinity, alignment: .leading)
                             StorebenchCollection(items: snapshot.apps, title: { $0.name }, subtitle: { $0.account.name }, icon: appIcon, empty: "No apps yet. Connect an Apple account from Settings.") { row in
@@ -100,31 +87,12 @@ struct LibraryDashboardView: View {
         .task(id: section) {
             let id = UUID(); context = id; loading = false
             if snapshot == nil { snapshot = history?.rememberedRead("library-overview", as: LibraryOverview.Snapshot.self) }
-            if planStates.isEmpty { planStates = history?.rememberedRead("library-plan-states", as: [String: LibraryOverview.PlanState].self) ?? [:] }
             await StorebenchPolling.repeating(every: .seconds(2), while: { context == id }) { await load(id) }
         }
         // App Store Connect is read in the background for each saved plan, so a version Apple already released never stays listed as being prepared.
         .task(id: snapshot?.releases.map(\.plan.token) ?? []) { await checkPlans() }
         .onDisappear { context = UUID(); readGate.end() }
         .trackUnsavedChanges(false, busy: loading)
-    }
-    private func releaseCard(_ release: LibraryOverview.Release, embedded: Bool = false) -> some View {
-        StorebenchNavigationCard(title: release.title, description: LibraryOverview.planDescription(release.plan, state: planStates[release.id]) + "\nEdited " + LibraryOverview.timestamp(release.plan.updatedAt), action: "Continue release", tile: !embedded, descriptionLines: 2, embedded: embedded, activate: { navigate(release.app, section: .release, plan: release.plan) }) {
-            AppIconView(accountId: release.app.account.id, appId: release.app.app.id, name: release.title, session: unavailable ? nil : model.session)
-        }.storebenchWorking(unavailable || loading)
-    }
-    /// Versions App Store Connect has finished with, under Apple's state when they share one, each with its app's icon.
-    private var closedCard: some View {
-        let states = closedPlans.map { AppStoreNames.state(planStates[$0.id]?.state ?? "") }
-        return Card(title: Set(states).count == 1 && !states[0].isEmpty ? states[0] : "Finished at Apple",
-                    subtitle: "Their plans are closed. The text, screenshots and drafts stay saved on this Mac.", help: "versions") {
-            ForEach(Array(zip(closedPlans, states)), id: \.0.id) { release, state in
-                StorebenchNavigationCard(title: release.title, description: state.isEmpty ? "Finished at Apple" : "\(state) at Apple", action: "Open App", descriptionLines: 2, embedded: true,
-                                         activate: { navigate(release.app, section: .overview) }) {
-                    AppIconView(accountId: release.app.account.id, appId: release.app.app.id, name: release.title, session: unavailable ? nil : model.session)
-                }.storebenchWorking(unavailable || loading)
-            }
-        }
     }
     private func appIcon(_ row: ConnectedApps.Row) -> AnyView {
         AnyView(AppIconView(accountId: row.account.id, appId: row.app.id, name: row.name, session: unavailable ? nil : model.session).id(row.id + "/" + row.accountToken))
@@ -133,16 +101,11 @@ struct LibraryDashboardView: View {
         guard !unavailable, !loading, let destination = try? LibraryOverview.Destination(row: row, section: section, plan: plan) else { return }
         openApp(destination)
     }
-    private func checkPlans() async {
-        guard let releases = snapshot?.releases, !releases.isEmpty, let session = model.session else { return }
-        let result = await session.releasePlanStates(releases)
+    private func checkPlans(fresh: Bool = false) async {
+        guard let session = model.session else { return }
+        await session.refreshReleaseOverviews(maxAge: fresh ? 0 : 60)
         guard !Task.isCancelled, model.session === session else { return }
-        planStates.merge(result.states) { _, new in new }
-        history?.rememberRead(planStates, "library-plan-states")
-        if !result.closed.isEmpty {
-            closedPlans = result.closed
-            await load(context)
-        }
+        await load(context, wait: true)
     }
     private func load(_ id: UUID, wait: Bool = false) async {
         while wait && readGate.active {

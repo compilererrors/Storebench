@@ -21,7 +21,7 @@ struct ChangeJournalView: View {
     private var shown: [JournalEvent] { events.filter { filter == "all" || $0.source == filter } }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             Card(title: "Change Journal", subtitle: "Imports, drafts, release plans and reviewed Apple changes, newest first. Dates show what Storebench saw or sent, not when Apple published it.", actions: AnyView(
                 Button("Read Latest") { if protection?.allowLeaving() != false { Task { await load() } } }.help("Read Latest Journal and Reports").accessibilityLabel("Read Latest Journal and Reports").storebenchWorking(loading)
             )) {

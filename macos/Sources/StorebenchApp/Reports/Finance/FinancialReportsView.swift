@@ -47,7 +47,7 @@ import UniformTypeIdentifiers
     private var jsonHint: Bool { chosen.count == 1 && chosen[0].lastPathComponent.lowercased().range(of: #"\.json(?:\.gz)?$"#, options: .regularExpression) != nil }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             ReportingSetupView(account: account, app: app, session: session, source: $source, disabled: working || downloadRunning || review != nil,
                                onReady: { reportingReady = $0 }, onBusy: { reportingBusy = $0 }, onUseFile: { choose() })
             downloadCard.id("financial-download")
@@ -116,10 +116,11 @@ import UniformTypeIdentifiers
     }
     private var downloadProgress: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ProgressView(value: Double(downloadJob?.completed ?? 0), total: Double(max(1, downloadJob?.total ?? 0))).accessibilityLabel("Financial download progress")
-            ScrollView { Text(downloadProgressMessage).font(.sbCallout).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
-                .frame(height: 88).accessibilityLabel("Saved financial download status")
-            StorebenchReadButton("Refresh Status") { await readDownloadJob(context: contextId) }.help("Refresh Download Status").accessibilityLabel("Refresh Download Status").storebenchWorking(working || session == nil)
+            StorebenchProgressStatus(message: downloadProgressMessage, value: Double(downloadJob?.completed ?? 0), total: Double(max(1, downloadJob?.total ?? 0)), height: 88)
+                .accessibilityLabel("Financial download progress")
+            StorebenchActionGroup {
+                StorebenchReadButton("Refresh Status") { await readDownloadJob(context: contextId) }.help("Refresh Download Status").accessibilityLabel("Refresh Download Status").storebenchWorking(working || session == nil)
+            }
         }
     }
     private var downloadRecoveryCode: String? {
@@ -163,7 +164,7 @@ import UniformTypeIdentifiers
             else if !chosen.isEmpty { StorebenchToggle("Each file is a complete report for the selected region and fiscal period.", isOn: $complete).storebenchWorking(unavailable) }
             Text("CSV, TXT, TSV, GZ or JSON · up to 20 files and 10 MB total after decompression. Only direct transactions for this app are saved. Summary, detailed and regional datasets remain separate. Compare amounts before replacing an exact fiscal period and region.")
                 .font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
-            if working { Button("Stop Waiting") { stop() } }
+            if working { StorebenchActionGroup { Button("Stop Waiting") { stop() } } }
             StorebenchTextSlot(text: status, height: 80, font: .sbCallout, color: StorebenchTheme.muted, live: true).accessibilityLabel("Financial report operation status")
             RecoveryActions(code: issueCode, module: .finance)
         }
@@ -192,11 +193,7 @@ import UniformTypeIdentifiers
                 }
                 StorebenchDivider()
             }
-            HStack {
-                if reviewPage > 1 { Button("Previous Page") { reviewPage = max(1, reviewPage - 1) } }
-                Text("Page \(min(reviewPage, pages)) of \(pages)")
-                if reviewPage < pages { Button("Next Page") { reviewPage = min(pages, reviewPage + 1) } }
-            }.storebenchWorking(working)
+            if pages > 1 { StorebenchPagination(page: min(reviewPage, pages), count: pages) { reviewPage = $0 }.storebenchWorking(working) }
             if staleReview { Text("This review needs a new baseline. Preview the selected files again, or discard the download and explicitly download again.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
             if value.changes.allSatisfy({ $0.action == "unchanged" }) { Text("These reports match the saved reports. Discard the review to keep the saved data.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
             StorebenchActionGroup { reviewActions(value) }
@@ -214,18 +211,20 @@ import UniformTypeIdentifiers
     private func managementCard(_ value: FinancialFileState) -> some View {
         Card(title: "Saved financial periods", subtitle: "Export original source rows or the complete JSON history. Removal affects only local financial reports.") {
             DisclosureGroup("Manage saved reports (\(value.reports.count))") {
-                Button("Export History JSON") { export(nil, format: .historyJson) }.help("Export Complete History · JSON").accessibilityLabel("Export Complete History · JSON").storebenchWorking(unavailable)
+                StorebenchActionGroup { Button("Export History JSON") { export(nil, format: .historyJson) }.help("Export Complete History · JSON").accessibilityLabel("Export Complete History · JSON").storebenchWorking(unavailable) }
                 StorebenchCollection(items: Array(value.reports.reversed()).map { StorebenchCollectionEntry(id: $0.key, value: $0) }, title: { entry in let record = entry.value; return record.beginDate + " – " + record.endDate + " · " + FinancialReports.regionName(record.region) }, empty: "No saved financial periods yet. Download financial reports to save a period.") { entry in
                     let record = entry.value
                     VStack(alignment: .leading, spacing: 8) {
                         Text("\(record.beginDate) – \(record.endDate) · \(FinancialReports.regionName(record.region))").font(.sbHeadline).fixedSize(horizontal: false, vertical: true)
-                        StorebenchActionGroup { exportActions(record) }
-                        if review == nil { Button("Remove Report…", role: .destructive) { remove(record, saved: value) }.help("Remove Local Report").accessibilityLabel("Remove Local Report").storebenchWorking(unavailable) }
+                        StorebenchActionGroup {
+                            exportActions(record)
+                            if review == nil { Button("Remove Report…", role: .destructive) { remove(record, saved: value) }.help("Remove Local Report").accessibilityLabel("Remove Local Report").storebenchWorking(unavailable) }
+                        }
                     }.padding(.vertical, 8)
                     StorebenchDivider()
                 }
 
-                Button("Read Saved Reports") { run { id in await load(id: id); await onChanged() } }.storebenchWorking(unavailable)
+                StorebenchActionGroup { Button("Read Saved Reports") { run { id in await load(id: id); await onChanged() } }.storebenchWorking(unavailable) }
             }
         }
     }

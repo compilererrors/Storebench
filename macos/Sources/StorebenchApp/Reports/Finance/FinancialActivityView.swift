@@ -45,7 +45,7 @@ struct FinancialActivityView: View {
     }
     var body: some View {
         if let summary = try? FinancialPresentation.summary(selected) {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
                 Card(title: "Financial summary", subtitle: Self.summarySubtitle) {
                     StorebenchActionGroup { navigationActions }
                     StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 230) {
@@ -79,7 +79,7 @@ struct FinancialActivityView: View {
     }
     static let summarySubtitle = "Direct app transactions by Apple fiscal period. Summary, detailed and regional files are alternative datasets."
     static func placeholder() -> some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             Card(title: "Financial summary", subtitle: summarySubtitle) {
                 StorebenchActionGroup { ReportDownloadButton(area: .finance) }
                 StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 230) {

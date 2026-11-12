@@ -103,6 +103,27 @@ import Testing
         #expect(try state(offline, "version") == .unknown); #expect(try state(offline, "local:en-US") == .blocked); #expect(offline.targetVersionId == nil)
         #expect(try await documents(session) == before)
     }
+    @Test func publishedPrivacyAndTaxAnswersInvalidateTheLocalChecklistWithoutAVersionChange() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let account = try #require(try await session.accounts().first), plan = try await plan(session, account: account), apple = apple(), host = "readiness-section-answers.appstoreconnect.test"
+        StubProtocol.handle(host) { response($0, apple: apple) }
+        let client = try PublishingTests().client(account, host: host)
+        try await session.recordSectionCheck(.privacy, answered: false, detail: "Not published", accountId: account.id, appId: appId)
+        let first = try await session.releaseReadiness(account: account, appId: appId, revisionId: revisionId, planToken: plan.token, client: client, parts: [.versions])
+        #expect(first.materialSignature == (try await session.releaseMaterialSignature(accountId: account.id, appId: appId, revisionId: revisionId, planToken: plan.token)))
+        try await session.recordSectionCheck(.privacy, answered: true, detail: "Published", accountId: account.id, appId: appId)
+        let published = try await session.releaseReadiness(account: account, appId: appId, revisionId: revisionId, planToken: plan.token, client: client, parts: [.versions])
+        #expect(published.targetState == first.targetState && published.materialSignature != first.materialSignature)
+        let privacy = try #require(published.steps.first { $0.id == "privacy" })
+        #expect(privacy.state == .ready && privacy.detail.hasPrefix("Published in App Store Connect"))
+        try await session.recordSectionCheck(.privacy, answered: true, detail: "Published", accountId: account.id, appId: appId)
+        #expect(published.materialSignature == (try await session.releaseMaterialSignature(accountId: account.id, appId: appId, revisionId: revisionId, planToken: plan.token)), "An unchanged answer should not force another remote import")
+        try await session.recordSectionCheck(.tax, answered: true, detail: "App Store software", accountId: account.id, appId: appId)
+        let tax = try await session.releaseReadiness(account: account, appId: appId, revisionId: revisionId, planToken: plan.token, client: client, parts: [.versions])
+        #expect(tax.materialSignature != published.materialSignature && tax.targetState == first.targetState)
+        #expect(try state(tax, "privacy") == .ready && state(tax, "tax") == .ready)
+        #expect(apple.lock.withLock { apple.writes.isEmpty })
+    }
     @Test func partialForeignAndDuplicateRemoteReadsPreserveIndependentKnownObservations() async throws {
         for mode in ["information", "foreign-version", "incomplete-version", "duplicate-locale", "partial-media", "missing-version", "unrelated-category", "foreign-age"] {
             let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }

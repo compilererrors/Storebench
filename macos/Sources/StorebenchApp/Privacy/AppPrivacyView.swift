@@ -8,6 +8,9 @@ struct AppPrivacyView: View {
     var done: () -> Void = {}
     /// On App Store Connect's App Privacy page, what is still needed shows first.
     var checklist = false
+    /// Release can show only the form being fixed, with the same local drafts, Apple ID and guarded publishing service.
+    var sections: Set<SectionCheck.Area> = [.privacy, .tax]
+    var showsPolicy = true
     @Environment(LibraryModel.self) private var model
     @Environment(\.editorNavigation) private var navigation
     @State private var apple: AppleIDAccount?
@@ -25,7 +28,7 @@ struct AppPrivacyView: View {
     @State private var checks: [SectionCheck.Area: SectionCheck] = [:]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             if checklist {
                 StorebenchChecklist(rows: [
                     .init(id: "policy", title: "Privacy Policy URL", done: links?.policyUrl.isEmpty == false),
@@ -33,6 +36,7 @@ struct AppPrivacyView: View {
                     .init(id: "tax", title: "Tax Category", done: checks[.tax]?.answered == true),
                 ], guide: .release)
             }
+            if showsPolicy {
             Card(title: "Privacy Policy", subtitle: "The links App Store Connect shows with App Privacy. They belong to the app information of the primary language and are sent with the app's text.",
                  actions: AnyView(StorebenchCommand(title: "Edit", running: "Opening…", busy: false, unavailable: navigation.navigate == nil ? "Open this app to edit its languages." : nil, primary: false) { navigation.open(.localizations, locale: links?.locale) })) {
                 StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 230) {
@@ -41,7 +45,10 @@ struct AppPrivacyView: View {
                 }
                 StorebenchTextSlot(text: linksStatus, height: 20, font: .sbCaption, color: StorebenchTheme.muted, live: true)
             }
+            }
             AppleIDSignInCard(account: account, session: session, apple: $apple, ended: ended, changed: { ended = nil; Task { await read() } })
+                .id("app-privacy")
+            if sections.contains(.privacy) {
             PricingReviewCard(title: "App Privacy", subtitle: "Answer the questions App Store Connect asks about the data this app collects. Save keeps the answers in App Store Connect; Publish also shows them on the App Store product page. Each opens a review to approve first.",
                               command: "Publish", account: account, app: app, session: session, blocked: blocked, request: { try await request(publish: true) }, done: { Task { await read() }; done() },
                               reviewIdentity: answers.json.sha256, secondary: ("Sync to Apple", { try await request(publish: false) })) {
@@ -69,12 +76,22 @@ struct AppPrivacyView: View {
                 }
                 }.storebenchWorking(reading || draft?.loaded != true)
             }
-            TaxCategoryView(account: account, app: app, session: session, apple: apple, saved: checks[.tax], done: done, ended: { signedOut() }).id("tax-category")
+            }
+            if sections.contains(.tax) { TaxCategoryView(account: account, app: app, session: session, apple: apple, saved: checks[.tax], done: done, ended: { signedOut() }).id("tax-category") }
         }
         .trackUnsavedChanges(draft?.dirty(answers.json) == true, busy: reading || draft?.busy == true, onSave: { await draft?.saveCurrent(value: { answers.json }) == true })
+        .pageRefreshParticipant("app-privacy/" + account.id + "/" + app.id,
+            state: { .init(dirty: draft?.dirty(answers.json) == true, busy: reading || draft?.busy == true, signature: answers.json.sha256) },
+            save: { await draft?.saveCurrent(value: { answers.json }) == true }, discard: {
+                guard !reading, let saved = draft?.baseline, let restored = AppPrivacyAnswers(saved) else { return false }
+                answers = restored; return true
+            }, refresh: {
+                guard !reading, draft?.dirty(answers.json) != true else { return false }
+                await read(); return problem.isEmpty
+            })
         .task(id: account.id + "/" + app.id) {
             apple = try? await session?.appleIDAccount(accountId: account.id, writer: model.writer)
-            async let policy: Void = readLinks()
+            async let policy: Void = { if showsPolicy { await readLinks() } }()
             await read(); await policy
             if let session {
                 let owner = LocalEditorDraftEditor(scope: .init(accountId: account.id, appId: app.id, editor: "app-privacy", resource: "answers"), session: session)

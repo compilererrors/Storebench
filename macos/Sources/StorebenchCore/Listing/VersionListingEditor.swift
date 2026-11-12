@@ -27,6 +27,8 @@ extension WorkspaceSession {
     public private(set) var revision: Revision?
     public private(set) var version: Revision.Version?
     public private(set) var languages: [Language] = []
+    /// Localizations added on this Mac, as last read with the listing.
+    public private(set) var addedLocalizations: Set<String> = []
     public private(set) var loading = false { didSet { workflow.changed() } }
     public private(set) var adding = false { didSet { workflow.changed() } }
     public private(set) var catalogFailed = false { didSet { workflow.changed() } }
@@ -66,7 +68,7 @@ extension WorkspaceSession {
         workflow = ListingSaveWorkflow(identity: JSONText.array([.string(plan.accountId), .string(plan.appId), .string(plan.sourceRevisionId), .string(plan.baseVersionId)]).stringify())
         observer = workflow.observe { [weak self] in self?.didChange() }
         planObserver = planEditor.observe { [weak self] in self?.workflow.changed() }
-        registration = workflow.register(priority: .text, state: { [weak self] in
+        registration = workflow.register(priority: .text, required: true, state: { [weak self] in
             guard let self else { return .init(dirty: false, blocked: true, signature: "Retired version listing") }
             return .init(dirty: false, blocked: !self.active || self.loading || self.adding || self.auxiliaryBusy || self.catalogFailed || self.revision == nil ||
                 !self.matchesPlan || !self.planEditor.ready || self.planEditor.dirty, signature: self.planEditor.expected ?? "Unread version plan")
@@ -128,6 +130,44 @@ extension WorkspaceSession {
             status = (error as? LanguageFailure)?.message ?? "The language could not be confirmed. Existing edits are kept; read the saved listing again."
             catalogFailed = true; return false
         }
+    }
+    /// The local version localization of a language that was added on this Mac and is not yet in App Store Connect.
+    public func localOnlyLocalization(_ locale: String) -> String? {
+        let matches = version?.localizations.filter { $0.locale.utf8.elementsEqual(locale.utf8) } ?? []
+        guard matches.count == 1, addedLocalizations.contains(matches[0].id) else { return nil }
+        return matches[0].id
+    }
+    /// Removes a language added on this Mac, discarding its unsaved and saved local text and media choices.
+    /// Other languages keep their editors and edits.
+    public func removeLanguage(_ locale: String) async -> Bool {
+        guard active, !busy, matchesPlan, planEditor.ready, !planEditor.dirty, !catalogFailed, revision != nil, !Task.isCancelled,
+              let localizationId = localOnlyLocalization(locale),
+              let index = languages.firstIndex(where: { $0.locale.utf8.elementsEqual(locale.utf8) }) else {
+            status = LanguageFailure.notLocal.message; return false
+        }
+        let language = languages[index]
+        language.text.autosave.cancelPending()
+        for media in language.media { for layout in media.screenshots.map(\.editor) + media.previews.map(\.editor) { layout.autosave.cancelPending() } }
+        let ticket = UUID(); operation = ticket; adding = true
+        defer { if owns(ticket) { operation = nil; adding = false } }
+        do {
+            try await session.removeLanguage(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId, versionId: versionId, localizationId: localizationId)
+        } catch {
+            guard owns(ticket) else { return false }
+            status = (error as? LanguageFailure)?.message ?? "The language could not be removed. Its text and media are kept; read the saved listing again."
+            return false
+        }
+        guard owns(ticket) else { return true }
+        languages.removeAll { $0.text === language.text }
+        language.text.retire(); language.media.forEach { $0.retire() }
+        do {
+            try await refresh(ticket)
+            status = StoreLocales.name(locale) + " removed from this version on this Mac. Other languages are unchanged."
+        } catch {
+            guard owns(ticket) else { return true }
+            status = "\(StoreLocales.name(locale)) was removed. Read the saved listing again to show the current languages."; catalogFailed = true
+        }
+        return true
     }
     public func run(prepare: (@MainActor () async throws -> Void)? = nil) async -> ListingSaveWorkflow.Result {
         guard active, !Task.isCancelled else { return .init(id: UUID(), saves: 0, prepared: false, failure: .cancelled) }
@@ -201,7 +241,9 @@ extension WorkspaceSession {
                       let next = additions.firstIndex(where: { $0.locale.utf8.elementsEqual(code.utf8) }) else { continue }
                 let old = languages[index]; languages[index] = additions.remove(at: next); old.text.retire()
             }
-            languages += additions; revision = source; self.version = version
+            let addedIds = try await session.addedLocalizationIds(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId, versionId: versionId)
+            try Task.checkCancellation(); guard owns(ticket) else { throw ReleaseTextFailure.stale }
+            languages += additions; revision = source; self.version = version; addedLocalizations = addedIds
         } catch {
             for added in additions { added.text.retire(); added.media.forEach { $0.retire() } }; throw error
         }

@@ -53,13 +53,13 @@ struct TextReuseView: View {
                             ForEach(TextDrafts.versionFields, id: \.self) { field in StorebenchToggle(TextDrafts.labels[field] ?? field, isOn: choice(field, in: $fields)) }
                         }
                     }
-                    if !targets.isEmpty && !fields.isEmpty { Button(working ? "Checking…" : "Preview Text Reuse") { operation = Task { await run(apply: false) } } }
+                    if !targets.isEmpty && !fields.isEmpty { StorebenchActionGroup { Button(working ? "Checking…" : "Preview Text Reuse") { operation = Task { await run(apply: false) } } } }
                 }.storebenchWorking(working)
                 }
                 if let preview {
                     Text("\(preview.changes.count) field changes").font(.sbHeadline)
                     review(preview)
-                    Button("Apply Reviewed Text") { operation = Task { await run(apply: true) } }.buttonStyle(StorebenchButtonStyle(.primary)).storebenchWorking(working).storebenchWorking(!(!hasUnsaved && !preview.changes.isEmpty))
+                    StorebenchFormFooter { Button("Apply Reviewed Text") { operation = Task { await run(apply: true) } }.buttonStyle(StorebenchButtonStyle(.primary)).storebenchWorking(working).storebenchWorking(!(!hasUnsaved && !preview.changes.isEmpty)) }
                 }
                 if let receipt { Text("Last text save").font(.sbHeadline); review(receipt) }
                 StorebenchFeedback(text: message, height: 36)

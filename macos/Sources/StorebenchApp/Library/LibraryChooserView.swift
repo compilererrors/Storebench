@@ -15,7 +15,7 @@ struct LibraryChooserView: View {
     private var unavailable: Bool { failed || entries == nil }
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 20) {
+            LazyVStack(alignment: .leading, spacing: StorebenchTheme.gap) {
                 StorebenchPageHeader(title: section.rawValue, description: "Choose an app to open " + section.rawValue.lowercased() + ". Saved languages and images come from the latest complete archive.", eyebrow: "APP WORKFLOWS", actions: AnyView(HStack {
                     Spacer(minLength: 0)
                     LibraryAppRefreshButton(model: model, identity: section.key) { await load(context, wait: true) }
@@ -28,15 +28,14 @@ struct LibraryChooserView: View {
                     StorebenchCardList {
                         StorebenchNavigationCard(title: entry.name(for: section), description: description(entry), action: "Open", activate: { if let action = try? entry.destination(section) { openApp(action) } }) {
                             AppIconView(accountId: entry.row.account.id, appId: entry.row.app.id, name: entry.name(for: section), session: unavailable ? nil : model.session)
-                        }
+                        }.storebenchControlID("library.open." + entry.id)
                         if section == .media, let shots = entry.screenshots {
                             StorebenchCardListSection {
                                 if shots.isEmpty { StorebenchAdaptiveText(text: "No screenshots archived yet. Import the app to see its assets.", color: StorebenchTheme.muted) }
                                 else {
                                     StorebenchMetricGrid(maximumColumns: 5, minimumWidth: 160) {
                                         ForEach(Array(shots.prefix(5))) { shot in
-                                            Button { showGallery(entry, initial: shot) } label: { ArchivedScreenshotThumbnail(shot: shot, session: unavailable ? nil : model.session, row: entry.row) }
-                                                .buttonStyle(StorebenchPressStyle()).accessibilityLabel("Enlarge " + shot.fileName)
+                                            StorebenchMediaButton(title: "Enlarge " + shot.fileName, action: { showGallery(entry, initial: shot) }) { ArchivedScreenshotThumbnail(shot: shot, session: unavailable ? nil : model.session, row: entry.row) }
                                         }
                                     }
                                 }

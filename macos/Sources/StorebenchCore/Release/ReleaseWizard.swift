@@ -88,6 +88,19 @@ public enum ReleaseWizard {
         phase.locked ? [] : phase.steps.filter { $0.state == .blocked }
     }
 
+    /// One ordered list of confirmed problems before submission, including fields in earlier release steps.
+    /// Unknown and manual checks stay separate: they are not evidence that a required answer is missing.
+    public static func submissionProblems(_ guide: ReleaseGuide.Guide) -> [ReleaseReadiness.Step] {
+        guard !guide.submitted else { return [] }
+        return guide.phases.filter { $0.id != "release" && !$0.locked }.flatMap(\.steps)
+            .filter { $0.state == .blocked && $0.id != "submission" }
+    }
+    /// The first missing App Review input, using the names reported by the same field validators.
+    public static func reviewInformationField(_ step: ReleaseReadiness.Step?) -> String? {
+        let fields = ["User name": "demoAccountName", "Password": "demoAccountPassword", "First name": "contactFirstName", "Last name": "contactLastName", "Phone number": "contactPhone", "Email": "contactEmail"]
+        return step?.issues.lazy.compactMap { fields[$0.message] }.first
+    }
+
     /// The first earlier step that still needs action. Apple refuses to add a version for review while its text, screenshots,
     /// build or App Review Information are incomplete, so Add for Review waits for every step before it.
     public static func unfinished(before phase: String, in guide: ReleaseGuide.Guide) -> ReleaseGuide.Phase? {
@@ -141,6 +154,7 @@ public enum ReleaseWizard {
     /// A check's action stays inside the wizard: the phase comes from the check, the focus from its target.
     public static func destination(stepId: String, target: ReleaseReadinessAction.Target) -> Destination {
         if case .external(let url) = target { return .external(url) }
+        if stepId == "version" { return .phase("plan", .plan) }
         let focus: Focus
         switch target {
         case .plan: focus = .plan
@@ -171,8 +185,20 @@ public enum ReleaseWizard {
     }
 
     /// The change the send phase starts with: create the version, then text and media, then copyright.
-    public static func sendScope(_ phase: ReleaseGuide.Phase) -> PublishRequest.Scope {
-        let open = phase.steps.filter { $0.state != .ready }
+    public static func sendScope(_ phase: ReleaseGuide.Phase, preferred: PublishRequest.Scope? = nil) -> PublishRequest.Scope {
+        let open = phase.steps.filter { !ReleaseGuide.satisfied($0) }
+        // A previous text review must not hide the remaining Copyright form after that text reaches Apple.
+        if let preferred {
+            let pending = open.contains { step in
+                switch preferred {
+                case .release: return step.id == "version"
+                case .versionCopyright: return step.id == "copyright"
+                case .metadata: return ["apple-text:", "apple-info:", "media:"].contains(where: step.id.hasPrefix)
+                default: return false
+                }
+            }
+            if pending { return preferred }
+        }
         if open.contains(where: { $0.id == "version" }) { return .release }
         if open.contains(where: { ["apple-text:", "apple-info:", "media:"].contains(where: $0.id.hasPrefix) }) { return .metadata }
         if open.contains(where: { $0.id == "copyright" }) { return .versionCopyright }

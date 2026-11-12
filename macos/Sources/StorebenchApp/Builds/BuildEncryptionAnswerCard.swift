@@ -27,7 +27,7 @@ struct BuildEncryptionAnswerCard: View {
     var body: some View {
         if shared != nil { card }
         else {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
                 card.storebenchWorking(preparing || publishing || ownReview?.state == "running")
                 ReviewPanel(account: account, app: app, session: session, review: $ownReview, done: { done(ownReview) }, busyChanged: { publishing = $0; busyChanged(preparing || $0) },
                             fix: { _ in pageScroll?("encryption-questions-\(build.id)", .top) }, syncConfirmation: true, localDraft: draft)
@@ -59,6 +59,19 @@ struct BuildEncryptionAnswerCard: View {
         .trackUnsavedChanges(draft?.dirty(questions.json) == true, busy: preparing || publishing || draft?.busy == true, onSave: {
             await draft?.saveCurrent(value: { questions.json }) == true
         })
+        .pageRefreshParticipant("build-encryption/" + account.id + "/" + app.id + "/" + build.id,
+            state: { .init(dirty: draft?.dirty(questions.json) == true, busy: preparing || publishing || draft?.busy == true, signature: questions.json.sha256) },
+            save: { await draft?.saveCurrent(value: { questions.json }) == true }, discard: {
+                guard let baseline = draft?.baseline else { return false }
+                questions = EncryptionQuestionnaire(json: baseline); review.wrappedValue = nil; return draft?.dirty(questions.json) == false
+            }, refresh: {
+                guard draft?.loaded == true, draft?.busy == false else { return false }
+                if shared == nil, let id = ownReview?.id, let session {
+                    guard let current = try? await session.publishStatus(accountId: account.id, appId: app.id, id: id) else { return false }
+                    ownReview = current
+                }
+                return true
+            })
     }
 
     /// The build's saved answers and, without a shared review, its newest review that is still waiting for Save.

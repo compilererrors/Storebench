@@ -4,6 +4,7 @@ import SwiftUI
 
 struct ChatGPTSettings: View {
     let model: LibraryModel
+    var signInServices = ChatGPTSignInServices.live
     @Environment(\.editorProtection) private var protection
     @State private var profiles: [ChatGPTProfile] = []
     @State private var selected = ""
@@ -17,7 +18,7 @@ struct ChatGPTSettings: View {
     @State private var problem = false
     @State private var operation: Task<Void, Never>?
     @State private var operationID = UUID()
-    @State private var callback: ChatGPTCallback?
+    @State private var callback: (any ChatGPTSignInReceiving)?
     @State private var attempt: ChatGPTSignIn?
     @State private var latest: [ChatGPTProfile]?
     @State private var latestConnection: AIConnection?
@@ -41,32 +42,22 @@ struct ChatGPTSettings: View {
                     StorebenchTextSlot(text: connectionStatus, height: StorebenchTheme.controlHeight, font: .sbCallout, color: active ? StorebenchTheme.color("color-success") : StorebenchTheme.muted, live: true)
                 }.help("Connection status for the selected ChatGPT account")
                 if !profiles.isEmpty {
-                    StorebenchPicker("Account", selection: Binding(get: { selected }, set: choose), hint: active ? "Connected · Used for ChatGPT tasks" : "Choose a saved account or add another below.") {
+                    StorebenchPicker("Account", selection: Binding(get: { selected }, set: choose), hint: active ? "Connected · Used for ChatGPT tasks" : "Choose a saved account or add another from its options menu.", accessory: AnyView(accountOptions)) {
                         if selected.isEmpty { SelectionOption("New Account", value: "") }
                         selectionOptions(profiles) { SelectionOption($0.label + ($0.credentialID == nil ? " · Signed Out" : ""), value: $0.id) }
                     }
-                    StorebenchActionGroup(alignment: .trailing) {
-                        StorebenchMenu("Account Options", icon: "users") {
-                            Button("Add Account…") { selectProfile("", connecting: true) }
-                            Button("Sign In Again…") { start { await signIn() } }.disabled(profile == nil)
-                            StorebenchMenuSeparator()
-                            StorebenchExternalMenuItem("Manage Plan Usage…", destination: URL(string: "https://chatgpt.com/settings/usage")!)
-                            Button("Retry Plan Usage") {
-                                Task { do { try await model.session?.retryChatGPTPlanUsage(); status = "Plan usage can be retried. Check ChatGPT Settings → Usage if the limit is reached again."; problem = false } catch { report(error) } }
-                            }.disabled(!active)
-                            StorebenchMenuSeparator()
-                            Button("Sign Out", role: .destructive) { start { await signOut() } }.disabled(profile?.credentialID == nil)
-                        }
-                    }
                     if profile?.credentialID != nil && profile?.planEnabled == true {
-                        StorebenchPicker("Default Model", selection: $modelID, hint: "Cards and translations can choose another model for one task.") {
+                        StorebenchPicker("Default Model", selection: $modelID, hint: "Cards and translations can choose another model for one task.", accessory: AnyView(
+                            StorebenchIconButton(title: "Refresh ChatGPT Models", icon: "refresh") { start { await readModels() } }
+                                .storebenchWorking(readingModels || !loaded)
+                        )) {
                             if !models.contains(where: { $0.id == modelID }) { SelectionOption(modelID.isEmpty ? "Choose a Model" : modelID + " · Saved", value: modelID) }
                             selectionOptions(models) { SelectionOption($0.name, value: $0.id) }
                         }
                     }
                 }
             }.storebenchWorking(working || !loaded)
-            StorebenchTextSlot(text: readingModels ? "Reading available ChatGPT models…" : status, height: 44, font: .sbCallout, color: problem && !readingModels ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted, live: true)
+            StorebenchTextSlot(text: readingModels ? "Reading available ChatGPT models…" : status, height: StorebenchTheme.design.number("status-height"), font: .sbCaption, color: problem && !readingModels ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted, live: true)
             if !profiles.isEmpty {
                 LatestSaveReview(busy: working, hasEdits: dirty || stale, available: loaded, changes: differences, note: "Account credentials are never displayed. Choosing a saved baseline does not save your model selection.",
                     onRead: { start { await compare() } }, onKeep: latest == nil ? nil : { useLatest(keepEdits: true) }, onUse: latest == nil ? nil : { useLatest(keepEdits: false) })
@@ -74,15 +65,20 @@ struct ChatGPTSettings: View {
             StorebenchFormFooter {
                 if working {
                     Button("Cancel", role: .cancel) { cancel() }.disabled(operation == nil)
-                } else if profile?.credentialID != nil && profile?.planEnabled == true {
-                    Button("Refresh Models") { start { await readModels() } }.storebenchWorking(readingModels || !loaded)
+                    if let attempt {
+                        Button("Open Browser Again") {
+                            if !signInServices.openBrowser(attempt.authorizationURL) { status = AIFailure.signInBrowser.message; problem = true }
+                        }.help("Reopen this pending ChatGPT sign-in in your default browser")
+                    }
                 }
                 if profile?.credentialID != nil && profile?.planEnabled == true {
                     Button(active ? "Save Model" : "Use Account") { start { _ = await saveModel() } }
                         .buttonStyle(StorebenchButtonStyle(.primary))
                         .storebenchWorking(working || !loaded || stale || !modelAvailable || (active && !dirty))
                 } else {
-                    Button("Continue with ChatGPT…") { start { await signIn() } }.buttonStyle(StorebenchButtonStyle(.primary))
+                    Button { start { await signIn() } } label: {
+                        StorebenchBusyLabel("Continue with ChatGPT…", loading: "Signing In…", busy: working)
+                    }.buttonStyle(StorebenchButtonStyle(.primary)).storebenchControlID("chatgpt.sign-in")
                         .storebenchWorking(working || !loaded)
                 }
             }
@@ -91,6 +87,19 @@ struct ChatGPTSettings: View {
         .task(id: profile) { await readModels(refresh: false) }
         .onDisappear { cancel() }
         .trackUnsavedChanges(dirty, busy: working, generation: selected + modelID, onSave: { await saveModel() })
+    }
+    private var accountOptions: some View {
+        StorebenchIconMenu(title: "ChatGPT Account Options") {
+            Button("Add Account…") { selectProfile("", connecting: true) }
+            Button("Sign In Again…") { start { await signIn() } }.disabled(profile == nil)
+            StorebenchMenuSeparator()
+            StorebenchExternalMenuItem("Manage Plan Usage…", destination: URL(string: "https://chatgpt.com/settings/usage")!)
+            Button("Retry Plan Usage") {
+                Task { do { try await model.session?.retryChatGPTPlanUsage(); status = "Plan usage can be retried. Check ChatGPT Settings → Usage if the limit is reached again."; problem = false } catch { report(error) } }
+            }.disabled(!active)
+            StorebenchMenuSeparator()
+            Button("Sign Out", role: .destructive) { start { await signOut() } }.disabled(profile?.credentialID == nil)
+        }
     }
     private func choose(_ id: String) {
         selectProfile(id, connecting: false)
@@ -104,8 +113,7 @@ struct ChatGPTSettings: View {
         if let protection { protection.requestLeaving(change) } else { change() }
     }
     private func start(_ work: @escaping @MainActor () async -> Void) {
-        guard !working else { return }
-        operation?.cancel()
+        guard !working, operation == nil else { return }
         let id = UUID(); operationID = id
         operation = Task { await work(); if operationID == id { operation = nil } }
     }
@@ -125,13 +133,15 @@ struct ChatGPTSettings: View {
         if dirty, !(await saveModel()) { return }
         guard !working, let session = model.session else { return }
         working = true; defer { working = false; callback = nil; attempt = nil }
+        status = "Preparing browser sign-in…"; problem = false
         do {
-            let state = try ChatGPTOAuth.random(), receiver = ChatGPTCallback(state: state); callback = receiver
+            let state = try ChatGPTOAuth.random(), receiver = signInServices.receiver(state); callback = receiver
             let redirect = try await receiver.start()
             let pending = try await session.beginChatGPTSignIn(redirect: redirect, state: state, profile: profile, writer: model.writer); attempt = pending
             if !profiles.contains(where: { $0.id == pending.profile.id }) { profiles.append(pending.profile) }
             selected = pending.profile.id
-            guard !Task.isCancelled, NSWorkspace.shared.open(pending.authorizationURL) else { receiver.cancel(); throw AIFailure.cancelled }
+            try Task.checkCancellation()
+            guard signInServices.openBrowser(pending.authorizationURL) else { receiver.cancel(); throw AIFailure.signInBrowser }
             status = "Finish signing in and approve ChatGPT plan usage in your browser."; problem = false
             let url = try await receiver.wait()
             let result = try await session.finishChatGPTSignIn(pending, callback: url, writer: model.writer)
@@ -146,7 +156,8 @@ struct ChatGPTSettings: View {
                 profiles.removeAll { $0.id == current.id }; profiles.append(current)
             }
             report(error)
-            if error is CancellationError || (error as? AIFailure) == .cancelled { status = "Sign-in stopped. Continue with ChatGPT to try again."; problem = false }
+            if let attempt { await session.cancelChatGPTSignIn(attempt.id) }
+            if error is CancellationError || (error as? AIFailure) == .cancelled { status = "Sign-in cancelled. Continue with ChatGPT when you are ready."; problem = false }
         }
     }
     private func readModels(refresh: Bool = true) async {

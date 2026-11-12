@@ -41,7 +41,7 @@ struct HistoryView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             Card(title: "Version history", subtitle: "What each version said on the App Store, from the imports saved on this Mac. Open a version to read its text and screenshots in each language; fields that changed from the version before are marked.", help: "versions", actions: AnyView(
                 Button(working ? "Reading…" : "Refresh History") { Task { await load() } }.storebenchWorking(busy)
             )) {
@@ -150,9 +150,9 @@ struct HistoryView: View {
                     HStack(alignment: .top, spacing: 12) {
                         ForEach(Array(shots.enumerated()), id: \.element.id) { index, shot in
                             let label = "\(title) screenshot \(index + 1)"
-                            Button { showGallery(shots, initial: shot) } label: {
+                            StorebenchMediaButton(title: "Enlarge " + label, action: { showGallery(shots, initial: shot) }) {
                                 ArchivedScreenshotThumbnail(shot: shot, session: loaded ? session : nil, imageHeight: 140, caption: label).frame(width: 224)
-                            }.buttonStyle(StorebenchPressStyle()).storebenchWorking(busy || !loaded).accessibilityLabel("Enlarge " + label)
+                            }.storebenchWorking(busy || !loaded)
                         }
                     }
                 }.frame(height: 238)

@@ -21,7 +21,7 @@ struct ReviewRequirementsCard: View {
     private var price: AppPriceState { checkedPrice ?? state.appPrice }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             Card(title: "Price and Product Status", subtitle: "What Apple still needs for the price and each product before they can be submitted. Storebench sets what Apple's API allows; the rest opens where App Store Connect asks for it.",
                  help: "model", actions: AnyView(StorebenchReadButton("Check Again") { await load(fresh: true) }.storebenchWorking(session == nil))) {
                 StorebenchStatusList {

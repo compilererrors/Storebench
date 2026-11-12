@@ -152,6 +152,8 @@ public actor WorkspaceSession {
     var credentialFailures: Set<String> = []
     var credentialVersions: [String: String] = [:]
     var pricingCaches = PricingCaches()
+    var pricingReadJobs: [String: PricingReadJob] = [:]
+    var pricingReadObservers: [UUID: PricingReadObserver] = [:]
     var libraryProcessingWait = LibraryProcessingWait()
     /// Tests give App Privacy a synthetic Apple ID session and network instead of Keychain and Apple.
     var appleWebTestRoute: (session: AppleWebSession, configuration: @Sendable () -> URLSessionConfiguration)?
@@ -177,6 +179,8 @@ public actor WorkspaceSession {
     var decodedRevisions = BoundedMemoryCache<String, (payload: Data, revision: Revision)>(CachePolicy.standardBudget.decodedRevisions)
     var archivedRevisions = BoundedMemoryCache<String, (payload: Data, value: ArchivedRevision)>(CachePolicy.standardBudget.archivedRevisions)
     var releaseStatusMemory = BoundedMemoryCache<String, (snapshot: ReleaseReadinessSnapshot, checkedAt: Date)>(CachePolicy.standardBudget.releaseStatus)
+    var appReleaseReads: Set<String> = []
+    var appReleaseChecking: Set<String> = []
     /// The budget the session caches follow, from the Performance setting.
     var cacheBudget = CachePolicy.standardBudget
     var iconTasks: [String: (id: UUID, task: Task<AppIcons.Image?, Error>)] = [:]
@@ -297,6 +301,7 @@ public actor WorkspaceSession {
         for task in chatGPTRenewals.values { task.cancel() }
         for task in chatGPTSignOutTasks.values { task.cancel() }
         for icon in iconTasks.values { icon.task.cancel() }
+        cancelPricingReads()
         await appleReadCache.invalidate()
         releaseStatusMemory.removeAll()
         await lifetime.drained()

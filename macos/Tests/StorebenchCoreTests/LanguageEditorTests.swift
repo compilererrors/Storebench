@@ -144,6 +144,7 @@ import Testing
         for raced in [false, true] {
             let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
             let account = try #require(try await session.accounts().first), apple = SyntheticApple(), host = "joined-language-plan-\(raced).appstoreconnect.test"
+            apple.setVersionState("READY_FOR_DISTRIBUTION")
             _ = try await session.saveReleasePlan(account: account, appId: appId, start: .reuse, sourceRevisionId: revisionId, baseVersionId: "version-1", targetVersion: "2.0", releaseType: "MANUAL", earliestReleaseDate: nil, expected: "null")
             var editor = try LanguageEditorState(await read(session))
             try editor.change(field(editor, "description"), to: "Synthetic planned reviewed language")

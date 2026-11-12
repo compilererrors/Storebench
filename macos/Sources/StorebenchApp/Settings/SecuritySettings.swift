@@ -31,6 +31,7 @@ struct SecuritySettings: View {
                 }
                 }
             }
+            .settingsSearchAnchor("security-storage")
             if model.writer.usesKeychain {
                 StorebenchFormSection("Touch ID Keychain") {
                     Text(model.storageMode == .touchID ? "Credentials open with Touch ID, with your Mac login password as the fallback. Authentication is handled by the protected Keychain item." : "Use Touch ID to open credentials from a protected Keychain item. Switching verifies a new copy and signs out the current session.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
@@ -44,6 +45,7 @@ struct SecuritySettings: View {
                         Text(!TouchIDKeychainStorage.supported ? "Available in a provisioned, Apple-signed build. This ad hoc build keeps using the login Keychain." : lock == .password ? "Remove the separate Storebench password first to unlock saved data using only Mac authentication." : "macOS may ask once for permission to read your current login Keychain. The original copy is kept for recovery; future native changes use the protected copy.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
                     }
                 }
+                .settingsSearchAnchor("security-authentication")
                 if model.storageMode == .keychain {
                 StorebenchFormSection("Mac authentication") {
                     Text("Require Mac authentication before Storebench opens Keychain-backed storage. Touch ID uses your Mac login password as a fallback. macOS Keychain permission is separate.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)

@@ -50,10 +50,17 @@ public struct ReleaseReadinessSnapshot: Sendable {
 extension WorkspaceSession {
     private struct ReadinessMaterial: Sendable {
         let scope: RecoveryGuidance.Scope, plan: ReleasePlan, source: Revision, raw: JSONText, draft: JSONText, signature: String
+        let checks: [AppleProblem.Area: SectionCheck]
         var version: JSONText? { WorkspaceSession.items(WorkspaceSession.overlayJSON(raw, draft: draft)["versions"]).first { TextSemantics.same($0["id"]?.text, plan.baseVersionId) } }
     }
     @inline(never) private func readinessMaterial(accountId: String, appId: String, revisionId: String, planToken: String) throws -> ReadinessMaterial {
         let scope = try RecoveryGuidance.Scope(accountId: accountId, appId: appId)
+        // Capture these outside the release/text locks. Their answers are part of the local material and are rechecked after remote reads.
+        let checks = try sectionChecks(accountId: accountId, appId: appId)
+        let answers = JSONText.array([AppleProblem.Area.privacy, .tax].map { area in
+            guard let check = checks[area] else { return .null }
+            return .array([.string(area.rawValue), .bool(check.answered), .string(check.detail), check.summary.map(JSONText.string) ?? .null])
+        })
         return try withReleaseTextPlan(accountId: accountId, appId: appId, revisionId: revisionId, token: planToken) { plan, store in
             _ = try archivedRevision(accountId: accountId, appId: appId, id: revisionId, store: store)
             return try readReleaseTextDocuments(accountId: accountId, appId: appId, revisionId: revisionId, store: store) { source, draft in
@@ -63,8 +70,8 @@ extension WorkspaceSession {
                 let raw = try JSONText.parse(saved.payload)
                 try LanguageDrafts.validateTextDocument(draft)
                 let draftRevision = try store.document(namespace: "drafts", key: key)?.revision ?? 0
-                let signature = JSONText.array([.string(plan.token), .number(Double(saved.revision)), .number(Double(draftRevision)), .string(raw.sha256), .string(draft.sha256)]).sha256
-                return ReadinessMaterial(scope: scope, plan: plan, source: source, raw: raw, draft: draft, signature: signature)
+                let signature = JSONText.array([.string(plan.token), .number(Double(saved.revision)), .number(Double(draftRevision)), .string(raw.sha256), .string(draft.sha256), answers]).sha256
+                return ReadinessMaterial(scope: scope, plan: plan, source: source, raw: raw, draft: draft, signature: signature, checks: checks)
             }
         }
     }
@@ -72,6 +79,19 @@ extension WorkspaceSession {
     /// The signature of the saved material a status read covers. Local only; no Apple request.
     public func releaseMaterialSignature(accountId: String, appId: String, revisionId: String, planToken: String) throws -> String {
         try readinessMaterial(accountId: accountId, appId: appId, revisionId: revisionId, planToken: planToken).signature
+    }
+    /// Local card projection, with the newest version-state observation over the saved checklist.
+    func overviewReadiness(account: Account, appId: String, plan: ReleasePlan, status: AppReleaseStatus?,
+                          earlier: (snapshot: ReleaseReadinessSnapshot, checkedAt: Date)?) throws -> ReleaseReadinessSnapshot {
+        let material = try readinessMaterial(accountId: account.id, appId: appId, revisionId: plan.sourceRevisionId, planToken: plan.token)
+        let useVersions = status?.checkedAt.map { $0 >= (earlier?.checkedAt ?? .distantPast) } == true
+        let observations: JSONText = useVersions ? .object([("appleVersions", .array(status!.versions.map(\.json)))]) : .object([])
+        let value = try ReleaseReadinessSnapshot(scope: material.scope, plan: plan, local: readinessLocalInput(material), observations: observations,
+                                                parts: useVersions ? .versions : [], materialSignature: material.signature).merging(earlier?.snapshot)
+        // Older saved checks can have a confirmed state without reusable observations. Keep that label, without treating unread parts as verified.
+        guard !value.parts.contains(.versions), let earlier else { return value }
+        return .init(scope: value.scope, plan: value.plan, steps: value.steps, materialSignature: value.materialSignature,
+                     targetVersionId: earlier.snapshot.targetVersionId, targetState: earlier.snapshot.targetState, parts: value.parts, observations: value.observations)
     }
     /// Reads only `parts` at Apple; a version-scoped part also reads the app's versions to find the target. Unread parts stay Unknown until merged
     /// with an earlier status. Without a client every requested part is observed as Unknown.
@@ -97,7 +117,7 @@ extension WorkspaceSession {
         return try .init(scope: material.scope, plan: material.plan, local: local, observations: observations, parts: parts, materialSignature: material.signature)
     }
     @inline(never) private func readinessLocalInput(_ material: ReadinessMaterial) throws -> JSONText {
-        let saved = (try? sectionChecks(accountId: material.plan.accountId, appId: material.plan.appId)) ?? [:]
+        let saved = material.checks
         func check(_ area: AppleProblem.Area) -> JSONText {
             saved[area].map { .object([("answered", .bool($0.answered)), ("detail", .string($0.detail)), ("checkedAt", .string($0.checkedAt))]) } ?? .string("unknown")
         }

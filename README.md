@@ -14,7 +14,11 @@ Set one guide price and choose how the other countries follow it: **World Bank p
 
 Want your own rules? Save **country percentages**, **your own index** or a mix of models as a reusable profile. You can also choose **Apple's comparable prices** or **enter country prices yourself**, including from CSV.
 
-Compare country prices side by side before choosing. Storebench rounds to Apple's price points and shows the changes before you approve sending them.
+The Price Model selector stays at the top of Prices by Country or Region. Choosing a model shows its own settings and country preview, while Countries with No or Few Purchases stays available. Initial App Price setup remains available when needed. Once the app has a paid price, Apple's price editor appears only for Apple's comparable prices; current Apple prices can also be shown explicitly for comparison. CSV input belongs to Enter Prices Manually. Storebench rounds to Apple's price points and shows the changes before you approve sending them.
+
+PPP and Big Mac observations are saved in the encrypted database and refreshed in the background after startup reads. Repeated calculations reuse them and complete Apple price catalogs saved for each product and country. The model amounts appear before Apple price matching finishes. Source reads have a six-second limit, and the whole preview stops after one minute; Cancel Calculation stops it sooner. A failed refresh keeps validated, dated index data for up to a year. Without usable observations, Storebench explains the failure and leaves prices unchanged. The country table keeps search, sorting, filters and rows per page together; calculation details remain available from each value.
+
+For a country where App Store prices are in USD while PPP is reported in the national currency, Storebench divides the PPP factor by the same year's [official currency-per-USD factor](https://data.worldbank.org/indicator/PA.NUS.FCRF). The source and year remain visible in the calculation details. Missing observations or conversion factors leave the country's model price unavailable.
 
 [See the pricing choices and country preview](#pricing-models).
 
@@ -36,7 +40,7 @@ The comparison shows observed changes, not proof that an ASO edit caused them. O
 
 From the questions about your app to releasing it, **Release** keeps the work in one flow. App details, age rating and required declarations, text, screenshots, build, export compliance and App Review: go step by step, with the checks and editors together. See what's missing, fix it there and continue, without hunting through views and tabs.
 
-App already out and you just need to bump the version? **Quick Release** shows the essentials: version, build and Add for Review, carrying over your existing listing. Finished steps stay collapsed. Expand **Text** to change **Description, Subtitle, Keywords and What's New**, then continue in the same flow. If the update needs more, open the full Release guide with the same work.
+App already out and you just need to bump the version? **Quick Release** has four steps in the same grid as Release: **Prepare Release**, **What's New in This Version**, **Add Build** and **Add for Review**. Green checks show what is ready, yellow marks pending checks or sync, and red identifies missing required information. It reuses the existing listing. Other text, screenshots and release settings stay collapsed until needed. Saving drafts, syncing, Back and Next keep you in Quick Release.
 
 [See Release and Quick Release](#release-and-quick-release).
 
@@ -62,13 +66,21 @@ Connect your API key during setup or in **Settings → Apple accounts**. Choose 
 
 Use **Overview** or **Apps** to download app material and reports. The sidebar opens each app's editing, release, TestFlight and reporting sections. **Help** contains searchable guidance for setup, permissions and common problems.
 
+Overview keeps releases in compact cards. Expand a card for its requirements or minimize it to keep the overview focused; each version remembers your choice, and the card heading keeps its position while the details change. New versions start expanded unless you choose Minimized in **Settings → General → Release Cards**. After you minimize every card, a compact native popup can offer to make that the default without moving the page. **Ask Later** postpones the question for a day; **No** turns it off. Settings also has a search field: search for a setting or a familiar term and open its section directly.
+
 ## Releases and localizations
 
 Prepare a version from existing app material, copy an earlier version or start with an empty local plan. Edit listing text across languages, select a build and check what is still needed before submitting the version.
 
-**Localizations** keeps each language's text and character limits together. Pick one source language, select the languages you want and populate them in one go with **Apple Intelligence**, your **ChatGPT plan** or your own **OpenAI, Claude or Gemini model**. Review the drafts and sync when ready. Existing wording stays unless you choose to replace it; names and links are preserved.
+Each language has Save Draft and Sync to Apple beside its text. Drafts can keep unfinished or over-limit copy locally while you edit. Sync saves changed text first, then opens that language's approval review. Missing screenshots, an unfinished other language and later submission requirements do not block text sync. If preparation fails, the draft stays saved so you can correct the problem and try again. Matching text is not sent twice.
+
+**Localizations** keeps each language's text and character limits together. Pick one source language, select the languages you want and populate them in one go with **Apple Intelligence**, your **ChatGPT plan** or your own **OpenAI, Claude or Gemini model**. **View Changes** shows all changed fields with added and removed words, compared with the Apple import or the loaded draft. Review the drafts and sync when ready. Existing wording stays unless you choose to replace it; names and links are preserved. Translation results distinguish saved drafts, skipped languages and failures, so only failed work needs another request.
+
+Every translation request includes the field's maximum length, counting spaces, punctuation and line breaks, with room below the limit. Translations are checked against each complete field's limit, including the shared 100-byte keyword budget and comma separators. If wording is too long, Storebench asks the selected model to rephrase it concisely, with up to three adjustment rounds, rather than cutting off text. Remote services receive the complete translation request first; only overflowing fields need another request. Apple Intelligence tries each complete text field first and splits it only if Apple reports that its context window was exceeded, then checks the combined translation length. If the result still does not fit, the language is left unchanged and the message identifies the field and its length. Review the wording before syncing.
 
 You can also write the text yourself, reuse saved wording or start a language with Apple's on-device translation. Source comparisons stay beside the edits.
+
+In Release, **Edit** opens the relevant section and focuses its input. **Done** saves that language's text and checks the release step again. **Sync to Apple** opens a review for that language's text independently of screenshots or unfinished edits in other languages. Media has its own save and review actions. Step 3 compares all remaining saved text and media with Apple; content already synced individually is not sent again. When the step is complete, it shows Up to Date. Copyright can be entered and reviewed directly in Release, with an Open Copyright action beside a missing-field warning. Missing submission requirements remain on the release checklist; they do not prevent reviewing an individual text update.
 
 Local drafts and release plans remain separate from what Apple currently has. **History** preserves imported material and saved revisions; **Change journal** records before-and-after values and lets you add local notes. A detected change does not establish when it became public on the App Store.
 
@@ -77,6 +89,8 @@ Local drafts and release plans remain separate from what Apple currently has. **
 ## Screenshots, app previews and Asset Library
 
 Add screenshots and app previews to a version and language, change their order and review the saved selection. Image editing supports cropping, rotation and resizing while retaining the original.
+
+Click a media card to select it, Command-click to select several or Shift-click for a range. Drag the selection into the highlighted gap; selected items keep their relative order. Right-click a card or open its Actions menu to move the selection to the beginning or end, or one position earlier or later. Double-click a screenshot to open it. Reordering animates the cards into place and respects Reduce Motion. Selection and drag feedback do not save changes; the existing draft and reviewed upload actions still apply.
 
 **Asset Library** keeps encrypted local originals and reads assets already at Apple. Processed assets can be reused across compatible placements. Uploads, placement changes and asset deletion each require an approved review.
 
@@ -91,6 +105,8 @@ In **Settings → AI**, use Apple Intelligence on this Mac, connect your ChatGPT
 ## Pricing
 
 Manage the app's download price separately from subscriptions and in-app purchases. Read current and scheduled prices, prepare changes by country or region, and compare proposed prices before sending them.
+
+Country prices show saved data immediately and read missing or older schedules automatically. After an approved app-price change, Storebench reads the schedule back from Apple and updates open pricing views without resetting local edits or table selections. If that read fails, the last saved prices remain visible and later visits retry with a short backoff; publishing is never repeated automatically.
 
 Price strategies include Apple's comparable prices, currency conversion, purchasing-power models, the Big Mac Index, saved profiles and manually entered country prices. Apple's comparable prices follow the base country or region you choose; any of Apple's countries or regions can be the base. Saved profiles are recipes that can mix two methods, adjust countries by percentage, keep prices within a lowest and highest price, and use your own index values.
 
@@ -146,7 +162,11 @@ CSV and JSON imports preview their local changes before saving. Exports can cont
 
 Settings cover accounts, reporting connections, storage protection, backups, appearance, editing, keyboard shortcuts and performance. The Performance setting controls cache budgets and how long background reads are reused. Screens show cached results before checking Apple again, sharing requests already in progress. Saved screen results can be restored from encrypted SQL after memory eviction, with decoding away from the interface thread.
 
+AI settings show ChatGPT and Claude connections directly. Connect ChatGPT in your browser to use your plan, or add your own Claude API key and choose a model. Apple Intelligence runs on this Mac; OpenAI and Gemini API connections are available under Other API Services. Each task can choose its own service and model.
+
 Visible reads take priority over preparation in the background. Within the same priority, small metadata requests go before larger pages and downloads, with a bounded wait for older requests. Local history arrives before remote preparation starts. Manual refresh replaces affected reads; publishing approval always checks fresh information.
+
+While Storebench is open and unlocked, lightweight background checks run after unlocking, when returning to the app and periodically. App discovery is reused for 15 minutes across sessions; connecting an account already counts as a successful discovery. Failed accounts keep their saved apps and retry with increasing delays, while other accounts continue. Manual **Refresh Apps** bypasses that waiting period. Preparation checks a bounded number of recent release plans about every 10 minutes, following the **Apps to prepare** setting and the remaining Apple request budget. These checks reuse the existing read queue and status stores; report downloads and material imports keep their own workflows. A changed app list waits until open editors are ready before replacing their navigation context. Locking or quitting stops the scheduled reads.
 
 Unsaved editors ask you to save, discard or keep editing before leaving. Back and Forward retain navigation history. Keyboard shortcuts can be changed in Settings, and Command–Comma opens Settings.
 
@@ -185,11 +205,11 @@ These screenshots show Storebench's native Mac interface with synthetic app data
 
 One guide price, several ways to price the world. Choose PPP, Big Mac Index, currency conversion, Same for all, your own profiles, Apple's comparable prices or manual prices.
 
-![The open Price Strategy menu showing built-in models, manual pricing and profiles for country percentages and an own index](docs/images/pricing-models.png)
+![Prices by Country or Region with a prominent Price Model selector, only the selected PPP model's settings, and Countries with No or Few Purchases](docs/images/pricing-models.png)
 
 Preview the countries together, rounded to Apple's available price points.
 
-![Country-pricing editor with a guide price, selected pricing method and rounded country prices](docs/images/pricing.png)
+![Focused PPP country-pricing preview with synthetic country prices rounded to Apple's price points](docs/images/pricing.png)
 
 ### ASO history
 
@@ -205,13 +225,13 @@ Follow listing changes on the report timeline, then compare the same number of d
 
 ![The Release guide showing the saved version, starting material and numbered release steps](docs/images/release-guide.png)
 
-**Quick Release** keeps a version bump small. Carry over your listing, choose the version and build, then Add for Review. Completed steps stay out of the way.
+**Quick Release** keeps a version bump small. Follow four numbered steps beside the working pane: prepare the version, add What's New, choose the build, then Add for Review. Carry over your listing and keep other settings collapsed. If an existing Apple version prevents a new one, its status and Open Version link show what to resolve while your local draft stays saved.
 
 ![The Quick Release page with numbered steps for a saved version](docs/images/quick-release.png)
 
-Need an ASO tweak? Expand Text for Description, Subtitle, Keywords and What's New, without leaving the flow.
+Need an ASO tweak? Open **Other Listing Text** for Description, Subtitle and Keywords. **Add Build** opens the build's approval review; **Add for Review** opens the submission review. Both keep you in Quick Release.
 
-![Quick Release with Text expanded to edit the existing listing for the next version](docs/images/quick-release-text.png)
+![Quick Release with Other Listing Text expanded in the working pane](docs/images/quick-release-text.png)
 
 ### TestFlight builds and groups
 
@@ -245,7 +265,7 @@ Choose a service and model for the job. Translate the finished set for more lang
 
 One source, several languages. Choose Apple Intelligence, your ChatGPT plan or a connected OpenAI, Claude or Gemini model, then populate the selected languages together. Review the drafts before syncing.
 
-![Translate Languages with AI with one source, three target languages and the open AI Service menu](docs/images/localizations-ai.png)
+![Translate Languages with AI with a source language, target-language selection and the open AI Service menu](docs/images/localizations-ai.png)
 
 ![Localizations with listing fields and character limits for each language](docs/images/localizations.png)
 

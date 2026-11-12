@@ -38,7 +38,7 @@ struct BuildDeliveryView: View {
                     StorebenchActionGroup { uploadActions(package) }
                 } else {
                     Text("One package per app, up to 16 GiB. The staged copy is encrypted and included in your local backups.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
-                    if loaded { Button("Choose Package…") { if !working { choosingFile = true } }.storebenchWorking(working).help("Choose a Signed IPA or PKG File") }
+                    if loaded { StorebenchActionGroup { Button("Choose Package…") { if !working { choosingFile = true } }.storebenchWorking(working).help("Choose a Signed IPA or PKG File") } }
                 }
                 if let draft { LocalDraftActions(editor: draft, value: draftValue, restore: restoreDraft, blocked: working || publishing) }
                 StorebenchTextSlot(text: status.isEmpty ? "Confirm that the version, build number and platform match the signed package." : status, height: 40, font: .sbCallout, color: StorebenchTheme.muted, live: true)
@@ -68,7 +68,7 @@ struct BuildDeliveryView: View {
                         }
                         if delivery.omittedDetails > 0 { Text("\(delivery.omittedDetails) additional diagnostics from Apple.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted) }
                         if delivery.deletable {
-                            Button("Review Removal", role: .destructive) { Task { await prepareRemoval(delivery) } }.help("Review Removal of Delivery Record").accessibilityLabel("Review Removal of Delivery Record").storebenchWorking(working)
+                            StorebenchActionGroup { Button("Review Removal", role: .destructive) { Task { await prepareRemoval(delivery) } }.help("Review Removal of Delivery Record").accessibilityLabel("Review Removal of Delivery Record").storebenchWorking(working) }
                         }
                     }
                     StorebenchDivider()

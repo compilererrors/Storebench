@@ -19,48 +19,38 @@ struct ScreenshotUploadSheet: View {
                             let index = selection.items.firstIndex { $0.id == item.id } ?? 0
                             StorebenchAssetCard(title: item.name, metadata: "\(Double(item.data.count).formatted(.number.scale(0.000001).precision(.fractionLength(2)))) MB · Selected on this Mac", status: item.edits == nil ? "Original" : "Edited", position: index + 1,
                                                 drag: !busy && !inheritedBusy ? MaterialDrag(id: item.id, title: item.name, context: selection.revision, order: selection.items.map(\.id), enabled: true, session: reorder, activate: { model.setEditing(true); editing = item }) : nil) {
-                                Button { model.setEditing(true); editing = item } label: {
+                                StorebenchMediaButton(title: "Edit " + item.name, action: { model.setEditing(true); editing = item }) {
                                     SelectedScreenshotThumbnail(item: item)
                                         .frame(height: StorebenchTheme.measure("assetPreviewHeight") - 2 * StorebenchTheme.measure("assetPreviewPadding"))
-                                        .overlay(StorebenchControlOutline(border: .clear))
-                                }.buttonStyle(StorebenchPressStyle()).help("Edit " + item.name).accessibilityLabel("Edit " + item.name)
-                                    .materialDragSource(id: item.id, title: item.name, order: selection.items.map(\.id), context: selection.revision, enabled: !busy && !inheritedBusy && selection.items.count > 1, session: reorder, activate: { model.setEditing(true); editing = item })
+                                }
+                                    .materialDragSource(id: item.id, title: item.name, order: selection.items.map(\.id), context: selection.revision, enabled: !busy && !inheritedBusy, session: reorder, activate: { model.setEditing(true); editing = item })
                             } actions: {
                                 VStack(spacing: StorebenchTheme.space(2)) {
+                                    StorebenchMaterialToolbar()
                                     HStack(spacing: StorebenchTheme.space(2)) {
-                                        StorebenchReorderHandle(id: item.id, title: item.name, context: selection.revision, order: selection.items.map(\.id), enabled: !busy && !inheritedBusy, session: reorder, apply: { next, _, context in model.reorder(next, expectedRevision: context) })
-                                        Button("Edit Image") { model.setEditing(true); editing = item }.buttonStyle(StorebenchButtonStyle(.quiet, stretch: true))
-                                        Button(role: .destructive) { model.remove(item.id) } label: { StorebenchIcon(name: "close", size: 16) }
-                                            .buttonStyle(StorebenchButtonStyle(.danger, size: .icon)).help("Remove from selection").accessibilityLabel("Remove " + item.name + " from selection")
-                                    }
-                                    HStack(spacing: StorebenchTheme.space(2)) {
-                                        Button { model.move(item.id, by: -1) } label: { StorebenchIcon(name: "up", size: 16) }
-                                            .buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).opacity(index == 0 ? 0 : 1).allowsHitTesting(index > 0).accessibilityHidden(index == 0).help("Move earlier").accessibilityLabel("Move " + item.name + " earlier")
-                                        Button { model.move(item.id, by: 1) } label: { StorebenchIcon(name: "down", size: 16) }
-                                            .buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).opacity(index == selection.items.count - 1 ? 0 : 1).allowsHitTesting(index < selection.items.count - 1).accessibilityHidden(index == selection.items.count - 1).help("Move later").accessibilityLabel("Move " + item.name + " later")
                                         Button("Restore Original") { model.restore(item.id) }.buttonStyle(StorebenchButtonStyle(.quiet, stretch: true))
                                             .opacity(item.edits == nil ? 0 : 1).allowsHitTesting(item.edits != nil).accessibilityHidden(item.edits == nil)
                                     }
                                 }
                             }
-                            .materialDropTarget(id: item.id, session: reorder)
+                            .materialReorderCard(id: item.id, title: item.name, order: selection.items.map(\.id), context: selection.revision,
+                                enabled: !busy && !inheritedBusy, session: reorder, apply: { next, _, context in model.reorder(next, expectedRevision: context) },
+                                open: { model.setEditing(true); editing = item }, remove: { model.remove(item.id) })
                         }
                         .materialDropArea(order: selection.items.map(\.id), context: selection.revision, enabled: !busy && !inheritedBusy, session: reorder, apply: { next, _, context in model.reorder(next, expectedRevision: context) })
                     }
                     StorebenchReorderFeedback(session: reorder)
                 } else if model.reading {
                     if let progress = model.readProgress {
-                        ProgressView(value: progress.fraction, total: 1) {
-                            Text("Reading screenshots · \(progress.completedFiles) of \(progress.totalFiles) files · \(Double(progress.bytesRead).formatted(.number.scale(0.000001).precision(.fractionLength(1)))) MB read")
-                        }
-                    } else { ProgressView("Reading selected files…") }
+                        StorebenchProgressStatus(message: "Reading screenshots · \(progress.completedFiles) of \(progress.totalFiles) files · \(Double(progress.bytesRead).formatted(.number.scale(0.000001).precision(.fractionLength(1)))) MB read", value: progress.fraction)
+                    } else { StorebenchProgressStatus(message: "Reading selected files…") }
                 }
             }.storebenchWorking(busy).frame(maxWidth: .infinity, alignment: .leading)
         } actions: {
-            ZStack(alignment: .topLeading) {
-                StorebenchFeedback(text: model.status.isEmpty ? model.problem ?? "PNG or JPEG · 20 MB each, 50 MB per saved batch · up to 10 per display size." : model.status, height: 56).opacity(model.validating ? 0 : 1)
-                if model.validating { ProgressView("Checking selection…") }
-            }.frame(height: 56)
+            Group {
+                if model.validating { StorebenchProgressStatus(message: "Checking selection…", height: 56) }
+                else { StorebenchFeedback(text: model.status.isEmpty ? model.problem ?? "PNG or JPEG · 20 MB each, 50 MB per saved batch · up to 10 per display size." : model.status, height: 56) }
+            }.frame(height: 56, alignment: .topLeading)
             StorebenchActionGroup(alignment: .trailing) {
                 Button("Discard", role: .destructive) { if !busy { discard() } }
                 if model.selection == nil { Button("Retry Read") { if !busy { Task { await model.load() } } } }

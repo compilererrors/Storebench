@@ -14,7 +14,7 @@ struct OverviewSection: View {
     @Environment(\.navigationPresentation) private var history
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             AppSyncCard(account: account, app: app, session: session, changed: materialChanged, openSource: openSource)
             MaterialImportCard(account: account, app: app, session: session, changed: materialChanged, onlyWhenNeeded: true)
             AppLiveVersionsView(account: account, app: app, session: session, plan: snapshot?.plan, openCancellation: openCancellation)
@@ -128,12 +128,12 @@ struct AppLiveVersionsView: View {
                     else if entries?.isEmpty == true { Text("No Apple versions were returned.").foregroundStyle(StorebenchTheme.muted) }
                     if !failed {
                         ForEach(entries ?? []) { entry in
-                            HStack(alignment: .firstTextBaseline) {
+                            StorebenchActionRow {
                                 Text(entry.value.name).font(.sbHeadline).fixedSize(horizontal: false, vertical: true)
                                 Text(entry.state).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
-                                Spacer()
+                            } actions: {
                                 if entry.inReview, let scope = try? RecoveryGuidance.Scope(accountId: account.id, appId: app.id), let destination = try? AppOverviewVersions.Cancellation(scope: scope, version: entry) {
-                                    if available { Button("Cancel Submission") { openCancellation(destination) }.fixedSize() }
+                                    if available { Button("Cancel Submission") { openCancellation(destination) } }
                                 }
                             }
                         }

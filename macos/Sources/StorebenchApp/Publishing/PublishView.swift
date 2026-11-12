@@ -17,7 +17,7 @@ struct PublishView: View {
     private var busy: Bool { panelBusy || historyReading }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             PublishActionPanel(account: account, app: app, session: session, actions: PublishingWorkspace.Action.allCases, initialRequest: initialRequest, initialReview: initialReview,
                                history: .init(opening: $opening, reading: historyReading, busyChanged: { panelBusy = $0 }, changed: { await loadHistory() }))
             Card(title: "Publishing history", subtitle: "Reopen a review to inspect its exact changes and completed steps. An expired or used review is never replayed.", actions: AnyView(

@@ -2,6 +2,16 @@ import Foundation
 
 /// Time and page policy for saved reviews; it never consumes an approval.
 public enum PublishingReviewPresentation {
+    /// Native editors for Apple ID answers and App Review Information, with the current app kept by scoped recovery navigation.
+    public static func recoveryTarget(_ area: AppleProblem.Area) -> RecoveryGuidance.Target? {
+        switch area {
+        case .privacy: .open(.appPrivacy, anchor: "app-privacy")
+        case .tax: .open(.appPrivacy, anchor: "tax-category")
+        case .reviewInformation: .open(.reviewInformation)
+        case .version: .open(.release, anchor: "release-version")
+        default: nil
+        }
+    }
     public static func removals(_ review: PublishReview) -> [PublishStep] {
         review.steps.filter { $0.kind == .api && $0.method == "DELETE" }
     }

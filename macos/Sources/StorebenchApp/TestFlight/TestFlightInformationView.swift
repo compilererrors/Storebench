@@ -34,14 +34,14 @@ struct TestFlightInformationView: View {
         licenseReview = nil
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             TestFlightReviewInformationView(account: account, app: app, session: session)
             Card(title: "Beta App Information", subtitle: "Each TestFlight language has its own card. Changes are reviewed separately before sending them to Apple.") {
                 if informationReady && !available.isEmpty {
                     StorebenchFormGrid {
                         StorebenchPicker("Add a language card", selection: $newLocale) { selectionOptions(available) { SelectionOption(StoreLocales.name($0), value: $0) } }
                         if available.contains(newLocale) {
-                            Button("Add Language Card") { guard !busy, available.contains(newLocale) else { return }; addedLocales.insert(newLocale); newLocale = available.first ?? "" }.padding(.top, StorebenchTheme.measure("fieldLabel") + StorebenchTheme.measure("fieldGap"))
+                            StorebenchFieldCommands { Button("Add Language Card") { guard !busy, available.contains(newLocale) else { return }; addedLocales.insert(newLocale); newLocale = available.first ?? "" } }
                         }
                     }.environment(\.fieldHintHeight, 0).storebenchWorking(busy || draft?.loaded != true)
                 }

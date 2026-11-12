@@ -1,9 +1,22 @@
+import AppKit
 import Foundation
 import Network
 import StorebenchCore
 
+@MainActor protocol ChatGPTSignInReceiving: AnyObject {
+    func start() async throws -> URL
+    func wait() async throws -> URL
+    func cancel()
+}
+
+@MainActor struct ChatGPTSignInServices {
+    var receiver: (String) -> any ChatGPTSignInReceiving
+    var openBrowser: (URL) -> Bool
+    static let live = Self(receiver: { ChatGPTCallback(state: $0) }, openBrowser: { NSWorkspace.shared.open($0) })
+}
+
 /// A short-lived browser callback bound only to the loopback interface.
-@MainActor final class ChatGPTCallback {
+@MainActor final class ChatGPTCallback: ChatGPTSignInReceiving {
     private let state: String
     private var listener: NWListener?
     private var port: UInt16 = 0
@@ -17,10 +30,13 @@ import StorebenchCore
         guard ProcessInfo.processInfo.environment["STOREBENCH_TEST_MODE"] != "1" else { throw AIFailure.configuration }
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
-        let server = try NWListener(using: parameters); listener = server
+        let server: NWListener
+        do { server = try NWListener(using: parameters) }
+        catch { throw AIFailure.signInCallback }
+        listener = server
         timeout = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(180))
-            if !Task.isCancelled { self?.finish(.failure(AIFailure.cancelled)) }
+            try? await Task.sleep(for: .seconds(10))
+            if !Task.isCancelled { self?.finish(.failure(AIFailure.signInCallback)) }
         }
         try await withTaskCancellationHandler(operation: {
             try await withCheckedThrowingContinuation { continuation in
@@ -29,7 +45,7 @@ import StorebenchCore
                     guard let self else { return }
                     switch status {
                     case .ready: self.ready?.resume(); self.ready = nil
-                    case .failed: self.finish(.failure(AIFailure.unavailable))
+                    case .waiting, .failed: self.finish(.failure(AIFailure.signInCallback))
                     case .cancelled: self.finish(.failure(CancellationError()))
                     default: break
                     }
@@ -38,7 +54,12 @@ import StorebenchCore
                 server.start(queue: .main)
             }
         }, onCancel: { Task { @MainActor in self.cancel() } })
-        guard let number = server.port?.rawValue, number >= 1024 else { throw AIFailure.unavailable }
+        guard let number = server.port?.rawValue, number >= 1024 else { cancel(); throw AIFailure.signInCallback }
+        timeout?.cancel()
+        timeout = Task { [weak self] in
+            try? await Task.sleep(for: ChatGPTOAuth.signInLifetime)
+            if !Task.isCancelled { self?.finish(.failure(AIFailure.signInExpired)) }
+        }
         port = number; return URL(string: "http://127.0.0.1:\(number)/auth/callback")!
     }
     func wait() async throws -> URL {
@@ -50,7 +71,9 @@ import StorebenchCore
     func cancel() { finish(.failure(CancellationError())) }
     private func finish(_ value: Result<URL, Error>) {
         guard result == nil else { return }; result = value; timeout?.cancel(); listener?.cancel(); listener = nil
-        ready?.resume(throwing: AIFailure.cancelled); ready = nil
+        if case .failure(let error) = value { ready?.resume(throwing: error) }
+        else { ready?.resume() }
+        ready = nil
         waiter?.resume(with: value); waiter = nil
         for (connection, timeout) in connections.values { timeout.cancel(); connection.cancel() }; connections.removeAll()
     }

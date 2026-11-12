@@ -41,11 +41,11 @@ struct FastlaneMetadataCard: View {
                         }
                     }
                 }.frame(maxHeight: 320)
-                HStack {
-                    Button("Cancel") { if !working { self.preview = nil; archive = nil } }
+                StorebenchFormFooter {
                     if !preview.transfer.changes.isEmpty {
                         Button(working ? "Saving…" : "Import") { Task { await apply(preview) } }.buttonStyle(StorebenchButtonStyle(.primary))
                     }
+                    Button("Cancel") { if !working { self.preview = nil; archive = nil } }
                 }.storebenchWorking(working)
             }
         }

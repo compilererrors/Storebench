@@ -15,21 +15,22 @@ public struct RecoveryGuidance: Sendable {
         public var root: String { "/apps/\(accountId)/\(appId)" }
     }
     public struct Target: Sendable, Equatable {
-        public enum Area: String, Sendable { case overview, history, sales, analytics, finance, reviews, keywords, pricing, publishing, accounts, storage, unlock, developerAccount, help }
+        public enum Area: String, Sendable { case overview, history, sales, analytics, finance, reviews, keywords, pricing, publishing, release, appPrivacy, reviewInformation, accounts, storage, unlock, developerAccount, help }
         public let area: Area
         public let anchor, focus, accountRecovery, helpTopic: String?
         public let opensConnection, analyticsOngoing: Bool
-        public var requiresApp: Bool { switch area { case .overview, .history, .sales, .analytics, .finance, .reviews, .keywords, .pricing, .publishing: true; default: false } }
+        public var requiresApp: Bool { switch area { case .overview, .history, .sales, .analytics, .finance, .reviews, .keywords, .pricing, .publishing, .release, .appPrivacy, .reviewInformation: true; default: false } }
         public var section: AppNavigation.Section? {
             switch area {
             case .overview: .overview; case .history: .history; case .sales: .sales; case .analytics: .analytics
             case .finance: .finance; case .reviews: .reviews; case .keywords: .keywords; case .pricing: .pricing; case .publishing: .publish
+            case .appPrivacy: .appPrivacy; case .reviewInformation: .reviewInfo; case .release: .release
             default: nil
             }
         }
         /// Opens one app section, such as Pricing, with nothing focused in it.
         public static func open(_ area: Area) -> Self { Self(area: area, anchor: nil, focus: nil, accountRecovery: nil, helpTopic: nil, opensConnection: false, analyticsOngoing: false) }
-        /// Opens one app section scrolled to a card, such as App Privacy in App Store changes.
+        /// Opens one app section scrolled to its relevant card.
         public static func open(_ area: Area, anchor: String) -> Self { Self(area: area, anchor: anchor, focus: nil, accountRecovery: nil, helpTopic: nil, opensConnection: false, analyticsOngoing: false) }
         public func resolved(scope: Scope?) -> Action? {
             guard !requiresApp || scope != nil else { return nil }
@@ -81,6 +82,9 @@ public struct RecoveryGuidance: Sendable {
             case "/keywords": (area, anchor, reason, ongoing) = (.keywords, nil, nil, false)
             case "/pricing": (area, anchor, reason, ongoing) = (.pricing, nil, nil, false)
             case "/publish": (area, anchor, reason, ongoing) = (.publishing, nil, nil, false)
+            case "/release#release-version": (area, anchor, reason, ongoing) = (.release, "release-version", nil, false)
+            case "/app-privacy": (area, anchor, reason, ongoing) = (.appPrivacy, "app-privacy", nil, false)
+            case "/review-information": (area, anchor, reason, ongoing) = (.reviewInformation, nil, nil, false)
             case "/publish?scope=analytics-ongoing": (area, anchor, reason, ongoing) = (.publishing, nil, nil, true)
             case "/settings": (area, anchor, reason, ongoing) = (.storage, nil, nil, false)
             case "/settings/accounts?recovery=auth": (area, anchor, reason, ongoing) = (.accounts, nil, "auth", false)

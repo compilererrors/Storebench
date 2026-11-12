@@ -6,6 +6,7 @@ struct LibraryView: View {
     let model: LibraryModel
     init(accounts: [Account], model: LibraryModel, initialLocation: LibraryLocation = LibraryLocation()) {
         self.accounts = accounts; self.model = model
+        let initialLocation = initialLocation.normalized
         _selection = State(initialValue: initialLocation.selection)
         _appSection = State(initialValue: initialLocation.section)
         _editorContext = State(initialValue: initialLocation.context)
@@ -88,6 +89,7 @@ struct LibraryView: View {
         }
         .onDisappear { cancelOpening() }
         .onChange(of: location) { old, new in
+            guard new == location else { return }
             navigationPresentation.capture?()
             // The step Release opens on by itself belongs to the entry that opened it; each step chosen after that is its own entry.
             if old.releaseStep == nil, new.releaseStep != nil, old.sameView(new) { navigationHistory.replace(new) } else { navigationHistory.visit(new) }
@@ -165,12 +167,22 @@ struct LibraryView: View {
 
     private var location: LibraryLocation {
         LibraryLocation(selection: selection, section: appSection, context: editorContext, salesRange: portfolioRange, analyticsKind: analyticsKind, connecting: connecting,
-                        releaseStep: appSection == .release ? releaseStep : nil)
+                        releaseStep: releaseStep).normalized
+    }
+    /// An automatic opening choice belongs to the entry that opened the editor, including when it finishes after a read.
+    private func refineEditorContext(_ value: AppNavigation.Context?, account: Account, app: Account.App, section: AppNavigation.Section) {
+        guard selected?.0.id == account.id, selected?.1.id == app.id, appSection == section else { return }
+        let current = location
+        navigationPresentation.capture?()
+        navigationHistory.visit(current)
+        editorContext = value
+        navigationHistory.replace(location)
+        navigationPresentation.retain(navigationHistory.entryIDs)
     }
     private func navigateHistory(_ direction: NavigationHistory<LibraryLocation>.Direction) {
         cancelOpening(); navigationHistory.visit(location)
         guard let request = navigationHistory.request(direction), let session else { return }
-        let destination = request.destination
+        let destination = request.destination, sourceEntry = navigationHistory.currentID
         let configured = accounts.flatMap { account in account.apps.map { (account, $0) } }.first { "\($0.0.id)/\($0.1.id)" == destination.selection }
         let isLibrary = destination.selection?.hasPrefix("library:") == true
         guard isLibrary || configured != nil else { libraryMessage = "This app is no longer available. Refresh Apps before opening it."; return }
@@ -189,7 +201,7 @@ struct LibraryView: View {
                     try Task.checkCancellation(); try session.validateAccess()
                     guard model.session === session, navigationIntent.owns(ticket),
                           starting.allowsNavigation(after: protection?.policy.excluding(id: "library-navigation") ?? .init(), discardConfirmed: true),
-                          commitHistory(request) else { return }
+                          commitHistory(direction, destination: destination, sourceEntry: sourceEntry) else { return }
                     selection = destination.selection; appSection = destination.section; editorContext = destination.context
                     portfolioRange = destination.salesRange; analyticsKind = destination.analyticsKind; appRecovery = nil; connecting = destination.connecting; libraryMessage = ""
                     if destination.section == .release { releaseStep = destination.releaseStep }
@@ -200,7 +212,10 @@ struct LibraryView: View {
         }
     }
 
-    private func commitHistory(_ request: NavigationHistory<LibraryLocation>.Request) -> Bool {
+    private func commitHistory(_ direction: NavigationHistory<LibraryLocation>.Direction, destination: LibraryLocation, sourceEntry: UUID) -> Bool {
+        // A background opening choice may refine the source entry during validation. The exact source and target must still match.
+        guard navigationHistory.currentID == sourceEntry, navigationHistory.current == location,
+              let request = navigationHistory.request(direction), request.destination == destination else { return false }
         navigationPresentation.capture?()
         return navigationHistory.commit(request)
     }
@@ -221,6 +236,7 @@ struct LibraryView: View {
         } else if case .chooser(let section) = content {
             LibraryChooserView(model: model, section: section, navigationMessage: libraryMessage,
                 openApp: { destination in startOpening(destination.row, source: nil, section: destination.section) })
+                .storebenchControlID("library.chooser." + section.key)
         } else if content == .library(.overview) || content == .library(.history) {
             LibraryDashboardView(model: model, section: LibraryOverview.Section.selected(selection) ?? .overview, navigationMessage: libraryMessage,
                 openApp: { destination in startOpening(destination.row, source: nil, section: destination.section, plan: destination.plan) },
@@ -245,7 +261,9 @@ struct LibraryView: View {
                 guard selected?.0.id == account.id, selected?.1.id == app.id,
                       value == nil || value?.scope.accountId == account.id && value?.scope.appId == app.id else { return }
                 editorContext = value
-            }), initialSalesRange: portfolioRange, initialAnalyticsKind: analyticsKind, initialRecovery: appRecovery, accounts: accounts, switchApp: selectApp).id("\(account.id)/\(app.id)")
+            }), refineEditorContext: { value, section in refineEditorContext(value, account: account, app: app, section: section) },
+                initialSalesRange: portfolioRange, initialAnalyticsKind: analyticsKind, initialRecovery: appRecovery, accounts: accounts, switchApp: selectApp).id("\(account.id)/\(app.id)")
+                .storebenchControlID("library.app.\(account.id)/\(app.id).\(appSection.key)")
         } else {
             MessageView(title: "Choose an app", message: "Open Apps to choose from your connected Apple accounts.", action: ("Open Apps", { selectApp("library:apps") }))
         }
@@ -335,6 +353,22 @@ struct LibraryLocation: Equatable, Sendable {
     var analyticsKind: String?
     var connecting = false
     var releaseStep: String?
+    /// Only state displayed by this destination participates in history. A departing editor can clear its bindings later.
+    var normalized: Self {
+        var value = self
+        if value.selection == nil { value.selection = LibraryOverview.Section.overview.selection }
+        if value.selection?.hasPrefix("library:") == true {
+            value.section = .overview; value.context = nil
+        } else if let context = value.context {
+            if value.selection == context.scope.accountId + "/" + context.scope.appId {
+                value.context = context.forSection(value.section, scope: context.scope)
+            } else { value.context = nil }
+        }
+        if value.section != .sales { value.salesRange = nil }
+        if value.section != .analytics { value.analyticsKind = nil }
+        if value.section != .release { value.releaseStep = nil }
+        return value
+    }
     func sameView(_ other: LibraryLocation) -> Bool {
         var a = self, b = other; a.releaseStep = nil; b.releaseStep = nil; return a == b
     }

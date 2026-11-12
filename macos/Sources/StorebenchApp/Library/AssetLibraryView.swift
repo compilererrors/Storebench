@@ -69,7 +69,7 @@ struct AssetLibraryView: View {
     private var groupPlacements: [AssetLibrary.Placement] { placements.filter { $0.group == group } }
     private var rows: [AssetLibraryTable.Row] { AssetLibraryTable.rows(snapshot?.assets ?? [], catalog: snapshot?.catalog, observations: observations) }
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             Card(title: "Asset Library", subtitle: "Upload originals once, reuse them across languages and App Store surfaces, and follow processing and review. Apple changes open a concrete review in App Store changes.", help: "media") {
                 StorebenchActionGroup {
                     StorebenchReadButton("Refresh") { await refresh(fresh: true) }.storebenchWorking(working)
@@ -78,7 +78,7 @@ struct AssetLibraryView: View {
                 if !fresh && !working { Text(snapshot == nil ? "Apple's library has not been read. Saved local files remain available." : "The displayed Apple library could not be refreshed. Read it again before preparing changes.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
                 StorebenchFeedback(text: status, height: 56)
                 RecoveryActions(code: issueCode)
-                if let prepared { Button("Open Review") { _ = openReview(prepared) }.help("Open Prepared Review").accessibilityLabel("Open Prepared Review").storebenchWorking(working) }
+                if let prepared { StorebenchActionGroup { Button("Open Review") { _ = openReview(prepared) }.help("Open Prepared Review").accessibilityLabel("Open Prepared Review").storebenchWorking(working) } }
             }
             localFilesCard
             DisclosureGroup("Creative assets for header and search") {
@@ -140,16 +140,14 @@ struct AssetLibraryView: View {
                         if file.kind == .image {
                             LocalLibraryThumbnail(accountId: account.id, appId: app.id, file: file, session: session).accessibilityLabel(file.fileName)
                         } else {
-                            Button { playbackBusy = false; playingFile = file } label: {
+                            StorebenchMediaButton(title: "Play " + file.fileName, action: { playbackBusy = false; playingFile = file }) {
                                 VStack(spacing: StorebenchTheme.space(3)) {
                                     StorebenchIcon(name: "play", size: 32)
                                     Text("Play video").font(.sbHeadline)
                                     if let duration = file.duration { Text(duration.formatted(.number.precision(.fractionLength(1))) + " seconds").font(.sbCaption) }
                                 }.frame(maxWidth: .infinity).frame(height: StorebenchTheme.measure("assetPreviewHeight") - 2 * StorebenchTheme.measure("assetPreviewPadding"))
                                     .foregroundStyle(StorebenchTheme.color("color-accent-muted")).contentShape(Rectangle())
-                                    .overlay(StorebenchControlOutline(border: .clear))
-                            }.buttonStyle(StorebenchPressStyle()).help("Play " + file.fileName).accessibilityLabel("Play " + file.fileName)
-                                .storebenchWorking(working || session == nil)
+                            }.storebenchWorking(working || session == nil)
                         }
                     } actions: {
                         VStack(alignment: .leading, spacing: StorebenchTheme.space(2)) {
@@ -226,7 +224,7 @@ struct AssetLibraryView: View {
             }.storebenchWorking(working)
             if let target {
                 Text(target.editable ? "Editable destination · current placements below." : target.liveCreative ? "Live version · approved creative assets can be placed or removed after Publish approval. Screenshots and previews need an editable version." : "This destination is not editable. Choose another destination to change placements.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
-                Button("Refresh Placements") { Task { await readPlacements(fresh: true) } }.storebenchWorking(working)
+                StorebenchActionGroup { Button("Refresh Placements") { Task { await readPlacements(fresh: true) } }.storebenchWorking(working) }
             }
             StorebenchPicker("Compatible placement for selected asset", selection: $slotId) {
                 SelectionOption("Choose a placement", value: ""); selectionOptions(slots) { SelectionOption("\($0.label) · maximum \($0.limit)", value: $0.id) }
@@ -270,7 +268,7 @@ struct AssetLibraryView: View {
             if let orderEditor {
                 AssetLibraryOrderView(editor: orderEditor, account: account, appId: app.id, placements: groupPlacements, assets: snapshot?.assets ?? [], session: session,
                     editable: !working && target?.editable == true, fresh: fresh && targetFresh, prepare: prepare)
-            } else if !group.isEmpty && targetFresh { Button(orderLoading ? "Reading…" : "Read Local Order") { Task { await loadOrder() } }.storebenchWorking(operationBusy) }
+            } else if !group.isEmpty && targetFresh { StorebenchActionGroup { Button(orderLoading ? "Reading…" : "Read Local Order") { Task { await loadOrder() } }.storebenchWorking(operationBusy) } }
         }
     }
     private var submissionCard: some View {

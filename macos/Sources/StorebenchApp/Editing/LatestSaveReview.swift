@@ -129,10 +129,13 @@ struct PricingInputFields: View {
                 VStack(spacing: StorebenchTheme.space(2)) {
                     ForEach(values) { $row in
                         let taken = Set(values.wrappedValue.filter { $0.id != row.id }.map(\.territory) + (exclude.map { [$0] } ?? []))
-                        HStack(alignment: .center, spacing: StorebenchTheme.space(2)) {
-                            StorebenchSearchPicker("Country", selection: $row.territory) { Self.territories(including: row.territory).filter { !taken.contains($0.value) } }.labelsHidden()
-                            StorebenchTextField(kind == .index ? "Value" : "Percent", text: $row.percentage).labelsHidden().frame(width: 96)
-                            if !unit.isEmpty { Text(unit).font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
+                        StorebenchActionRow {
+                            HStack(alignment: .center, spacing: StorebenchTheme.space(2)) {
+                                StorebenchSearchPicker("Country", selection: $row.territory) { Self.territories(including: row.territory).filter { !taken.contains($0.value) } }.labelsHidden()
+                                StorebenchTextField(kind == .index ? "Value" : "Percent", text: $row.percentage).labelsHidden().frame(width: 96)
+                                if !unit.isEmpty { Text(unit).font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
+                            }
+                        } actions: {
                             Button { values.wrappedValue.removeAll { $0.id == row.id } } label: { StorebenchIcon(name: "close", size: 14) }
                                 .buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).help("Remove Country").accessibilityLabel("Remove " + WorkspaceSession.countryName(row.territory))
                         }

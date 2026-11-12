@@ -61,7 +61,7 @@ struct TestFlightGroupsView: View {
         if selected != nil { Task { await loadMembers() } }
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             Card(title: title, subtitle: subtitle, help: "testflight") {
                 StorebenchCollection(items: shown, title: { $0.name }, subtitle: summary, empty: status.isEmpty ? "No groups yet. Create one below." : status) { group in
                     StorebenchFormFooter {
@@ -123,14 +123,16 @@ struct TestFlightGroupsView: View {
             } actions: {
                 if !rename.trimmingCharacters(in: .whitespaces).isEmpty && rename != group.name { Button("Sync Name") { Task { await prepare { $0.testflightAction = "rename-group"; $0.groupId = group.id; $0.groupName = rename } } }.fixedSize() }
             }
-            HStack(spacing: 12) {
+            StorebenchActionRow {
                 Text("Tester feedback: \(group.feedbackEnabled == true ? "On" : group.feedbackEnabled == false ? "Off" : "Unknown")")
-                Button(group.feedbackEnabled == true ? "Turn Off Feedback" : "Turn On Feedback") { Task { await setting(group, "feedback", .bool(group.feedbackEnabled != true)) } }.fixedSize()
+            } actions: {
+                Button(group.feedbackEnabled == true ? "Turn Off Feedback" : "Turn On Feedback") { Task { await setting(group, "feedback", .bool(group.feedbackEnabled != true)) } }
             }
             if group.internalGroup == false {
-                HStack(spacing: 12) {
+                StorebenchActionRow {
                     Text("Public link: \(group.publicLinkEnabled == true ? "On" : "Off")")
-                    Button(group.publicLinkEnabled == true ? "Disable Public Link" : "Enable Public Link") { Task { await setting(group, "public-link", .bool(group.publicLinkEnabled != true)) } }.fixedSize()
+                } actions: {
+                    Button(group.publicLinkEnabled == true ? "Disable Public Link" : "Enable Public Link") { Task { await setting(group, "public-link", .bool(group.publicLinkEnabled != true)) } }
                 }
                 if let link = group.publicLink, group.publicLinkEnabled == true { Text(link).font(.sbCallout).textSelection(.enabled) }
                 StorebenchInputActions {
@@ -144,10 +146,10 @@ struct TestFlightGroupsView: View {
                 Text("Builds").font(.sbHeadline)
                 if members.builds.isEmpty { Text("No builds assigned.").foregroundStyle(StorebenchTheme.muted) }
                 ForEach(members.builds, id: \.self) { id in
-                    HStack {
+                    StorebenchActionRow {
                         Text(builds.first { $0.id == id }?.title ?? "Build \(id)")
-                        Spacer()
-                        Button("Remove Access", role: .destructive) { Task { await prepare(buildId: id) { $0.testflightAction = "remove-build"; $0.groupId = group.id } } }.buttonStyle(StorebenchButtonStyle(.quiet)).fixedSize()
+                    } actions: {
+                        Button("Remove Access", role: .destructive) { Task { await prepare(buildId: id) { $0.testflightAction = "remove-build"; $0.groupId = group.id } } }.buttonStyle(StorebenchButtonStyle(.quiet))
                     }
                 }
                 StorebenchInputActions {
@@ -177,7 +179,7 @@ struct TestFlightGroupsView: View {
                 }
             } else if memberState == "failed" {
                 Text("Group access could not be confirmed. Reload before choosing a build or tester.").foregroundStyle(StorebenchTheme.muted)
-                StorebenchReadButton("Reload Group") { await loadMembers() }.fixedSize()
+                StorebenchActionGroup { StorebenchReadButton("Reload Group") { await loadMembers() } }
             } else {
                 Group {
                     Text("Builds").font(.sbHeadline)

@@ -37,6 +37,23 @@ import Testing
         #expect(language.media[0].previews.count == PreviewSpecs.types(platform: "IOS").count && language.media[0].previews.allSatisfy { $0.editor.draft != nil })
         let request = try model.publishingRequest(); #expect(request.revisionId == saved.sourceRevisionId && request.versionId == saved.baseVersionId && request.targetMode == "release-plan")
     }
+
+    @Test func languageTextCanPrepareWithNoScreenshotsAndAnUnfinishedOtherLanguage() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let plan = try await plan(session), model = try VersionListingEditor(planEditor: plan, session: session)
+        await model.load(); #expect(await model.addLanguage("en-GB")); #expect(await model.addLanguage("sv"))
+        let british = try #require(model.languages.first { $0.locale == "en-GB" }), swedish = try #require(model.languages.first { $0.locale == "sv" })
+        try british.text.change(textField(british), to: "Synthetic British description")
+        try swedish.text.change(textField(swedish), to: String(repeating: "x", count: 4001))
+        #expect(british.media.allSatisfy { $0.screenshots.allSatisfy { $0.editor.included == 0 } })
+        var request: PublishRequest?
+        let result = await british.text.runText(prepare: { request = try british.text.publishingRequest(targetMode: "release-plan") })
+        #expect(result.reviewReady && result.saves == 1 && british.text.publishingReady)
+        #expect(request?.listingLocale == "en-GB" && swedish.text.dirty && !model.workflow.ready)
+        #expect(!british.text.dirty && british.media.allSatisfy { !$0.dirty })
+        plan.inputs.targetVersion = "3.0"
+        #expect((await british.text.runText(prepare: {})).failure == .blocked, "A partial save still respects an unsaved version plan")
+    }
     @Test func copiedListingKeepsPreviousTextAndScreenshotsAndSavesReorderRemovalAndNewFilesLocally() async throws {
         let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
         let account = try #require(try await session.accounts().first), sourceOwner = try await plan(session), source = try #require(sourceOwner.plan)
@@ -240,4 +257,28 @@ import Testing
         #expect(!destination.text.reconcile(foreign)); #expect(!destination.text.needsComparison)
         #expect(!destination.text.reconcile(receipt)); #expect(destination.text.needsComparison && model.workflow.blocked)
     }
+
+    @Test func aLanguageAddedOnThisMacCanBeRemovedWithoutTouchingOtherLanguages() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let plan = try await plan(session), model = try VersionListingEditor(planEditor: plan, session: session)
+        await model.load(); #expect(await model.addLanguage("en-GB")); #expect(await model.addLanguage("sv"))
+        let british = try #require(model.languages.first { $0.locale == "en-GB" }), swedish = try #require(model.languages.first { $0.locale == "sv" })
+        try british.text.change(textField(british), to: "Synthetic British description")
+        try swedish.text.change(textField(swedish), to: "Synthetic Swedish description")
+        #expect(model.localOnlyLocalization("en-US") == nil && model.localOnlyLocalization("sv") != nil)
+        #expect(!(await model.removeLanguage("en-US")), "A language from the imported version stays")
+        #expect(await model.removeLanguage("sv"))
+        #expect(model.languages.map(\.locale).sorted() == ["en-GB", "en-US"] && !swedish.text.active)
+        #expect(model.version?.localizations.contains { $0.locale == "sv" } == false && model.availableLocales.contains("sv"))
+        let britishField = try textField(british)
+        #expect(british.text.active && british.text.dirty && british.text.editor?.value(britishField) == "Synthetic British description")
+        let saved = try #require(plan.plan)
+        let key = "\(saved.accountId):\(saved.appId):\(saved.sourceRevisionId)"
+        let draft = try #require(try await session.storeAccess { @Sendable store in
+            try store.document(namespace: "drafts", key: key).map { try JSONText.parse($0.payload) }
+        })
+        #expect(!draft.stringify().contains("Synthetic Swedish description") && !draft.stringify().contains("local-app-info-sv"))
+        #expect(await model.addLanguage("sv"), "The removed language can be added again")
+    }
 }
+

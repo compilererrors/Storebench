@@ -25,10 +25,12 @@ struct ReleaseWizardView: View {
     @State private var focus: ReleaseWizard.Focus?
     @State private var focusedLocale: String?
     @State private var fieldFocus: ReleaseFieldFocus?
+    @State private var focusScrollTask: Task<Void, Never>?
     @State private var submitBuildId: String?
     /// Counts the needs-action row's Add Build clicks; the Build step prepares that review in place.
     @State private var addBuildRequests = 0
     @State private var operation: Task<Void, Never>?
+    @State private var pageRefresh = EditorRefresh()
     /// Reads the listing editors for the plan it was started for; leaving the step does not stop it.
     @State private var listingWarm: (plan: String, task: Task<Void, Never>)?
     @Environment(\.readyReviews) private var readyReviews
@@ -37,15 +39,26 @@ struct ReleaseWizardView: View {
     @Environment(\.recoveryNavigation) private var recoveryNavigation
     /// Counts presses of the step's Add for Review command, which the Add for Review panel answers in place.
     @State private var submitRequests = 0
+    @State private var submissionBusy = false
+    @State private var appleIDForm: AppleProblem.Area?
+    @State private var returningToSubmission = false
+    @State private var changingSubmission = false
+    /// A scoped publishing read can confirm submission before the larger checklist finishes refreshing.
+    @State private var observedVersion: PublishingWorkspace.Version?
     @Environment(\.releaseStepHistory) private var stepHistory
     @Environment(\.navigationPresentation) private var presentation
     private var identity: String { JSONText.array([.string(account.id), .string(app.id)]).stringify() }
     private var confirmedPlan: String? { model.flatMap { $0.ready && !$0.dirty ? $0.expected : nil } }
     private var settled: Bool { model != nil && (initialDecided || phaseChosen) }
+    private var currentGuide: ReleaseGuide.Guide {
+        let snapshot = readiness?.snapshot
+        let state = observedVersion.flatMap { $0.id == snapshot?.targetVersionId ? $0.state : nil } ?? snapshot?.targetState
+        return ReleaseGuide.guide(snapshot?.steps, appleState: state)
+    }
 
     var body: some View {
         Group {
-            let guide = ReleaseGuide.guide(readiness?.snapshot?.steps, appleState: readiness?.snapshot?.targetState)
+            let guide = currentGuide
             ReleaseWizardLayout {
                 // Real step names at once; statuses follow from the saved status or the first check.
                 // Only a saved plan is checked against App Store Connect; with no version started the steps show where to begin.
@@ -57,17 +70,29 @@ struct ReleaseWizardView: View {
         .environment(\.releaseStepNavigation, { go($0) })
         .environment(\.releaseFieldFocus, fieldFocus)
         .environment(\.releaseChecklistReturn, { backToChecklist() })
+        .environment(\.pageRefresh, PageRefreshContext(owner: pageRefresh, scope: phase))
+        .sheet(isPresented: Binding(get: { pageRefresh.confirmation != nil }, set: { if !$0 && pageRefresh.confirmation != nil { pageRefresh.cancel() } })) {
+            if let confirmation = pageRefresh.confirmation {
+                PageRefreshConfirmation(confirmation: confirmation) { choice in
+                    if choice == .cancel { pageRefresh.cancel() }
+                    else { operation = Task { await refreshStep(choice) } }
+                }
+            }
+        }
+        .shortcutAction(.refresh, enabled: model?.plan != nil && !pageRefresh.busy && readiness?.busy != true && protection?.policy.navigationDecision != .wait, priority: 20, identity: identity + "/" + phase) { requestStepRefresh() }
         // Every save of the listing checks the step again, so the list matches what is saved.
-        .onChange(of: listing?.dirty) { was, now in if was == true, now == false { recheck() } }
+        .onChange(of: listing?.workflow.shown.dirty) { was, now in if was == true, now == false { recheck() } }
         .task(id: identity) {
             // Back and Forward reopen the step that was open in that history entry.
             if let saved = stepHistory?.wrappedValue, ReleaseWizard.phaseIds.contains(saved), !phaseChosen { phase = saved; phaseChosen = true }
             await load()
         }
-        .onChange(of: continueRequests) { go(ReleaseWizard.initialPhase(ReleaseGuide.guide(readiness?.snapshot?.steps, appleState: readiness?.snapshot?.targetState))) }
+        .onChange(of: continueRequests) { go(ReleaseWizard.initialPhase(currentGuide)) }
         .onChange(of: settled ? phase : nil) { _, shown in if let shown, stepHistory?.wrappedValue != shown { stepHistory?.wrappedValue = shown } }
+        .onChange(of: readiness?.snapshot?.targetState) { old, _ in if old != nil { observedVersion = nil } }
+        .onChange(of: readiness?.snapshot?.targetVersionId) { _, id in if id != observedVersion?.id { observedVersion = nil } }
         // Background status reads continue with the parts the open step shows.
-        .onChange(of: phase) { _, shown in readiness?.focus = ReleaseWizard.reads(shown) }
+        .onChange(of: phase) { _, shown in pageRefresh.cancel(); readiness?.focus = ReleaseWizard.reads(shown) }
         .onChange(of: stepHistory?.wrappedValue) { _, saved in
             guard let saved, saved != phase, ReleaseWizard.phaseIds.contains(saved) else { return }
             phaseChosen = true; phase = saved; focus = nil; fieldFocus = nil
@@ -86,7 +111,8 @@ struct ReleaseWizardView: View {
         // Each confirmed check, failure or Apple state change schedules the next automatic check.
         .task(id: "\(confirmedPlan ?? "")/\(readiness?.snapshot?.targetState ?? "")/\(readiness?.checkedAt?.timeIntervalSince1970 ?? 0)/\(readiness?.failures ?? 0)") { await syncStatus() }
         .onDisappear {
-            loadTicket = nil; loading = false; operation?.cancel(); listingWarm?.task.cancel(); listingWarm = nil; listing?.retire(); readiness?.retire(); model?.retire()
+            focusScrollTask?.cancel()
+            pageRefresh.cancel(); loadTicket = nil; loading = false; operation?.cancel(); listingWarm?.task.cancel(); listingWarm = nil; listing?.retire(); readiness?.retire(); model?.retire()
             protection?.remove(id: protectionId)
         }
     }
@@ -95,9 +121,14 @@ struct ReleaseWizardView: View {
 
     @ViewBuilder private func pane(guide: ReleaseGuide.Guide) -> some View {
         let current = guide.phases.first { $0.id == phase } ?? guide.phases[0]
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             heading(current, guide: guide).id("release-step-heading")
-            if let model, settled { content(current, guide: guide, model: model).id("release-phase-\(current.id)") }
+            if returningToSubmission, phase != "submit" {
+                Card(title: "Continue Add for Review", subtitle: "This step was opened from the submission checklist. Save and sync the change here, then return to check what remains.") {
+                    StorebenchFormFooter { Button("Back to Review") { returningToSubmission = false; go("submit") }.help("Return to Add for Review for this same version") }
+                }
+            }
+            if let model, settled { content(current, guide: guide, model: model).id("release-phase-\(current.id)").storebenchWorking(pageRefresh.busy) }
             else { placeholderContent(current).id("release-phase-\(current.id)") }
             navigation(current, guide: guide)
         }.frame(maxWidth: .infinity, alignment: .leading)
@@ -114,9 +145,10 @@ struct ReleaseWizardView: View {
         // Every step can read App Store Connect again, for example after a build is uploaded with Transporter or Xcode.
         // It is dimmed until a saved version exists, and shows its spinner while it checks.
         return Card(title: "Step \(current.number) of \(guide.phases.count): \(current.title)", subtitle: current.purpose, help: "versions",
-             actions: AnyView(StorebenchBusyButton(title: "Refresh Status", loadingTitle: "Checking…", busy: readiness?.busy == true) { operation = Task { await refreshStatus(initial: false, fresh: true) } }
-                .storebenchWorking(model?.plan == nil || reserving).help(model?.plan == nil ? "Create the new version first" : "Check this version against App Store Connect again"))) {
-            let missing = ReleaseWizard.missing(current)
+             actions: AnyView(StorebenchBusyButton(title: "Refresh Status", loadingTitle: "Refreshing…", busy: readiness?.busy == true || pageRefresh.busy) { requestStepRefresh() }
+                .storebenchControlID("release.refresh-status")
+                .storebenchWorking(model?.plan == nil || reserving || protection?.policy.navigationDecision == .wait).help(model?.plan == nil ? "Create the new version first" : "Refresh this step’s checklist, cards and sync comparison with App Store Connect"))) {
+            let missing = current.id == "submit" ? ReleaseWizard.submissionProblems(guide) : ReleaseWizard.missing(current)
             if reserving {
                 StorebenchLoadingStatus(message: model == nil ? "Reading the saved version plan…" : "Checking this step against App Store Connect…", surface: false)
             } else if model?.plan == nil && current.id != "plan" {
@@ -131,7 +163,7 @@ struct ReleaseWizardView: View {
             } else if !missing.isEmpty {
                 StorebenchNotice(title: missing.count == 1 ? "1 thing still needed" : "\(missing.count) things still needed",
                                  description: missing.count == 1 ? "Fix it below, then continue with Next." : "Fix them below, then continue with Next.", icon: "warning") { EmptyView() }
-                if let readiness { ReleaseCheckList(steps: missing.map(ReleaseWizard.presented), ready: readiness.ready, open: { open($0) }, fix: { fix($0, $1) },
+                if let readiness { ReleaseCheckList(steps: missing.map(ReleaseWizard.presented), ready: readiness.ready, open: { openRequirement($0) }, fix: { openRequirement($0, issue: $1) },
                                                        actionable: { !opensBelow($0, in: current.id) }) }
             } else if current.status == .done {
                 StorebenchNotice(title: "This step is done", description: "Continue with Next.", icon: "check") { EmptyView() }
@@ -139,11 +171,11 @@ struct ReleaseWizardView: View {
             // Edits here stay on this Mac; say so where they are made, with the one step that sends them.
             if current.id == "listing", !reserving, !current.locked, let send = guide.phases.first(where: { $0.id == "send" }), !send.locked,
                send.steps.contains(where: { $0.state == .blocked && $0.id != "version" }) || send.status == .current {
-                StorebenchStepLink(sentence: "Saved on this Mac only. Screenshots go to App Store Connect with Save to App Previews and Screenshots below; text when you save it in step \(send.number).",
+                StorebenchStepLink(sentence: "Save Draft keeps changes on this Mac. Sync to Apple here reviews one part; step \(send.number) reviews all remaining text and media. Matching content is not sent again.",
                                    phaseNumber: send.number, phaseTitle: send.title)
             }
-            if let readiness, !readiness.status.isEmpty, model?.plan != nil {
-                StorebenchTextSlot(text: readiness.status, height: 40, font: .sbCallout, color: StorebenchTheme.muted, live: true)
+            if model?.plan != nil {
+                StorebenchFeedback(text: pageRefresh.status.isEmpty ? readiness?.status ?? "" : pageRefresh.status, height: 40, error: pageRefresh.failed)
             }
             if model?.plan != nil {
                 StorebenchTextSlot(text: freshness, height: 20, font: .sbCaption, color: StorebenchTheme.muted, live: true)
@@ -153,15 +185,18 @@ struct ReleaseWizardView: View {
     @ViewBuilder private func content(_ current: ReleaseGuide.Phase, guide: ReleaseGuide.Guide, model: ReleasePlanEditor) -> some View {
         switch current.id {
         case "plan":
+            if let snapshot = readiness?.snapshot { ReleaseCreationNotice(snapshot: snapshot) }
             VersionPlanCard(model: model, history: history, availability: availability, protectionId: protectionId, didSave: { creating in
                 guard let session else { return }
                 availability = await session.newVersionAvailability(accountId: account.id, appId: app.id)
                 if !model.dirty { changed() }
                 if creating { go("listing") }
-            }, sync: { go("send") })
+            }, sync: { go("send") }).id("release-version")
         case "listing":
             if let saved = model.plan, let listing, listing.active, listing.scope.revisionId == saved.sourceRevisionId, listing.versionId == saved.baseVersionId {
-                VersionListingView(account: account, planEditor: model, session: session, focusedLocale: $focusedLocale, providedModel: listing, didSync: { afterApple() })
+                VersionListingView(account: account, planEditor: model, session: session, focusedLocale: $focusedLocale, providedModel: listing, didSync: { afterApple() }, didCheck: {
+                    operation = Task { await refreshStatus(initial: false, full: true) }
+                })
                 .id("version-listing-\(saved.accountId)/\(saved.appId)/\(saved.sourceRevisionId)/\(saved.baseVersionId)")
             } else if model.plan != nil {
                 StorebenchLoadState(state: .loading("Reading planned listing…")) { EmptyView() } placeholder: { StorebenchCollectionPlaceholder(rows: 3) }
@@ -174,14 +209,15 @@ struct ReleaseWizardView: View {
                      : "Apple has this version's text and screenshots from its submission. Inputs on this Mac stay in their editors.") { EmptyView() }
                 removeFromReview(current, guide: guide)
             } else if let snapshot = readiness?.snapshot {
-                let scope = focusScope ?? ReleaseWizard.sendScope(current)
-                // Screenshots and app previews are saved in step 2; this Save sends the version's text and copyright.
+                let scope = ReleaseWizard.sendScope(current, preferred: focusScope)
                 PublishActionPanel(account: account, app: app, session: session, actions: [.release, .metadata, .copyright],
-                                   initialRequest: scope == .metadata ? stageRequest(snapshot, PublishRequest.textStage) : request(scope, snapshot: snapshot), automatic: true,
-                                   guided: (scope == .release ? "Create the version in App Store Connect" : "Save to App Store Connect",
+                                   initialRequest: request(scope, snapshot: snapshot), automatic: true,
+                                   guided: (scope == .release ? "Create the Version" : scope == .versionCopyright ? "Copyright" : "Sync Remaining Changes",
                                             scope == .release ? "Creates the version with its release option. Its text follows in the next review on this step, and its screenshots in step 2. Nothing is sent until you approve."
-                                                              : "Saves this version's text and copyright. Screenshots and app previews are saved in step 2."),
-                                   fix: { fix(check: $0, in: guide) }, done: { _ in afterApple() })
+                                                : scope == .versionCopyright ? "Enter the year and rights holder for this version. Review and sync Copyright here before submitting."
+                                                              : "Compares saved text, screenshots and app previews with Apple. Only remaining differences are included; earlier syncs are not repeated."),
+                                   refreshKey: "material:" + snapshot.materialSignature,
+                                   fix: { fix(check: $0, in: guide) }, checked: { recheck() }, done: { _ in afterApple() })
                     .id("send-\(scope.rawValue)")
                 ReleaseRecentSaves(account: account, app: app, session: session, scopes: [.release, .metadata, .versionCopyright])
             } else if model.plan != nil { statusPending }
@@ -208,49 +244,7 @@ struct ReleaseWizardView: View {
                 }
             } else if model.plan != nil { statusPending }
         case "submit":
-            let information = informationParts(current)
-            if !information.isEmpty { AppInformationView(account: account, app: app, session: session, parts: information, changed: { afterApple() }) }
-            if let snapshot = readiness?.snapshot {
-                if snapshot.targetVersionId == nil {
-                    StorebenchStepLink(sentence: "Save the version to App Store Connect first. Only a version that exists there can be added for review.", phaseNumber: 3, phaseTitle: "Save to App Store Connect")
-                } else {
-                    let submitted = current.steps.contains { $0.id == "submission" && [.ready, .waiting].contains($0.state) }
-                    // A build Apple already has for the version is submitted with it; only a missing one sends you back to Build.
-                    let attached = snapshot.steps.contains { $0.id == "build" && $0.state == .ready }
-                    // An unfinished earlier step is named above Add for Review, which stays in place: Apple's own check then says exactly what is missing.
-                    if !submitted, let earlier = ReleaseWizard.unfinished(before: "submit", in: guide) {
-                        StorebenchStepLink(sentence: "An earlier step may not be finished. Apple refuses to add a version for review while anything is missing; check",
-                                           phaseNumber: earlier.number, phaseTitle: earlier.title)
-                    }
-                    Group {
-                        if !submitted && submitBuildId == nil && !attached {
-                            StorebenchStepLink(sentence: "Choose the build for this version first.", phaseNumber: 4, phaseTitle: "Build")
-                        }
-                        if submitted && guide.removable {
-                            // As in App Store Connect, a new build needs the version removed from review first.
-                            StorebenchStepLink(sentence: "To submit a new build, remove this version from review with Cancel Submission below. Then choose the build in", phaseNumber: 4, phaseTitle: "Build")
-                        }
-                        PublishActionPanel(account: account, app: app, session: session, actions: submitted ? [.cancel] : [.submit],
-                                           initialRequest: request(submitted ? .cancelSubmission : .submit, snapshot: snapshot), automatic: true,
-                                           guided: (submitted ? "Cancel Submission" : "Add for Review", PublishActionPanel.purpose(submitted ? .cancel : .submit)), fix: { fix(check: $0, in: guide) }, trigger: submitted ? 0 : submitRequests, done: { review in
-                                            afterApple()
-                                            // Once the version is out of review, its build can be changed in Build.
-                                            if submitted, review?.state == "complete" { go("build") }
-                                           })
-                            .id("submit-\(submitted)-\(submitBuildId ?? "")")
-                    }
-                }
-                // Once the version is with App Review these answers are settled; the card helps only before submitting.
-                if !current.steps.contains(where: { $0.id == "submission" && [.ready, .waiting].contains($0.state) }) {
-                    // Each section with what App Store Connect showed at the last read: done in green, its command kept for changes.
-                    Card(title: "App Privacy and Tax Category", subtitle: "Answered in App Store changes with an Apple ID, because the API key cannot set them. They are usually answered once, before an app's first version.") {
-                        StorebenchStatusList {
-                            appleIDSection(snapshot.steps.first { $0.id == "privacy" }, title: "App Privacy", command: "Answer App Privacy", anchor: "app-privacy")
-                            appleIDSection(snapshot.steps.first { $0.id == "tax" }, title: "Tax Category", command: "Choose Tax Category", anchor: "tax-category", separator: false)
-                        }
-                    }
-                }
-            } else if model.plan != nil { statusPending }
+            submissionContent(current, guide: guide)
         default:
             if let snapshot = readiness?.snapshot, snapshot.targetVersionId != nil {
                 // Only a version Apple holds for a manual release can be released here.
@@ -267,6 +261,61 @@ struct ReleaseWizardView: View {
                 }
             } else if model.plan != nil { statusPending }
         }
+    }
+    /// One submission workspace: remaining requirements, their forms, then the guarded submission review.
+    @ViewBuilder private func submissionContent(_ current: ReleaseGuide.Phase, guide: ReleaseGuide.Guide) -> some View {
+        if let snapshot = readiness?.snapshot {
+            if guide.submitted {
+                ReleaseSubmittedStatus(version: "\(Releases.platformName(snapshot.plan.platform)) \(snapshot.plan.targetVersion)", state: guide.appleState ?? "")
+                if guide.removable {
+                    DisclosureGroup("Change Submitted Version", isExpanded: $changingSubmission) {
+                        if changingSubmission { removeFromReview(current, guide: guide) }
+                    }
+                }
+            } else {
+                let information = informationParts(current)
+                if !information.isEmpty { AppInformationView(account: account, app: app, session: session, parts: information, changed: { afterApple() }) }
+                if let area = appleIDForm {
+                    VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
+                        StorebenchEditorGuide(title: area.title, detail: "Complete this form for the same app without leaving Release.",
+                            hint: area == .privacy ? "Publish the answers after reviewing them. Done saves unfinished local answers and returns to Add for Review; it never publishes them."
+                                : "Sync the chosen category after reviewing it. Done returns to Add for Review; it never approves an Apple change.", identifier: "release.apple-id-editor") {
+                            Button("Done") { finishAppleIDForm() }.storebenchControlID("release.apple-id-done")
+                        }
+                        AppPrivacyView(account: account, app: app, session: session, done: { afterApple() }, sections: [area], showsPolicy: false)
+                    }.id("release-apple-id-form")
+                }
+                Card(title: "App Privacy and Tax Category", subtitle: "These answers belong to this app across its versions. Open a form here to complete or change it, then return to the submission.") {
+                    StorebenchStatusList {
+                        appleIDSection(snapshot.steps.first { $0.id == "privacy" }, title: "App Privacy", command: "Answer App Privacy", anchor: "app-privacy")
+                        appleIDSection(snapshot.steps.first { $0.id == "tax" }, title: "Tax Category", command: "Choose Tax Category", anchor: "tax-category", separator: false)
+                    }
+                }
+                if snapshot.targetVersionId == nil {
+                    StorebenchStepLink(sentence: "Save the version to App Store Connect first. Only a version that exists there can be added for review.", phaseNumber: 3, phaseTitle: "Save to App Store Connect")
+                } else {
+                    PublishActionPanel(account: account, app: app, session: session, actions: [.submit],
+                        initialRequest: request(.submit, snapshot: snapshot), automatic: true,
+                        guided: ("Add for Review", PublishActionPanel.purpose(.submit)),
+                        refreshKey: "submission:" + ReleaseWizard.submissionBasis(snapshot),
+                        fix: { fix(check: $0, in: guide) }, checked: { recheck() }, trigger: submitRequests,
+                        busyChanged: { submissionBusy = $0 }, versionChanged: { version in
+                            guard version.id == snapshot.targetVersionId, ReleaseGuide.guide([], appleState: version.state).submitted else { return }
+                            observedVersion = version
+                        }, done: { _ in afterApple() })
+                        .id("submit-\(snapshot.targetVersionId ?? "")-\(submitBuildId ?? "")")
+                        .id("release-submission-review")
+                }
+            }
+        } else if model?.plan != nil { statusPending }
+    }
+    private func finishAppleIDForm() {
+        let finish: @MainActor () -> Void = {
+            appleIDForm = nil
+            operation = Task { await refreshStatus(initial: false, fresh: true, full: true) }
+            scrollTo("release-step-heading", .top)
+        }
+        if let protection { protection.saveAndContinue(finish) } else { finish() }
     }
     /// What happens after approval for the chosen App Store Version Release option.
     static func afterReview(_ releaseType: String?) -> String {
@@ -302,11 +351,20 @@ struct ReleaseWizardView: View {
         return StorebenchActionGroup(alignment: .trailing) {
             if let previous { Button("Back") { go(previous) }.help("Back to " + title(previous)) }
             // Add for Review is this step's work, so it is the step's main command; Next stays beside it.
-            let submitting = current.id == "submit" && !current.steps.contains { $0.id == "submission" && [.ready, .waiting].contains($0.state) } && readiness?.snapshot?.targetVersionId != nil
-            if let next { Button("Next") { go(next) }.buttonStyle(StorebenchButtonStyle(submitting ? .secondary : .primary)).help("Save and continue to " + title(next)) }
+            let submitting = current.id == "submit" && !guide.submitted && readiness?.snapshot?.targetVersionId != nil
+            if let next, !submitting { Button("Next") { go(next) }.buttonStyle(StorebenchButtonStyle(.primary)).help("Save and continue to " + title(next)) }
             else if !submitting { StorebenchGuideExit(guide: .release) }
-            if let submit = submitting ? { submitRequests += 1 } : nil as (() -> Void)? {
-                Button("Add for Review", action: submit).buttonStyle(StorebenchButtonStyle(.primary)).help("Prepare, then confirm adding this version for review")
+            if submitting {
+                if let first = ReleaseWizard.submissionProblems(guide).first {
+                    StorebenchBusyButton(title: "Resolve Next Item", loadingTitle: "Checking…", busy: readiness?.busy == true || pageRefresh.busy, variant: .primary) { openRequirement(first) }
+                        .storebenchWorking(readiness?.ready != true && readiness?.busy != true).help(ReleaseWizard.presented(first).detail)
+                        .storebenchControlID("release.resolve-next")
+                } else {
+                    StorebenchBusyButton(title: "Add for Review", loadingTitle: "Checking…", busy: submissionBusy || pageRefresh.busy, variant: .primary) {
+                        submitRequests += 1; scrollTo("release-submission-review", .top)
+                    }.help("Review the submission here, then explicitly confirm Send to Apple")
+                        .storebenchControlID("release.add-for-review")
+                }
             }
         }
     }
@@ -320,12 +378,6 @@ struct ReleaseWizardView: View {
     private var buildFocus: ReleaseWizard.Focus? {
         if case .build? = focus { return focus }
         return nil
-    }
-    /// The one place screenshots reach App Store Connect: below the editor that chooses and orders them. Its review is prepared
-    /// again after edits are saved on this Mac, while the last one stays on screen.
-    /// The step 2 screenshots Save or the step 3 text Save of this version's saved listing.
-    private func stageRequest(_ snapshot: ReleaseReadinessSnapshot, _ stage: String) -> PublishRequest {
-        var request = self.request(.metadata, snapshot: snapshot); request.mediaStage = stage; return request
     }
     private func request(_ scope: PublishRequest.Scope, snapshot: ReleaseReadinessSnapshot) -> PublishRequest {
         switch scope {
@@ -341,23 +393,33 @@ struct ReleaseWizardView: View {
     }
     private func go(_ id: String, _ target: ReleaseWizard.Focus? = nil) {
         guard ReleaseWizard.phaseIds.contains(id) else { return }
+        focusScrollTask?.cancel()
         let change: @MainActor () -> Void = {
             let moved = id != phase
             phaseChosen = true; phase = id; focus = target
-            if case .language? = target {} else { fieldFocus = nil }
+            if case .publish(let request)? = target, request.scope == .versionCopyright { fieldFocus = .init(anchor: "publish.copyright") }
+            else if case .reviewInformation? = target, let field = ReleaseWizard.reviewInformationField(readiness?.snapshot?.steps.first { $0.id == "review-info" }) {
+                fieldFocus = .init(anchor: "review-information." + field)
+            }
+            else if case .language? = target {} else { fieldFocus = nil }
             if moved, confirmedPlan != nil, readiness?.busy != true { operation = Task { await refreshStatus(initial: false) } }
             if case .language(let locale)? = target { focusedLocale = locale }
             let destination: (String, UnitPoint)
             if case .information(let anchor)? = target { destination = ("release-info-" + anchor, .top) }
             else if case .language(let locale)? = target { destination = fieldFocus.map { ($0.anchor, .center) } ?? (ReleaseReadiness.languageAnchor(locale), .top) }
+            else if fieldFocus?.anchor == "publish.copyright" { destination = ("publish.copyright", .center) }
+            else if case .reviewInformation? = target, let anchor = fieldFocus?.anchor { destination = (anchor, .center) }
             else if id == "build", target != nil { destination = ("release-build", .top) }
             // A new step opens at its heading, so its notice, such as Waiting for Review at Apple, is in view.
             else { destination = ("release-step-heading", .top) }
-            Task { @MainActor in
+            let ticket = fieldFocus?.ticket
+            focusScrollTask = Task { @MainActor in
+                await Task.yield()
+                guard !Task.isCancelled, phase == id, fieldFocus?.ticket == ticket else { return }
                 scrollTo(destination.0, destination.1)
                 // A step that was not open yet lays out its editors first; scroll again once they exist.
                 guard moved else { return }
-                try? await Task.sleep(for: .milliseconds(400)); guard phase == id else { return }
+                try? await Task.sleep(for: .milliseconds(80)); guard !Task.isCancelled, phase == id, fieldFocus?.ticket == ticket else { return }
                 scrollTo(destination.0, destination.1)
             }
         }
@@ -370,12 +432,30 @@ struct ReleaseWizardView: View {
         return StorebenchStatusRow(title: title, detail: step?.detail ?? "Not checked yet. Refresh Status reads it from App Store Connect.", separator: separator) {
             StorebenchFact(label: "Status", value: done ? "Done" : step == nil || step?.state == .manual ? "Not checked" : "Needed", done: done)
         } action: {
-            Button(command) { openAppPrivacy(anchor: anchor) }.buttonStyle(StorebenchButtonStyle(.secondary)).help("Open \(title) in App Store changes")
+            Button(command) { openAppPrivacy(anchor: anchor) }.buttonStyle(StorebenchButtonStyle(.secondary)).help("Open \(title) in App Privacy")
         } details: { EmptyView() }
     }
-    /// App Privacy and Tax Category are answered in App Store changes, with an Apple ID, because the API key cannot answer them.
+    /// Both Apple ID forms live in App Privacy; opening them never prepares or approves an Apple write.
     private func openAppPrivacy(anchor: String = "app-privacy") {
-        if let action = RecoveryGuidance.Target.open(.publishing, anchor: anchor).resolved(scope: recoveryNavigation.scope) { recoveryNavigation.navigate?(action) }
+        let area: AppleProblem.Area = anchor == "tax-category" ? .tax : .privacy
+        if phase == "submit" {
+            appleIDForm = area
+            focusScrollTask?.cancel()
+            focusScrollTask = Task { @MainActor in
+                await Task.yield()
+                guard !Task.isCancelled, phase == "submit", appleIDForm == area else { return }
+                scrollTo("release-apple-id-form", .top)
+                try? await Task.sleep(for: .milliseconds(80))
+                guard !Task.isCancelled, phase == "submit", appleIDForm == area else { return }
+                scrollTo("release-apple-id-form", .top)
+            }
+            return
+        }
+        if let action = PublishingReviewPresentation.recoveryTarget(area)?.resolved(scope: recoveryNavigation.scope) { recoveryNavigation.navigate?(action) }
+    }
+    private func openRequirement(_ step: ReleaseReadiness.Step, issue: ReleaseMaterial.Issue? = nil) {
+        if phase == "submit", ReleaseWizard.phase(containing: step.id) != "submit" { returningToSubmission = true }
+        if let issue { fix(step, issue) } else { open(step) }
     }
     private func open(_ step: ReleaseReadiness.Step) {
         fieldFocus = nil
@@ -399,28 +479,47 @@ struct ReleaseWizardView: View {
         switch target {
         case .language?: return phase != "listing"
         case .information?: return false
+        case .publish(let request)?: return request.scope != .versionCopyright
         default: return true
         }
     }
-    /// Done saves the listing, returns to the step's list and checks it again.
+    /// Each part confirms its own local save before returning; the other editors remain mounted with their inputs.
     private func backToChecklist() {
-        let back: @MainActor () -> Void = { fieldFocus = nil; scrollTo("release-step-heading", .top); recheck() }
-        if let protection { protection.saveAndContinue(back) } else { back() }
+        focusScrollTask?.cancel()
+        if returningToSubmission { returningToSubmission = false; go("submit"); return }
+        var transaction = Transaction(animation: nil); transaction.disablesAnimations = true
+        withTransaction(transaction) { fieldFocus = nil; scrollTo("release-step-heading", .top) }
+        recheck()
     }
     private func recheck() {
         guard confirmedPlan != nil else { return }
         operation = Task { await refreshStatus(initial: false) }
     }
+    private func requestStepRefresh() {
+        phaseChosen = true
+        guard protection?.policy.navigationDecision != .wait else { return }
+        guard pageRefresh.begin(scope: phase) else { return }
+        if pageRefresh.confirmation == nil { operation = Task { await refreshStep(.refresh) } }
+    }
+    private func refreshStep(_ choice: EditorRefresh.Choice) async {
+        await ScreenReads.reading(fresh: true) {
+            _ = await pageRefresh.perform(choice) {
+                await refreshStatus(initial: false, fresh: true, full: true)
+                return readiness?.snapshot != nil && readiness?.readFailed == false
+            }
+        }
+    }
     /// Fix opens the exact field or the screenshots a language problem names, scrolled into view and highlighted.
     /// Opens the Release check Apple's refusal points to, such as Age Ratings. Back returns to the review, which stays saved.
     private func fix(check id: String, in guide: ReleaseGuide.Guide) {
+        if id == AppleProblem.Area.version.rawValue { go("plan", .plan); return }
         if id == AppleProblem.Area.pricing.rawValue, let action = RecoveryGuidance.Target.open(.pricing).resolved(scope: recoveryNavigation.scope) { recoveryNavigation.navigate?(action); return }
         if id == AppleProblem.Area.privacy.rawValue { openAppPrivacy(); return }
         if id == AppleProblem.Area.tax.rawValue { openAppPrivacy(anchor: "tax-category"); return }
-        if let step = guide.phases.flatMap(\.steps).first(where: { $0.id == id }) { open(step) }
+        if let step = guide.phases.flatMap(\.steps).first(where: { $0.id == id }) { openRequirement(step) }
         // Text, screenshots and the version's own fields are edited in step 2 and saved in step 3.
         else if id == AppleProblem.Area.listing.rawValue { go("listing") }
-        else if [AppleProblem.Area.version.rawValue, AppleProblem.Area.copyright.rawValue].contains(id) { go("send") }
+        else if id == AppleProblem.Area.copyright.rawValue, let snapshot = readiness?.snapshot { go("send", .publish(request(.versionCopyright, snapshot: snapshot))) }
     }
     private func fix(_ step: ReleaseReadiness.Step, _ issue: ReleaseMaterial.Issue) {
         guard step.id.hasPrefix("local:") else { open(step); return }
@@ -431,7 +530,7 @@ struct ReleaseWizardView: View {
     /// App Information cards shown before Add for Review, only for what Apple still needs.
     private func informationParts(_ phase: ReleaseGuide.Phase) -> Set<AppInformationView.Part> {
         let parts: [String: AppInformationView.Part] = ["app-configuration": .categories, "age-rating": .ageRating, "accessibility": .accessibility, "territories": .availability]
-        return Set(ReleaseWizard.missing(phase).compactMap { parts[$0.id] })
+        return Set(phase.steps.filter { [.blocked, .unknown].contains($0.state) }.compactMap { parts[$0.id] })
     }
     /// A Save to App Store Connect clears the shared reads; the status is read again, then what the later steps show, so they open at once.
     private func afterApple() {
@@ -489,7 +588,7 @@ struct ReleaseWizardView: View {
     /// Nothing is sent to Apple; Send to Apple in step 6 still sends it.
     private func prepareSubmissionAhead(_ session: WorkspaceSession) async {
         guard let snapshot = readiness?.snapshot, snapshot.targetVersionId != nil, !(readiness?.busy ?? true) else { return }
-        let guide = ReleaseGuide.guide(snapshot.steps, appleState: snapshot.targetState)
+        let guide = currentGuide
         guard let submit = guide.phases.first(where: { $0.id == "submit" }), !submit.locked,
               !submit.steps.contains(where: { $0.id == "submission" && [.ready, .waiting].contains($0.state) }),
               ReleaseWizard.unfinished(before: "submit", in: guide) == nil else { return }

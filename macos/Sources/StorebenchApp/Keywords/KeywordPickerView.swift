@@ -51,7 +51,7 @@ struct KeywordPickerView: View {
                 }
                 StorebenchToggle("Descending", isOn: $descending)
             }.storebenchWorking(working)
-            HStack {
+            StorebenchActionGroup {
                 if !matching.isEmpty { Button("Select Matching") { chosen.formUnion(matching.map(\.id)) }.help("Select Matching Keyword Ideas").accessibilityLabel("Select Matching Keyword Ideas") }
                 if !chosen.isEmpty { Button("Clear Chosen Ideas") { chosen = [] } }
             }.storebenchWorking(working)

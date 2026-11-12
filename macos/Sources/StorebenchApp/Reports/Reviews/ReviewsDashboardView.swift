@@ -9,12 +9,12 @@ struct ReviewsDashboardView: View {
 
     private func country(_ code: String) -> String { code == "UNKNOWN" ? "Unknown territory" : WorkspaceSession.countryName(code) }
     private var filtersCard: some View {
-        Card(title: "Find reviews", subtitle: "Search written feedback and filter its UTC creation dates. All statistics below follow these filters.") {
+        Card(title: "Find reviews", subtitle: "Search written feedback and filter its UTC creation dates. All statistics below follow these filters.", accessory: AnyView(
+            StorebenchIconButton(title: "Reset Review Filters", icon: "refresh") { filters = .init() }
+        )) {
             StorebenchTextField("Search title and review text", text: $filters.query)
             StorebenchFormGrid(maximumColumns: 3, minimumWidth: 180) { ratingField; territoryField; orderField }
-            StorebenchHeader {
-                StorebenchFormGrid { dateFields }
-            } actions: { Button("Reset Filters") { filters = .init() } }
+            StorebenchFormGrid { dateFields }
             Text(filters.validDates ? "Dates are inclusive. Leave either date empty for an open range." : "Use valid YYYY-MM-DD dates with the start no later than the end.")
                 .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).frame(height: 36, alignment: .topLeading)
         }
@@ -43,7 +43,7 @@ struct ReviewsDashboardView: View {
 
     var body: some View {
         let rows = ReviewsPresentation.filter(reviews, filters), summary = ReviewsPresentation.summarize(rows)
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             filtersCard
             Card(title: "Written review sample", subtitle: "Written reviews are a sample of feedback. These averages are not the overall App Store rating, and review counts do not measure sales.") {
                 StorebenchMetricGrid { facts(summary) }

@@ -78,6 +78,54 @@ import Testing
         #expect(!workflow.busy && !workflow.owns(result))
     }
 
+    @Test func onePartSavesAndPreparesWhileOtherLanguagesAndMediaStayUntouched() async {
+        let workflow = ListingSaveWorkflow(identity: "Synthetic independent listing"), text = Input(), media = Input(), other = Input(), plan = Input()
+        media.blocked = true; other.blocked = true; plan.dirty = false
+        workflow.register(priority: .text, required: true, state: { plan.state }, save: { plan.save() })
+        let textID = workflow.register(priority: .text, state: { text.state }, save: { text.save() })
+        workflow.register(priority: .layout, state: { media.state }, save: { media.save() })
+        workflow.register(priority: .text, state: { other.state }, save: { other.save() })
+        var prepares = 0
+        let result = await workflow.run(only: [textID], prepare: { prepares += 1 })
+        #expect(result.reviewReady && result.saves == 1 && prepares == 1)
+        #expect(workflow.ready(only: [textID]) && workflow.owns(result) && !workflow.ready)
+        #expect(text.calls == 1 && media.calls == 0 && other.calls == 0 && media.dirty && other.dirty)
+        #expect((await workflow.run()).failure == .blocked, "Full listing saves still enforce all of their editors")
+    }
+
+    @Test func scopedPreparationRetainsRequiredGatesAndRejectsUnknownOwners() async {
+        let workflow = ListingSaveWorkflow(identity: "Synthetic scoped gates"), text = Input(), plan = Input()
+        plan.dirty = false; plan.blocked = true
+        workflow.register(priority: .text, required: true, state: { plan.state }, save: { plan.save() })
+        let textID = workflow.register(priority: .text, state: { text.state }, save: { text.save() })
+        #expect((await workflow.run(only: [textID], prepare: {})).failure == .blocked)
+        #expect((await workflow.run(only: [UUID()], prepare: {})).failure == .blocked)
+        #expect(text.calls == 0 && text.dirty && !workflow.inputsReady(only: [textID]))
+    }
+
+    @Test func unrelatedEditsDuringPreparationDoNotInvalidateTheSelectedPart() async throws {
+        let workflow = ListingSaveWorkflow(identity: "Synthetic independent edits"), text = Input(), media = Input(), gate = Gate()
+        let textID = workflow.register(priority: .text, state: { text.state }, save: { text.save() })
+        workflow.register(priority: .file, state: { media.state }, save: { media.save() })
+        let task = Task { await workflow.run(only: [textID], prepare: { await gate.hold() }) }
+        try await gate.wait(); media.signature = "Synthetic new media selection"; media.blocked = true; workflow.changed(); gate.release()
+        let result = await task.value
+        #expect(result.reviewReady && workflow.ready(only: [textID]) && media.dirty && media.calls == 0)
+    }
+
+    @Test func selectedEditsOrANewRequiredGateInvalidateAPartialReview() async throws {
+        for changeGate in [false, true] {
+            let workflow = ListingSaveWorkflow(identity: "Synthetic scoped invalidation"), text = Input(), gate = Gate()
+            let textID = workflow.register(priority: .text, state: { text.state }, save: { text.save() })
+            let task = Task { await workflow.run(only: [textID], prepare: { await gate.hold() }) }
+            try await gate.wait()
+            if changeGate { workflow.register(priority: .text, required: true, state: { .init(dirty: false, blocked: false, signature: "Synthetic changed plan") }, save: { true }) }
+            else { text.signature = "Synthetic newer text"; text.dirty = true; workflow.changed() }
+            gate.release()
+            #expect((await task.value).failure == .changed)
+        }
+    }
+
     @Test func inputNotificationsInvalidateAnEarlierPreparedResultEvenWhenClean() async {
         let workflow = ListingSaveWorkflow(identity: "Synthetic listing"), input = Input()
         workflow.register(priority: .layout, state: { input.state }, save: { input.save() })
@@ -209,5 +257,22 @@ import Testing
             gate.release(); let result = await task.value
             #expect(result.failure == .changed && result.prepared && !result.reviewReady)
         }
+    }
+
+    @Test func shownStateChangesOnlyWhenTheCombinedAnswerChanges() async throws {
+        let workflow = ListingSaveWorkflow(identity: "Synthetic shown listing"), input = Input()
+        workflow.register(priority: .text, state: { input.state }, save: { input.save() })
+        #expect(workflow.shown.dirty && !workflow.shown.ready)
+        final class Flag: @unchecked Sendable { var raised = false }
+        let notified = Flag()
+        withObservationTracking { _ = workflow.shown } onChange: { notified.raised = true }
+        input.signature = "Synthetic newer text"; workflow.changed()
+        #expect(!notified.raised, "More typing in an already unsaved editor leaves the shown state alone")
+        input.dirty = false; workflow.changed()
+        #expect(notified.raised && !workflow.shown.dirty && workflow.shown.ready)
+        // A provider that changes without reporting it is still shown correctly on the next turn.
+        input.dirty = true; _ = workflow.shown; #expect(workflow.dirty)
+        let deadline = ContinuousClock.now + .seconds(5)
+        while !workflow.shown.dirty { guard ContinuousClock.now < deadline else { throw SyntheticFailure.timeout }; try await Task.sleep(for: .milliseconds(10)) }
     }
 }
