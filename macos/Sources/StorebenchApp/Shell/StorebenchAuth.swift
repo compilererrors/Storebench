@@ -49,7 +49,9 @@ struct StorebenchSetupOption<Content: View>: View {
         }
     }
 
+    /// One command per option, in a column exactly one button wide, so every option's command lines up on the trailing edge
+    /// and the description keeps the rest of the width.
     private var actions: some View {
-        VStack(alignment: .leading, spacing: 12) { content() }.environment(\.fieldHintHeight, 0)
+        VStack(alignment: .leading, spacing: 12) { content() }.environment(\.fieldHintHeight, 0).frame(width: StorebenchTheme.actionWidth)
     }
 }

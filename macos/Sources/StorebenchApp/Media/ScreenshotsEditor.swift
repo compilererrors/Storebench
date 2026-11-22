@@ -103,7 +103,7 @@ struct ScreenshotSetEditor: View {
                             StorebenchMenuSeparator()
                             Button("Remove All in This Display Size", role: .destructive) { if !reorder.active { editor.removeAllScreenshots() } }
                                 .storebenchWorking(!editor.canEditScreenshots || editor.included == 0 || reorder.active)
-                        }
+                        }.storebenchControlID("screenshots.order-options." + entry.displayType)
                     }
             }
             if let draft, !editor.includedOrder.isEmpty {
