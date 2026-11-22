@@ -5,6 +5,8 @@ struct LibraryReader: Sendable {
     let appId: String
     let get: @Sendable (String) async throws -> [AppStoreConnectClient.Resource]
     let list: @Sendable (String) async throws -> [AppStoreConnectClient.Resource]
+    /// Starts lists that are about to be read one after another, where the reader's owner can read them side by side.
+    var ahead: @Sendable ([String]) -> Void = { _ in }
     func children(_ path: String, type: String, parent: (String, String, String)? = nil) async throws -> [AppStoreConnectClient.Resource] {
         let result = try await list(path)
         guard Set(result.map(\.id)).count == result.count, result.allSatisfy({ item in
@@ -37,7 +39,9 @@ struct LibraryReader: Sendable {
         }
         switch surface {
         case .versions:
-            for version in try await children("/v1/apps/\(appId)/appStoreVersions?include=app&limit=200", type: "appStoreVersions", parent: ("app", "apps", appId)) {
+            let versions = try await children("/v1/apps/\(appId)/appStoreVersions?include=app&limit=200", type: "appStoreVersions", parent: ("app", "apps", appId))
+            ahead(versions.map { "/v1/appStoreVersions/\($0.id)/appStoreVersionLocalizations?limit=200" })
+            for version in versions {
                 let locales = try await children("/v1/appStoreVersions/\(version.id)/appStoreVersionLocalizations?limit=200", type: surface.resource, parent: ("appStoreVersion", "appStoreVersions", version.id))
                 append(locales, parent: version, prefix: "\(Releases.platformName(version.attributes?["platform"]?.string ?? "")) \(version.attributes?["versionString"]?.string ?? "")", state: Apple.state(version), platform: version.attributes?["platform"]?.string ?? "")
             }
@@ -49,7 +53,9 @@ struct LibraryReader: Sendable {
                 }
             }
         case .events:
-            for event in try await children("/v1/apps/\(appId)/appEvents?limit=200", type: "appEvents", parent: ("app", "apps", appId)) {
+            let events = try await children("/v1/apps/\(appId)/appEvents?limit=200", type: "appEvents", parent: ("app", "apps", appId))
+            ahead(events.map { "/v1/appEvents/\($0.id)/localizations?limit=200" })
+            for event in events {
                 let locales = try await children("/v1/appEvents/\(event.id)/localizations?limit=200", type: surface.resource, parent: ("appEvent", "appEvents", event.id))
                 append(locales, parent: event, prefix: event.attributes?["referenceName"]?.string ?? event.id, state: event.attributes?["eventState"]?.string ?? "", platform: event.attributes?["platform"]?.string ?? "")
             }

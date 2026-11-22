@@ -159,6 +159,15 @@ extension WorkspaceSession {
 
     /// Current app information for the editor: content rights, categories with Apple's catalog, and region availability.
     /// A view that shows only some of them reads only those: `categories` covers content rights, categories, the catalog and the app's platforms.
+    /// The app's category names as App Store Connect lists them, for the keyword check. Read through the shared cache as a
+    /// next-step read; empty when they cannot be read, so the check simply leaves categories out.
+    public func searchCategoryNames(account: Account, appId: String) async -> [String] {
+        await ScreenReads.ahead {
+            guard let client = try? readClient(for: account),
+                  let state = try? await AppStoreReadCache.rereadingAfterInvalidation({ try await appInformationState(appId: appId, categories: true, availability: false, client: client) }) else { return [] }
+            return AppInformation.categoryFields.compactMap { state.categories?[$0] ?? nil }.map(AppInformation.categoryName)
+        }
+    }
     public func appInformationState(appId: String, categories includeCategories: Bool = true, availability includeAvailability: Bool = true, client: AppStoreConnectClient) async throws -> AppInformationState {
         var rights: String?, categories: [String: String?]?
         var catalog: [AppCategory] = [], platforms: [String] = [], categoryError: String?

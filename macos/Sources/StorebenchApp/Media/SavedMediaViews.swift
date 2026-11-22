@@ -34,7 +34,7 @@ struct SavedScreenshotGallery: View {
     @FocusState private var focused: Bool
     private var selected: ScreenshotSetDraft.Item? { request.items.indices.contains(index) ? request.items[index] : nil }
     var body: some View {
-        StorebenchDialog(title: selected?.fileName ?? "Screenshot", wide: true, height: 760, scrollBody: false, media: true,
+        StorebenchDialog(title: selected?.fileName ?? "Screenshot", kind: .media, scrollBody: false, media: true,
             subtitle: "\(index + 1) of \(request.items.count)\(image.map { " · \($0.width) × \($0.height) px" } ?? "")", busy: saving, close: close) {
             GeometryReader { bounds in
                 if let image {

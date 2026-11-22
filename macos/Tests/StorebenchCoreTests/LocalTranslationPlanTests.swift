@@ -11,21 +11,23 @@ import Testing
         }
     }
 
-    @Test func longUnicodeFieldsAreTriedWholeAndKeepTheirOrderAndParagraphs() async throws {
+    /// A long field goes to the on-device model in parts that end at a paragraph or sentence and keep every character in order.
+    @Test func longUnicodeFieldsGoInPartsThatKeepTheirOrderAndParagraphs() async throws {
         let body = String(repeating: "Synthetic paragraph with {name}. ", count: 50) + "\n\n" + String(repeating: "漢字🙂", count: 280) + " End."
         let texts = [body, "journal", "notes", "timer", "Synthetic subtitle"]
         let request = try AIRequest.translation(texts, source: "en-US", target: "sv", fields: ["description", "keywords", "keywords", "keywords", "subtitle"])
         let plan = try LocalTranslationPlan(request), probe = Probe()
-        #expect(plan.segments.allSatisfy { $0.fragments.count == 1 })
+        #expect(plan.segments[0].fragments.count > 1 && plan.segments.dropFirst().allSatisfy { $0.fragments.count == 1 })
         #expect(plan.segments[0].fragments.map { $0.text + $0.separator }.joined() == body)
-        #expect(try #require(plan.segments[0].fragments.first).text.utf16.count > 900)
+        #expect(plan.segments[0].fragments.allSatisfy { $0.text.utf16.count <= LocalTranslationPlan.partLimit("sv") })
+        #expect(try #require(plan.segments[0].fragments.first).text.hasSuffix("."), "A part ends at a sentence")
         #expect(!plan.instructions.contains("Return JSON only."))
         #expect(plan.instructions.contains("do not truncate"))
         let result = try await AppleLocalAI.translate(request) { instructions, text in
             _ = await probe.record(text, instructions: instructions); return text
         }
         #expect(try AIRequest.translations(result, count: texts.count) == texts)
-        #expect(await probe.texts == texts, "Healthy fields reach Apple whole, without speculative splitting")
+        #expect(await probe.texts == plan.segments.flatMap { $0.fragments.map(\.text) }, "Each part is sent once, in order")
         #expect(!AppleLocalAI.available, "Synthetic responders never start the on-device model")
     }
 
@@ -42,7 +44,7 @@ import Testing
     }
 
     @Test func aLongFieldWithAnOverlongTranslationIsRewordedWholeWithoutSplitting() async throws {
-        let source = String(repeating: "Synthetic description. ", count: 150) + "{count} https://example.test/help"
+        let source = String(repeating: "Synthetic description. ", count: 40) + "{count} https://example.test/help"
         let request = try AIRequest.translation([source], source: "en-US", target: "sv", fields: ["description"]), probe = Probe()
         let overlong = String(repeating: "x", count: 4001), rewritten = "Syntetisk beskrivning med {count} och https://example.test/help. Hela slutmeningen finns kvar."
         let result = try await AppleLocalAI.translate(request) { instructions, text in
@@ -72,8 +74,8 @@ import Testing
                 _ = await probe.record(text, instructions: instructions); return String(repeating: "x", count: 31)
             }
         }
-        #expect(await probe.texts.count == 5, "Two initial fields and three repairs of the subtitle")
-        #expect(AIFailure.translationLength.message.contains("App Store text limit"))
+        #expect(await probe.texts.count == 2 + TranslationFitting.repairRounds, "Two initial fields and one repair of the subtitle per round")
+        #expect(AIFailure.translationLength.message.contains("longer than App Store Connect allows"))
     }
 
     @Test func keywordTermsShareOneByteBudgetIncludingTheirCommas() throws {
@@ -99,7 +101,7 @@ import Testing
     }
 
     @Test func aLongHealthyFieldCanUseItsWholeBudgetInOneResponse() async throws {
-        let source = String(repeating: "Synthetic sentence. ", count: 100)
+        let source = String(repeating: "Synthetic sentence. ", count: 50)
         let request = try AIRequest.translation([source], source: "en-US", target: "sv", fields: ["description"])
         let probe = Probe()
         let result = try await AppleLocalAI.translate(request) { instructions, text in
@@ -142,20 +144,23 @@ import Testing
             return text
         }
         #expect(try AIRequest.translations(result, count: 1) == [source])
-        #expect(await probe.texts.first == TextSemantics.trim(source), "Even long fields must be tried whole before splitting")
+        // A field longer than one on-device part goes in parts that end at a sentence, before any request fails.
+        let first = try #require(await probe.texts.first)
+        #expect(first.utf16.count <= LocalTranslationPlan.partLimit("sv") && first.hasSuffix("."), "Parts end at a sentence: \(first.suffix(20))")
         #expect(await probe.texts.count > 3)
     }
 
+    /// A malformed answer is asked for again; other failures stop at once. Neither splits the part further.
     @Test(arguments: [AIFailure.localBusy, .localRejected, .response, .localFailed])
     func nonContextFailuresNeverSplitOrRetryAWholeField(_ failure: AIFailure) async throws {
-        let source = String(repeating: "Synthetic text. ", count: 100)
+        let source = String(repeating: "Synthetic text. ", count: 50)
         let request = try AIRequest.translation([source], source: "en-US", target: "sv", fields: ["description"]), probe = Probe()
         await #expect(throws: failure) {
             try await AppleLocalAI.translate(request) { instructions, text in
                 _ = await probe.record(text, instructions: instructions); throw failure
             }
         }
-        #expect(await probe.texts == [TextSemantics.trim(source)])
+        #expect(await probe.texts == Array(repeating: TextSemantics.trim(source), count: failure == .response ? TranslationFitting.answerAttempts : 1))
     }
 
     @Test func nativeBusyAndUnrecoverableContextErrorsAreBounded() async throws {
@@ -173,7 +178,8 @@ import Testing
                 _ = await context.record(text, instructions: instructions); throw AIFailure.tooLarge
             }
         }
-        #expect(await context.texts.count <= 4)
+        // A context error splits the part a bounded number of times: the part and at most five smaller halves.
+        #expect(await context.texts.count <= 6)
     }
 
     @Test func batchSummariesDistinguishFailureSuccessAndPreservedText() {
@@ -181,5 +187,44 @@ import Testing
         #expect(LanguageTranslation.summary([.saved, .failed]).contains("1 failed; retry"))
         #expect(LanguageTranslation.summary([.saved, .skipped]).contains("1 skipped"))
         #expect(LanguageTranslation.summary([.skipped]).contains("Existing text was preserved"))
+    }
+
+    @Test func eachTranslatedPartAndEachShorteningRoundIsReported() async throws {
+        let request = try AIRequest.translation(["Synthetic subtitle", "Synthetic promotion"], source: "en-US", target: "sv", fields: ["subtitle", "promotionalText"])
+        final class Steps: @unchecked Sendable { let lock = NSLock(); var values: [AITranslationStep] = []; func add(_ step: AITranslationStep) { lock.withLock { values.append(step) } } }
+        let steps = Steps(), probe = Probe()
+        _ = try await AITranslationProgress.$report.withValue({ steps.add($0) }) {
+            try await AppleLocalAI.translate(request) { instructions, text in
+                let call = await probe.record(text, instructions: instructions)
+                return call == 1 ? String(repeating: "x", count: 31) : "Kort text"
+            }
+        }
+        let values = steps.lock.withLock { steps.values }
+        #expect(values.prefix(3).map(\.done) == [0, 1, 2] && values.allSatisfy { $0.total == 2 })
+        #expect(values.contains { if case .shortening(let field, 0, _) = $0.phase { return field == "Subtitle" }; return false })
+        // The bar only moves forward.
+        #expect(zip(values, values.dropFirst()).allSatisfy { $0.fraction <= $1.fraction })
+    }
+
+    @Test func aTranslationThatCannotSayEverythingMayDropADetailInLaterRounds() async throws {
+        let request = try AIRequest.translation(["Synthetic promotion"], source: "en-US", target: "sv", fields: ["promotionalText"]), probe = Probe()
+        // A model that only fits once it is allowed to leave out a minor detail, as long Swedish promotions often need.
+        let result = try await AppleLocalAI.translate(request) { instructions, text in
+            _ = await probe.record(text, instructions: instructions)
+            return instructions.contains("leave out the least important detail") ? "Kort svensk kampanjtext." : String(repeating: "å", count: 195)
+        }
+        #expect(try AIRequest.translations(result, count: 1) == ["Kort svensk kampanjtext."])
+        let instructions = await probe.instructions
+        #expect(instructions.dropFirst().first?.contains("do not truncate") == true, "Early rounds keep every fact")
+        #expect(instructions.last?.contains("never cut text off mid-sentence") == true)
+        // Each round aims lower than the last.
+        #expect(TranslationFitting.targetShare(round: 0) > TranslationFitting.targetShare(round: 1) && TranslationFitting.targetShare(round: 4) >= 50)
+    }
+
+    @Test func translationStepsDescribeTheWorkInPlainWords() {
+        #expect(AITranslationStep(done: 0, total: 1).text == "Translating…")
+        #expect(AITranslationStep(done: 1, total: 4).text == "Translating part 2 of 4…")
+        #expect(AITranslationStep(done: 4, total: 4, phase: .shortening(field: "Promotional Text", round: 1, rounds: 5)).text == "Shortening Promotional Text to fit the App Store limit, try 2…")
+        #expect(AITranslationStep(done: 2, total: 4).fraction == 0.425 && AITranslationStep(done: 9, total: 4).done == 4)
     }
 }

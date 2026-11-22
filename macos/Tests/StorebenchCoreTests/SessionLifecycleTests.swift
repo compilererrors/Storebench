@@ -157,7 +157,8 @@ import Testing
         try await wait { try FileManager.default.contentsOfDirectory(atPath: parent.path).contains(where: { $0.hasPrefix(".storebench-encrypted-backup-") }) }
         let closing = Task { try await session.signOut() }
         try await Task.sleep(for: .milliseconds(50))
-        #expect(lifetime.status == .open && !FileManager.default.fileExists(atPath: destination.path))
+        // The backup runs away from the session, so sign-out refuses new work at once and then waits for the backup it admitted.
+        #expect(lifetime.status == .closing && lifetime.activeCount == 1 && !FileManager.default.fileExists(atPath: destination.path))
         try JobLock.exclusive(root.appendingPathComponent("lock-release"), "interrupt")
         let completed = try await backup.value
         try await closing.value

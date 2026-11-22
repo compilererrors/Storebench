@@ -12,7 +12,7 @@ struct EditingSettings: View {
     @State private var confirmationStatus = ""
     var body: some View {
         StorebenchForm {
-            StorebenchFormSection("Local drafts") {
+            StorebenchFormSection("Local Drafts") {
                 if baseline != nil { StorebenchSettingToggle("Automatically save local drafts", isOn: Binding(get: { enabled }, set: { enabled = $0; Task { await save() } })) }
                 Text("Saves language text and screenshot/app preview layouts after a short pause in the encrypted local database. With it off, each editor shows a Save button while it has changes. Apple changes still require a Publish review and explicit approval. This choice is saved right away.")
                     .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)

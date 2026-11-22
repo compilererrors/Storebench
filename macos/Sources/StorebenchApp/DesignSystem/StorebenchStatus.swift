@@ -147,6 +147,30 @@ struct StorebenchStateLabel: View {
     }
 }
 
+/// A short status beside a closed record's title: App Store Connect's tone mark with a headline, and one detail line below it.
+/// It keeps one fixed track, so a changing status never moves the title.
+struct StorebenchGlance: View {
+    let headline, detail: String
+    let tone: AppStoreNames.Tone
+    var running = false
+    static let width: CGFloat = 300
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Group {
+                    if running { StorebenchSpinner().frame(width: 12, height: 12) }
+                    else if tone == .complete { StorebenchIcon(name: "check", size: 12).foregroundStyle(StorebenchTheme.color("color-success")) }
+                    else { Circle().fill(StorebenchTheme.color(tone == .pending ? "color-warning" : tone == .problem ? "color-danger" : "color-text-tertiary")).frame(width: 9, height: 9) }
+                }.frame(width: 12, height: 12).alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
+                Text(headline).font(.sbCallout.weight(.semibold)).foregroundStyle(StorebenchTheme.ink).lineLimit(1)
+            }
+            StorebenchAdaptiveText(text: detail, maximumHeight: 34, font: .sbCaption, color: StorebenchTheme.muted).padding(.leading, 18)
+        }
+        .frame(width: Self.width, alignment: .leading)
+        .help(headline + " · " + detail).accessibilityElement(children: .ignore).accessibilityLabel(headline + ", " + detail)
+    }
+}
+
 /// Something the user added or changed that could not be saved. It stays where it was added, in red, with the reason and one next step.
 struct StorebenchNotSavedRow: View {
     let title: String, reason: String

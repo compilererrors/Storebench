@@ -6,7 +6,7 @@ struct ReleaseWizardView: View {
     let account: Account, app: Account.App, session: WorkspaceSession?, changed: () -> Void
     let openCancellation: (AppOverviewVersions.Cancellation) -> Void
     let scrollTo: (String, UnitPoint) -> Void
-    /// Counts Continue Version clicks made while the wizard is open; each opens the step that needs action.
+    /// Counts Continue Release clicks made while the wizard is open; each opens the step that needs action.
     var continueRequests = 0
     @State private var model: ReleasePlanEditor?
     @State private var readiness: ReleaseReadinessEditor?
@@ -31,9 +31,11 @@ struct ReleaseWizardView: View {
     @State private var addBuildRequests = 0
     @State private var operation: Task<Void, Never>?
     @State private var pageRefresh = EditorRefresh()
+    @State private var textChoiceStatus = ""
     /// Reads the listing editors for the plan it was started for; leaving the step does not stop it.
     @State private var listingWarm: (plan: String, task: Task<Void, Never>)?
     @Environment(\.readyReviews) private var readyReviews
+    @Environment(\.openSection) private var openSection
     @Environment(\.editorProtection) private var protection
     @Environment(\.openURL) private var openURL
     @Environment(\.recoveryNavigation) private var recoveryNavigation
@@ -42,7 +44,6 @@ struct ReleaseWizardView: View {
     @State private var submissionBusy = false
     @State private var appleIDForm: AppleProblem.Area?
     @State private var returningToSubmission = false
-    @State private var changingSubmission = false
     /// A scoped publishing read can confirm submission before the larger checklist finishes refreshing.
     @State private var observedVersion: PublishingWorkspace.Version?
     @Environment(\.releaseStepHistory) private var stepHistory
@@ -59,7 +60,7 @@ struct ReleaseWizardView: View {
     var body: some View {
         Group {
             let guide = currentGuide
-            ReleaseWizardLayout {
+            StorebenchStepLayout {
                 // Real step names at once; statuses follow from the saved status or the first check.
                 // Only a saved plan is checked against App Store Connect; with no version started the steps show where to begin.
                 ReleaseStepRail(guide: guide, selected: phase, select: { go($0) }, checking: model == nil || (model?.plan != nil && confirmedPlan != nil && readiness?.snapshot == nil))
@@ -161,10 +162,14 @@ struct ReleaseWizardView: View {
                 StorebenchStepLink(sentence: "This step follows App Review. Finish the steps above in order; the next one is",
                                    phaseNumber: next.number, phaseTitle: next.title)
             } else if !missing.isEmpty {
-                StorebenchNotice(title: missing.count == 1 ? "1 thing still needed" : "\(missing.count) things still needed",
-                                 description: missing.count == 1 ? "Fix it below, then continue with Next." : "Fix them below, then continue with Next.", icon: "warning") { EmptyView() }
-                if let readiness { ReleaseCheckList(steps: missing.map(ReleaseWizard.presented), ready: readiness.ready, open: { openRequirement($0) }, fix: { openRequirement($0, issue: $1) },
-                                                       actionable: { !opensBelow($0, in: current.id) }) }
+                // Languages that only wait for their upload are one row each, so the count says how many things there are.
+                let rows = ReleaseWizard.grouped(missing.map(ReleaseWizard.presented))
+                StorebenchNotice(title: rows.count == 1 ? "1 thing still needed" : "\(rows.count) things still needed",
+                                 description: rows.allSatisfy(ReleaseWizard.readyToSend) ? "Everything below is ready on this Mac. Prepare Review below lists it, and Save uploads it."
+                                    : rows.count == 1 ? "Fix it below, then continue with Next." : "Fix them below, then continue with Next.",
+                                 icon: rows.allSatisfy(ReleaseWizard.readyToSend) ? "upload" : "warning") { EmptyView() }
+                if let readiness { ReleaseCheckList(steps: rows, ready: readiness.ready, open: { openRequirement($0) }, fix: { openRequirement($0, issue: $1) },
+                                                       actionable: { !opensBelow($0, in: current.id) }, resolve: { _, issue, keep in resolveAppleText(issue, keepMine: keep) }) }
             } else if current.status == .done {
                 StorebenchNotice(title: "This step is done", description: "Continue with Next.", icon: "check") { EmptyView() }
             }
@@ -175,10 +180,9 @@ struct ReleaseWizardView: View {
                                    phaseNumber: send.number, phaseTitle: send.title)
             }
             if model?.plan != nil {
-                StorebenchFeedback(text: pageRefresh.status.isEmpty ? readiness?.status ?? "" : pageRefresh.status, height: 40, error: pageRefresh.failed)
-            }
-            if model?.plan != nil {
-                StorebenchTextSlot(text: freshness, height: 20, font: .sbCaption, color: StorebenchTheme.muted, live: true)
+                // One status line: the latest message while there is one, otherwise when App Store Connect was last checked.
+                let message = !textChoiceStatus.isEmpty ? textChoiceStatus : pageRefresh.status.isEmpty ? readiness?.status ?? "" : pageRefresh.status
+                StorebenchFeedback(text: message.isEmpty ? freshness : message, height: 40, error: !message.isEmpty && (pageRefresh.failed || !textChoiceStatus.isEmpty))
             }
         }
     }
@@ -223,9 +227,13 @@ struct ReleaseWizardView: View {
             } else if model.plan != nil { statusPending }
         case "build":
             if current.locked, let saved = model.plan {
-                Card(title: "Build for \(saved.targetVersion)", subtitle: guide.removable ? "Apple has this version with its attached build. To submit a new build, remove this version from review below. Once App Store Connect shows Developer Rejected, choose the new build here and add the version for review again."
-                     : "Apple has this version with its attached build. A new build needs a new version.") { EmptyView() }
-                removeFromReview(current, guide: guide)
+                if guide.removable, readiness?.snapshot?.targetVersionId != nil {
+                    // Replacing the build starts here: this card's own command removes the version from review, through its guarded review.
+                    removeFromReview(current, guide: guide, replacing: true)
+                } else {
+                    Card(title: guide.removable ? "Replace the Build" : "Build for \(saved.targetVersion)",
+                         subtitle: guide.removable ? "Checking this version against App Store Connect…" : "Apple has this version with its attached build. A new build needs a new version.") { EmptyView() }
+                }
                 // Declarations are only for a build that uses non-exempt encryption; a build Apple records as No, or with an approved declaration, needs nothing more.
                 if readiness?.snapshot?.steps.first(where: { $0.id == "export-compliance" })?.state != .ready {
                     AppInformationView(account: account, app: app, session: session, parts: [.exportCompliance], changed: { afterApple() })
@@ -233,7 +241,10 @@ struct ReleaseWizardView: View {
             } else if let saved = model.plan {
                 // The build's own export compliance card covers declarations, documents and the answer, with one refresh.
                 ReleaseBuildStep(account: account, app: app, session: session, plan: saved, versionId: readiness?.snapshot?.targetVersionId, selectedBuildId: $submitBuildId,
-                                 focus: buildFocus, addRequests: addBuildRequests, goToSend: { go("send") }, done: afterApple)
+                                 focus: buildFocus, addRequests: addBuildRequests, goToSend: { go("send") }, done: afterApple,
+                                 replacing: ReleaseWizard.replacingBuild(guide))
+                // A version removed from review for a new build is added for review again here, without going to step 6.
+                if ReleaseWizard.addsForReviewInBuildStep(guide), let snapshot = readiness?.snapshot, snapshot.targetVersionId != nil { addForReview(snapshot, guide: guide) }
             }
         case "review-information":
             if let snapshot = readiness?.snapshot {
@@ -267,9 +278,13 @@ struct ReleaseWizardView: View {
         if let snapshot = readiness?.snapshot {
             if guide.submitted {
                 ReleaseSubmittedStatus(version: "\(Releases.platformName(snapshot.plan.platform)) \(snapshot.plan.targetVersion)", state: guide.appleState ?? "")
-                if guide.removable {
-                    DisclosureGroup("Change Submitted Version", isExpanded: $changingSubmission) {
-                        if changingSubmission { removeFromReview(current, guide: guide) }
+                if guide.removable, let build = guide.phases.first(where: { $0.id == "build" }) {
+                    // Replacing the build is one place: Remove from Review, the new build and Add for Review are all in Build.
+                    StorebenchActionRow {
+                        Text("To replace the build, remove this version from review, choose the new build and add it for review again, all in step \(build.number): \(build.title).")
+                            .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
+                    } actions: {
+                        Button("Replace the Build") { go("build") }.help("Open step \(build.number): \(build.title)").storebenchControlID("release.replace-build")
                     }
                 }
             } else {
@@ -294,17 +309,7 @@ struct ReleaseWizardView: View {
                 if snapshot.targetVersionId == nil {
                     StorebenchStepLink(sentence: "Save the version to App Store Connect first. Only a version that exists there can be added for review.", phaseNumber: 3, phaseTitle: "Save to App Store Connect")
                 } else {
-                    PublishActionPanel(account: account, app: app, session: session, actions: [.submit],
-                        initialRequest: request(.submit, snapshot: snapshot), automatic: true,
-                        guided: ("Add for Review", PublishActionPanel.purpose(.submit)),
-                        refreshKey: "submission:" + ReleaseWizard.submissionBasis(snapshot),
-                        fix: { fix(check: $0, in: guide) }, checked: { recheck() }, trigger: submitRequests,
-                        busyChanged: { submissionBusy = $0 }, versionChanged: { version in
-                            guard version.id == snapshot.targetVersionId, ReleaseGuide.guide([], appleState: version.state).submitted else { return }
-                            observedVersion = version
-                        }, done: { _ in afterApple() })
-                        .id("submit-\(snapshot.targetVersionId ?? "")-\(submitBuildId ?? "")")
-                        .id("release-submission-review")
+                    addForReview(snapshot, guide: guide)
                 }
             }
         } else if model?.plan != nil { statusPending }
@@ -325,12 +330,34 @@ struct ReleaseWizardView: View {
         default: "Apple shows the version as Pending Developer Release when App Review approves it. Come back to this step to release it."
         }
     }
-    /// Cancel Submission where a change needs it, through the same prepared review as step 6.
-    @ViewBuilder private func removeFromReview(_ current: ReleaseGuide.Phase, guide: ReleaseGuide.Guide) -> some View {
+    /// Remove from Review where a change needs it, through the same prepared review as step 6.
+    /// The guarded Add for Review: in step 6, and in Build after a version was removed from review for a new build.
+    private func addForReview(_ snapshot: ReleaseReadinessSnapshot, guide: ReleaseGuide.Guide) -> some View {
+        PublishActionPanel(account: account, app: app, session: session, actions: [.submit],
+            initialRequest: request(.submit, snapshot: snapshot), automatic: true,
+            guided: ("Add for Review", PublishActionPanel.purpose(.submit)),
+            refreshKey: "submission:" + ReleaseWizard.submissionBasis(snapshot),
+            fix: { fix(check: $0, in: guide) }, checked: { recheck() }, trigger: submitRequests,
+            busyChanged: { submissionBusy = $0 }, versionChanged: { version in
+                guard version.id == snapshot.targetVersionId, ReleaseGuide.guide([], appleState: version.state).submitted else { return }
+                observedVersion = version
+            }, done: { _ in afterApple() })
+            .id("submit-\(snapshot.targetVersionId ?? "")-\(submitBuildId ?? "")")
+            .id("release-submission-review")
+    }
+    @ViewBuilder private func removeFromReview(_ current: ReleaseGuide.Phase, guide: ReleaseGuide.Guide, replacing: Bool = false) -> some View {
         if guide.removable, let snapshot = readiness?.snapshot, snapshot.targetVersionId != nil {
-            PublishActionPanel(account: account, app: app, session: session, actions: [.cancel],
-                               initialRequest: request(.cancelSubmission, snapshot: snapshot), done: { _ in afterApple() })
-                .id("remove-\(current.id)-\(guide.appleState ?? "")")
+            if replacing {
+                PublishActionPanel(account: account, app: app, session: session, actions: [.cancel],
+                                   initialRequest: request(.cancelSubmission, snapshot: snapshot),
+                                   guided: ("Replace the Build", "To send a newer build of this version: 1. Remove from Review. 2. Once App Store Connect shows Developer Rejected, choose the new build on this step. 3. Add for Review appears on this step too. Each part shows its change first and waits for your approval."),
+                                   prepareTitle: "Remove from Review", syncTitle: "Remove from Review", showsDestinationChoices: false, done: { _ in afterApple() })
+                    .id("remove-\(current.id)-\(guide.appleState ?? "")").storebenchControlID("release.replace-build.remove")
+            } else {
+                PublishActionPanel(account: account, app: app, session: session, actions: [.cancel],
+                                   initialRequest: request(.cancelSubmission, snapshot: snapshot), done: { _ in afterApple() })
+                    .id("remove-\(current.id)-\(guide.appleState ?? "")")
+            }
         }
     }
     private var freshness: String {
@@ -348,25 +375,28 @@ struct ReleaseWizardView: View {
     private func navigation(_ current: ReleaseGuide.Phase, guide: ReleaseGuide.Guide) -> some View {
         let (previous, next) = ReleaseWizard.neighbors(current.id)
         let title = { (id: String) in guide.phases.first { $0.id == id }.map { "step \($0.number): \($0.title)" } ?? "" }
-        return StorebenchActionGroup(alignment: .trailing) {
-            if let previous { Button("Back") { go(previous) }.help("Back to " + title(previous)) }
-            // Add for Review is this step's work, so it is the step's main command; Next stays beside it.
-            let submitting = current.id == "submit" && !guide.submitted && readiness?.snapshot?.targetVersionId != nil
-            if let next, !submitting { Button("Next") { go(next) }.buttonStyle(StorebenchButtonStyle(.primary)).help("Save and continue to " + title(next)) }
-            else if !submitting { StorebenchGuideExit(guide: .release) }
-            if submitting {
-                if let first = ReleaseWizard.submissionProblems(guide).first {
-                    StorebenchBusyButton(title: "Resolve Next Item", loadingTitle: "Checking…", busy: readiness?.busy == true || pageRefresh.busy, variant: .primary) { openRequirement(first) }
-                        .storebenchWorking(readiness?.ready != true && readiness?.busy != true).help(ReleaseWizard.presented(first).detail)
-                        .storebenchControlID("release.resolve-next")
-                } else {
-                    StorebenchBusyButton(title: "Add for Review", loadingTitle: "Checking…", busy: submissionBusy || pageRefresh.busy, variant: .primary) {
-                        submitRequests += 1; scrollTo("release-submission-review", .top)
-                    }.help("Review the submission here, then explicitly confirm Send to Apple")
-                        .storebenchControlID("release.add-for-review")
-                }
+        // Add for Review is this step's work, so it is the step's main command; it only opens the guarded review below.
+        let submitting = current.id == "submit" && !guide.submitted && readiness?.snapshot?.targetVersionId != nil
+        var commands: [StorebenchStepCommand] = []
+        if submitting {
+            if let first = ReleaseWizard.submissionProblems(guide).first {
+                commands.append(.init(title: "Resolve Next Item", running: "Checking…", busy: readiness?.busy == true || pageRefresh.busy,
+                                      unavailable: readiness?.ready != true && readiness?.busy != true ? "Wait for the check to finish." : nil,
+                                      help: ReleaseWizard.presented(first).detail, controlID: "release.resolve-next") { openRequirement(first) })
+            } else {
+                commands.append(.init(title: "Add for Review", running: "Checking…", busy: submissionBusy || pageRefresh.busy,
+                                      help: "As in App Store Connect: Add for Review asks once, then Submit to App Review sends the version to App Review",
+                                      controlID: "release.add-for-review") { submitRequests += 1; scrollTo("release-submission-review", .top) })
             }
+        } else if let next {
+            commands.append(.init(title: "Next", help: "Save and continue to " + title(next), controlID: "release.next") { go(next) })
+        } else {
+            commands.append(StorebenchGuideExit.command(guide: .release, open: openSection))
         }
+        let missing = current.id == "submit" ? ReleaseWizard.submissionProblems(guide) : ReleaseWizard.grouped(ReleaseWizard.missing(current).map(ReleaseWizard.presented))
+        return StorebenchStepCommands(state: .init(id: "release/\(current.id)", title: "Step \(current.number) of \(guide.phases.count): \(current.title)",
+            detail: missing.isEmpty ? (current.status == .done ? "This step is done." : current.purpose) : missing.count == 1 ? "1 thing still needed" : "\(missing.count) things still needed",
+            back: previous.map { previous in .init(title: "Back", primary: false, help: "Back to " + title(previous), controlID: "release.back") { go(previous) } }, next: commands))
     }
 
     // MARK: Navigation
@@ -452,6 +482,14 @@ struct ReleaseWizardView: View {
             return
         }
         if let action = PublishingReviewPresentation.recoveryTarget(area)?.resolved(scope: recoveryNavigation.scope) { recoveryNavigation.navigate?(action) }
+    }
+    /// A field App Store Connect changed since the draft: its text is used or this Mac's is kept, then the step is checked again.
+    private func resolveAppleText(_ issue: ReleaseMaterial.Issue, keepMine: Bool) {
+        guard let session, let plan = model?.plan else { return }
+        operation = Task {
+            textChoiceStatus = await ReleaseTextChoice.resolve(issue, keepMine: keepMine, session: session, account: account, appId: app.id, plan: plan, listing: listing) ?? ""
+            await refreshStatus(initial: false, full: true)
+        }
     }
     private func openRequirement(_ step: ReleaseReadiness.Step, issue: ReleaseMaterial.Issue? = nil) {
         if phase == "submit", ReleaseWizard.phase(containing: step.id) != "submit" { returningToSubmission = true }
@@ -585,7 +623,7 @@ struct ReleaseWizardView: View {
         } while !Task.isCancelled
     }
     /// Once every step before Add for Review is done, its review is prepared in the background, so step 6 shows it at once.
-    /// Nothing is sent to Apple; Send to Apple in step 6 still sends it.
+    /// Nothing is sent to Apple; Submit to App Review in step 6 still sends it.
     private func prepareSubmissionAhead(_ session: WorkspaceSession) async {
         guard let snapshot = readiness?.snapshot, snapshot.targetVersionId != nil, !(readiness?.busy ?? true) else { return }
         let guide = currentGuide
@@ -661,6 +699,10 @@ struct ReleaseWizardView: View {
             phase = ReleaseWizard.initialPhase(ReleaseGuide.guide(readiness?.snapshot?.steps, appleState: readiness?.snapshot?.targetState))
         }
     }
+    /// Lets go of a version still waiting for its starting material, so the next load starts it again.
+    private func drop(_ owner: ReleasePlanEditor) {
+        owner.retire(); if model === owner { model = nil }; protection?.remove(id: protectionId)
+    }
     private func load() async {
         guard model == nil, !loading, let session, !Task.isCancelled else { return }
         let ticket = UUID(); loadTicket = ticket; loading = true; loadStatus = ""
@@ -675,11 +717,18 @@ struct ReleaseWizardView: View {
             try Task.checkCancellation(); guard loadTicket == ticket else { return }
             // A saved plan opens straight from its own small record; the starting versions behind it are read after the step is shown.
             let savedPlan = remembered == nil ? try await session.releasePlan(accountId: account.id, appId: app.id) : nil
-            var savedHistory = remembered
+            var savedHistory = remembered, opensEarly = remembered != nil
             if savedHistory == nil, savedPlan == nil {
-                // Without a saved plan the version starts from current Apple material, which can take a while to download.
-                if (try? await session.releaseStartNeedsImport(account: account, appId: app.id)) == true, loadTicket == ticket { loadMessage = "Reading the current version from App Store Connect…" }
-                savedHistory = try await session.releaseStartingHistory(account: account, appId: app.id)
+                // Without a saved plan the version starts from current Apple material, which can take a while to download. The page opens
+                // from the versions saved on this Mac meanwhile; only an app with nothing saved yet waits for the download before it opens.
+                let needsImport = (try? await session.releaseStartNeedsImport(account: account, appId: app.id)) ?? true
+                var local: [Revision] = []
+                if needsImport { local = (try? await session.revisions(accountId: account.id, appId: app.id)) ?? [] }
+                if !local.isEmpty { savedHistory = local; opensEarly = true }
+                else {
+                    if needsImport, loadTicket == ticket { loadMessage = QuickReleaseView.readingStart }
+                    savedHistory = try await session.releaseStartingHistory(account: account, appId: app.id)
+                }
             }
             try Task.checkCancellation(); guard loadTicket == ticket else { return }
             if let savedHistory { history = savedHistory; presentation?.rememberRead(savedHistory, historyKey) }
@@ -697,8 +746,11 @@ struct ReleaseWizardView: View {
                 let saved = await owner.save()
                 return saved && owner.active && !owner.dirty
             }
+            // A new version is never created from older material: it waits for the current version from App Store Connect.
+            if opensEarly { owner.awaitStart(QuickReleaseView.readingStart) }
             model = owner; loadStatus = ""; await owner.load()
             guard owner.active, !Task.isCancelled else { return }
+            if owner.plan != nil { owner.startArrived(nil) }
             // A version App Store Connect is already preparing needs no Create: the plan to continue it is saved on this Mac right away.
             // A plan read a moment ago is never saved again from its own record, even if it was removed meanwhile.
             if savedPlan == nil, owner.plan == nil, case .reuse = initial.start, owner.ready, await owner.save(), owner.active, !Task.isCancelled { changed() }
@@ -706,42 +758,26 @@ struct ReleaseWizardView: View {
             // A plan that needs no status check opens at once; otherwise the first check decides the step.
             if confirmedPlan == nil { initialDecided = true }
             // The starting versions are read again after the step is shown: remembered ones may be old, and a saved plan opened without them.
-            if remembered != nil || savedHistory == nil, let latest = try? await session.releaseStartingHistory(account: account, appId: app.id), owner.active, !Task.isCancelled {
-                history = latest; presentation?.rememberRead(latest, historyKey)
-                // An unedited suggestion from remembered versions follows the fresh read; a saved plan keeps its own source.
-                if remembered != nil { owner.suggest(ReleasePreference.applying(preference, to: ReleaseSetup.suggestion(latest, date: suggestionDate))) }
+            if opensEarly || savedHistory == nil {
+                do {
+                    let latest = try await session.releaseStartingHistory(account: account, appId: app.id)
+                    guard owner.active, !Task.isCancelled else { if owner.waiting != nil { drop(owner) }; return }
+                    history = latest; presentation?.rememberRead(latest, historyKey)
+                    // The suggestion follows the fresh read, keeping whatever was typed meanwhile; a saved plan keeps its own source.
+                    owner.startArrived(opensEarly && owner.plan == nil ? ReleasePreference.applying(preference, to: ReleaseSetup.suggestion(latest, date: suggestionDate)) : nil)
+                    if owner.plan == nil, case .reuse = owner.baseline.start, owner.ready, await owner.save(), owner.active, !Task.isCancelled { changed() }
+                } catch {
+                    // A page closed while it waited reads the material again when it opens, rather than keeping a version that can't start.
+                    guard owner.active, !Task.isCancelled else { if owner.waiting != nil { drop(owner) }; return }
+                    // A saved plan keeps working from its own record; a new version shows why it can't start yet and offers Try Again.
+                    if owner.plan != nil || owner.waiting == nil { owner.startArrived(nil) }
+                    else { owner.retire(); model = nil; throw error }
+                }
             }
         } catch {
             guard loadTicket == ticket else { return }
             protection?.remove(id: protectionId)
             if !Task.isCancelled { loadStatus = (error as? ImportFailure)?.message ?? "Saved starting versions could not be read." }
-        }
-    }
-}
-
-private struct ReleaseWizardLayout: Layout {
-    private let railWidth: CGFloat = 248, gap: CGFloat = 24, stackAt: CGFloat = 880
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? 1000
-        guard subviews.count == 2 else { return .zero }
-        if width >= stackAt {
-            let rail = subviews[0].sizeThatFits(.init(width: railWidth, height: nil))
-            let pane = subviews[1].sizeThatFits(.init(width: width - railWidth - gap, height: nil))
-            return CGSize(width: width, height: max(rail.height, pane.height))
-        }
-        let rail = subviews[0].sizeThatFits(.init(width: width, height: nil))
-        let pane = subviews[1].sizeThatFits(.init(width: width, height: nil))
-        return CGSize(width: width, height: rail.height + gap + pane.height)
-    }
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        guard subviews.count == 2 else { return }
-        if bounds.width >= stackAt {
-            subviews[0].place(at: bounds.origin, proposal: .init(width: railWidth, height: nil))
-            subviews[1].place(at: CGPoint(x: bounds.minX + railWidth + gap, y: bounds.minY), proposal: .init(width: bounds.width - railWidth - gap, height: nil))
-        } else {
-            let rail = subviews[0].sizeThatFits(.init(width: bounds.width, height: nil))
-            subviews[0].place(at: bounds.origin, proposal: .init(width: bounds.width, height: nil))
-            subviews[1].place(at: CGPoint(x: bounds.minX, y: bounds.minY + rail.height + gap), proposal: .init(width: bounds.width, height: nil))
         }
     }
 }

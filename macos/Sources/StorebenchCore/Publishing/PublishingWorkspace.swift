@@ -54,13 +54,15 @@ public enum PublishingWorkspace {
         }
     }
     static func equal(_ a: String, _ b: String) -> Bool { a.utf8.elementsEqual(b.utf8) }
+    /// The version states App Store Connect offers Remove from Review in.
+    public static let removableFromReview: Set<String> = ["WAITING_FOR_REVIEW", "IN_REVIEW", "UNRESOLVED_ISSUES"]
     public static func initialVersion(_ versions: [Version], scope: PublishRequest.Scope, requested: String? = nil, planPlatform: String? = nil, planNumber: String? = nil, reviewVersion: String? = nil) -> String {
         if let reviewVersion, !reviewVersion.isEmpty, [.versionCopyright, .reviewInfo, .submit, .cancelSubmission, .releaseVersion].contains(scope) { return reviewVersion }
         if let requested, versions.contains(where: { $0.id == requested }) { return requested }
         if let planPlatform, let planNumber, let version = versions.first(where: { equal($0.platform, planPlatform) && equal($0.number, planNumber) }) { return version.id }
         return versions.first { item in
             if scope == .releaseVersion { return item.state == "PENDING_DEVELOPER_RELEASE" && item.releaseType == "MANUAL" }
-            if scope == .cancelSubmission { return ["WAITING_FOR_REVIEW", "IN_REVIEW", "UNRESOLVED_ISSUES"].contains(item.state) }
+            if scope == .cancelSubmission { return removableFromReview.contains(item.state) }
             return Apple.editable.contains(item.state)
         }?.id ?? versions.first?.id ?? ""
     }

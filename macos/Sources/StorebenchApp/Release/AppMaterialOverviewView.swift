@@ -19,7 +19,7 @@ struct OverviewSection: View {
             MaterialImportCard(account: account, app: app, session: session, changed: materialChanged, onlyWhenNeeded: true)
             AppLiveVersionsView(account: account, app: app, session: session, plan: snapshot?.plan, openCancellation: openCancellation)
             ReleaseStatusCard(account: account, app: app, session: session)
-            Card(title: "Saved on this Mac", subtitle: "This app's App Store text and screenshots that Storebench has saved: synced versions and drafts.", actions: AnyView(
+            Card(title: "Saved on This Mac", subtitle: "This app's App Store text and screenshots that Storebench has saved: synced versions and drafts.", actions: AnyView(
                 StorebenchBusyButton(title: "Refresh", loadingTitle: "Reading…", busy: reading || deleting) { Task { await load() } }.help("Refresh what is saved on this Mac").accessibilityLabel("Refresh what is saved on this Mac")
             )) {
                 StorebenchTextSlot(text: status, height: 48, font: .sbCallout, color: StorebenchTheme.muted, live: true)
@@ -29,7 +29,7 @@ struct OverviewSection: View {
                     StorebenchMetricGrid(maximumColumns: 3) {
                         Fact(title: latest.local ? "Local draft created" : "Latest import", value: LibraryOverview.timestamp(latest.importedAt), compact: true)
                         Fact(title: "Bundle ID", value: snapshot.bundleId.isEmpty ? "—" : snapshot.bundleId, compact: true)
-                        Fact(title: "Primary locale", value: snapshot.primaryLocale.isEmpty ? "—" : snapshot.primaryLocale, compact: true)
+                        Fact(title: "Primary Locale", value: snapshot.primaryLocale.isEmpty ? "—" : snapshot.primaryLocale, compact: true)
                     }
                     Card(title: "Continue working", subtitle: "Prepare the next version, adjust country prices or review sales for this app.") {
                         StorebenchCardList {
@@ -61,8 +61,8 @@ struct OverviewSection: View {
                     }
                 }
                 if snapshot.latest != nil || managing {
-                    Card(title: "Saved versions", subtitle: "Each sync is kept separately, so you can compare them.") {
-                        DisclosureGroup("Manage saved versions", isExpanded: $managing) {
+                    Card(title: "Saved Versions", subtitle: "Each sync is kept separately, so you can compare them.") {
+                        DisclosureGroup("Manage Saved Versions", isExpanded: $managing) {
                             SavedRevisionList(account: account, app: app, session: session, revisions: snapshot.history, planSourceId: snapshot.plan?.sourceRevisionId,
                                 available: !failed && !reading, busy: reading, busyChanged: { deleting = $0 }, removed: { message in
                                     status = message; changed(); Task { await load(preserveStatus: true) }
@@ -72,10 +72,11 @@ struct OverviewSection: View {
                             Button("Compare Versions") { navigation.open(.history, locale: nil) }
                         }
                     }
+                    DraftHistoryCard(account: account, app: app, session: session, reload: snapshot.history.count)
                 }
             } else if !failed && session != nil {
                 // The section's own card with a status line until the saved material is read; nothing stands in for it.
-                Card(title: "Saved on this Mac", subtitle: "This app's App Store text and screenshots that Storebench has saved.") { StorebenchLoadingStatus(message: "Reading what is saved…", surface: false) }
+                Card(title: "Saved on This Mac", subtitle: "This app's App Store text and screenshots that Storebench has saved.") { StorebenchLoadingStatus(message: "Reading what is saved…", surface: false) }
             }
         }.task {
             if snapshot == nil, let saved = await history?.rememberedDecodedRead("app-material/\(account.id)/\(app.id)", as: AppOverviewMaterial.Snapshot.self), !Task.isCancelled, snapshot == nil { snapshot = saved }
@@ -122,7 +123,7 @@ struct AppLiveVersionsView: View {
             StorebenchReadAge(readAt: entries == nil || failed ? nil : readAt, reading: reading)
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    // Versions last read stay listed while they are read again; Cancel Submission waits for Apple's current answer.
+                    // Versions last read stay listed while they are read again; Remove from Review waits for Apple's current answer.
                     if entries == nil && !failed { Text("Syncing versions from App Store Connect…").foregroundStyle(StorebenchTheme.muted) }
                     else if failed { Text("Could not sync versions from App Store Connect. Choose Sync Versions to try again.").foregroundStyle(StorebenchTheme.muted) }
                     else if entries?.isEmpty == true { Text("No Apple versions were returned.").foregroundStyle(StorebenchTheme.muted) }
@@ -133,7 +134,7 @@ struct AppLiveVersionsView: View {
                                 Text(entry.state).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
                             } actions: {
                                 if entry.inReview, let scope = try? RecoveryGuidance.Scope(accountId: account.id, appId: app.id), let destination = try? AppOverviewVersions.Cancellation(scope: scope, version: entry) {
-                                    if available { Button("Cancel Submission") { openCancellation(destination) } }
+                                    if available { Button("Remove from Review") { openCancellation(destination) } }
                                 }
                             }
                         }
@@ -141,7 +142,7 @@ struct AppLiveVersionsView: View {
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }.frame(height: (entries == nil && !failed || entries?.isEmpty == false && !failed) ? listHeight : StorebenchTheme.measure("fieldHint"))
             if entries?.isEmpty == false && !failed {
-                DisclosureGroup("Adjust list size") {
+                DisclosureGroup("Adjust List Size") {
                     StorebenchStepper("List height", value: $listHeight, in: 96...800, step: 40)
                         .font(.sbCaption).storebenchFormColumn().accessibilityLabel("Versions at Apple list height")
                 }

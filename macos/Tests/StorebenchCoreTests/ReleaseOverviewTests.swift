@@ -124,4 +124,58 @@ import Testing
         let again = try #require(await reopened.releaseOverview(account: account, appId: appId))
         #expect(again.status == "Waiting for Review" && again.items.isEmpty)
     }
+
+    @Test func appsWithAReleasePlanAreCheckedFirst() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let initial = try #require(try await session.accounts().first)
+        let apps = ["1000000101", "1000000102", "1000000103"]
+        let account = Account(id: initial.id, name: initial.name, keyId: "SYNTHRLS02", keyType: initial.keyType, issuerId: initial.issuerId, appIds: apps, appNames: nil)
+        try await session.storeAccess { store in try store.transaction { _ in [.put(namespace: "accounts", key: "all", json: JSONText.array([WorkspaceSession.json(account)]).data)] } }
+        _ = try await session.saveReleasePlan(account: account, appId: "1000000103", start: .empty(platform: "MAC_OS", locale: "en-US"),
+                                              sourceRevisionId: nil, baseVersionId: nil, targetVersion: "1.0", releaseType: "MANUAL", earliestReleaseDate: nil, expected: "null")
+        let targets = await session.releaseOverviewTargets()
+        #expect(targets.first?.appId == "1000000103" && targets.first?.planned == true)
+        #expect(targets.dropFirst().allSatisfy { !$0.planned } && targets.count == 3)
+    }
+
+    private func manyApps(_ session: WorkspaceSession, count: Int, keyId: String) async throws -> Account {
+        let initial = try #require(try await session.accounts().first)
+        let apps = (0..<count).map { String(1_000_000_200 + $0) }
+        let account = Account(id: initial.id, name: initial.name, keyId: keyId, keyType: initial.keyType, issuerId: initial.issuerId, appIds: apps, appNames: nil)
+        try await session.storeAccess { store in try store.transaction { _ in [.put(namespace: "accounts", key: "all", json: JSONText.array([WorkspaceSession.json(account)]).data)] } }
+        return account
+    }
+
+    @Test func theCardsShownAreCheckedFirstAndHowManyFollowsThePerformanceSetting() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let account = try await manyApps(session, count: 120, keyId: "SYNTHRLS03")
+        let shown = [account.id + ":" + account.appIds[90], account.id + ":" + account.appIds[40]]
+        await session.applyCachePolicy(CachePolicy(level: .conservative))
+        let few = await session.releaseOverviewTargets(first: shown)
+        #expect(few.prefix(2).map { $0.account.id + ":" + $0.appId } == shown, "The cards on screen come first")
+        #expect(few.count == CachePolicy(level: .conservative).budget().releaseStatusChecks)
+        await session.applyCachePolicy(CachePolicy(level: .maximum))
+        let many = await session.releaseOverviewTargets(first: shown)
+        #expect(many.count == CachePolicy(level: .maximum).budget().releaseStatusChecks && many.count > few.count)
+        // Every level has a limit, so a very large account never reads every app at once.
+        for level in CachePolicy.Level.allCases { #expect((1...100).contains(CachePolicy(level: level).budget().releaseStatusChecks)) }
+    }
+
+    @Test func anExpandedCardIsCheckedAtOnceButNotAgainRightAway() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let account = try await manyApps(session, count: 3, keyId: "SYNTHRLS04"), host = "release-expand.appstoreconnect.test", apple = SyntheticApple()
+        StubProtocol.handle(host) { request in
+            guard request.httpMethod == "GET", let appId = account.appIds.first(where: { request.url?.path == "/v1/apps/\($0)/appStoreVersions" }) else { return (404, [:], Data()) }
+            return apple.page([["type": "appStoreVersions", "id": "version-" + appId,
+                "attributes": ["platform": "MAC_OS", "versionString": "2.0", "appVersionState": "IN_REVIEW"],
+                "relationships": ["app": ["data": ["type": "apps", "id": appId]]]]])
+        }
+        let clients: @Sendable (Account) async throws -> AppStoreConnectClient = { try PublishingTests().client($0, host: host) }
+        let appId = account.appIds[1]
+        await session.checkReleaseStatus(accountId: account.id, appId: appId, clients: clients)
+        #expect(StubProtocol.requests(host).count == 1)
+        #expect(await session.appReleaseStatus(account: account, appId: appId)?.checkedAt != nil)
+        await session.checkReleaseStatus(accountId: account.id, appId: appId, clients: clients)
+        #expect(StubProtocol.requests(host).count == 1, "Expanding again right away reuses the fresh status")
+    }
 }

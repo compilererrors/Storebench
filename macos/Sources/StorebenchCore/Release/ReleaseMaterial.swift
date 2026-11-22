@@ -6,8 +6,31 @@ public enum ReleaseMaterial {
     public enum Failure: Error { case invalid }
     public struct Issue: Sendable {
         public let field, message, section: String
+        /// For a field App Store Connect changed since the draft: the localization, its draft scope and Apple's current text, so the
+        /// person can use that text or keep their own in one step.
+        public var localizationId: String? = nil, scope: TextDrafts.Scope? = nil, apple: String? = nil
+        /// For the same field: the text the draft took from the last import and the draft's own text, so the choice can be compared first.
+        public var base: String? = nil, mine: String? = nil
         public init(field: String, message: String, section: String) { self.field = field; self.message = message; self.section = section }
+        /// App Store Connect changed this field after the draft took its text; nothing of it needs sending.
+        public var changedAtApple: Bool { section == ReleaseMaterial.changedAtApple }
+        /// Both App Store Connect and this Mac changed this field since the last import.
+        public var changedOnBothSides: Bool { section == ReleaseMaterial.changedOnBothSides }
+        /// What changed on each side since the draft took its text, for a field the person must choose for; empty otherwise.
+        public var comparisons: [TextComparison] {
+            guard changedAtApple || changedOnBothSides, let apple, let mine else { return [] }
+            guard let base else { return [TextComparison(title: "Your Text Compared With App Store Connect", before: apple, after: mine)] }
+            var result = [TextComparison(title: "Changed in App Store Connect", before: base, after: apple)]
+            if !TextSemantics.sameStoreText(mine, base) { result.append(TextComparison(title: "Changed on This Mac", before: base, after: mine)) }
+            return result
+        }
         public var json: JSONText { .object([("field", .string(field)), ("message", .string(message)), ("section", .string(section))]) }
+    }
+    public static let changedAtApple = "apple-changed", changedOnBothSides = "both-changed"
+    /// One side's change of a text: the text before and after it.
+    public struct TextComparison: Sendable, Equatable {
+        public let title, before, after: String
+        public init(title: String, before: String, after: String) { self.title = title; self.before = before; self.after = after }
     }
     public struct Language: Identifiable, Sendable {
         public let locale, versionId: String
@@ -30,8 +53,13 @@ public enum ReleaseMaterial {
         else if detail.hasSuffix("over the limit") { message = "\(label) is \(detail.dropLast(" the limit".count)) Apple’s limit. Shorten it." }
         else if detail == "remove control characters" { message = "\(label) contains control characters. Remove them." }
         else if detail.hasPrefix("use a complete public") { message = "\(label) is not a complete public URL. Enter one that starts with https://." }
+        else if issue.changedAtApple { message = "\(label) was changed in App Store Connect after your draft took its text. Use App Store Connect's text, or keep yours to send it." }
+        else if issue.changedOnBothSides { message = "\(label) was changed in App Store Connect and on this Mac. Choose which text to keep." }
         else { message = issue.message }
-        return Issue(field: issue.field, message: message, section: issue.section)
+        var presented = Issue(field: issue.field, message: message, section: issue.section)
+        presented.localizationId = issue.localizationId; presented.scope = issue.scope; presented.apple = issue.apple
+        presented.base = issue.base; presented.mine = issue.mine
+        return presented
     }
     /// Fields App Store Connect requires before a version can be added for review.
     public static func required(platform: String, whatsNew: Bool) -> Set<String> {

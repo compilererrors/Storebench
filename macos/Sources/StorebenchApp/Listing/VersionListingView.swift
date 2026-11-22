@@ -85,7 +85,7 @@ struct VersionListingView: View {
                             .id(ReleaseReadiness.languageAnchor(language.locale))
                     }
                     if let plan = planEditor.plan {
-                        ReleaseTextView(plan: plan, session: session, readiness: { [weak model] in
+                        ReleaseTextView(plan: plan, session: session, languages: model.languages.map(\.locale), readiness: { [weak model] in
                             model.map { $0.active && !$0.busy && $0.workflow.ready && $0.matchesPlan } ?? false
                         }, onBusy: { [weak model] in model?.auxiliaryBusy = $0 }, onSaved: { [weak model] in model?.reconcile($0) }, sync: { run(model, sync: true) })
                             .id("bulk-release-fields-\(model.scope.revisionId)/\(model.versionId)")
@@ -181,15 +181,17 @@ struct VersionListingView: View {
     }
     @ViewBuilder private func addLanguage(_ model: VersionListingEditor) -> some View {
         if !model.availableLocales.isEmpty {
+            // One row when it fits, then both choices side by side with the command under them, then one column.
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .bottom, spacing: 12) { languageChoices(model) }
-                VStack(alignment: .leading, spacing: 12) { languageChoices(model) }
+                HStack(alignment: .bottom, spacing: 12) { languagePickers(model); languageCommand(model) }
+                VStack(alignment: .leading, spacing: 12) { HStack(alignment: .bottom, spacing: 12) { languagePickers(model) }; languageCommand(model) }
+                VStack(alignment: .leading, spacing: 12) { languagePickers(model); languageCommand(model) }
             }.environment(\.fieldHintHeight, 0)
         }
     }
-    @ViewBuilder private func languageChoices(_ model: VersionListingEditor) -> some View {
-        StorebenchPicker("Add language", selection: $newLocale) { selectionOptions(model.availableLocales) { SelectionOption(StoreLocales.name($0), value: $0) } }.storebenchFormColumn()
-        StorebenchPicker("Starting text and media", selection: $copyFrom) {
+    @ViewBuilder private func languagePickers(_ model: VersionListingEditor) -> some View {
+        StorebenchPicker("Add Language", selection: $newLocale) { selectionOptions(model.availableLocales) { SelectionOption(StoreLocales.name($0), value: $0) } }.storebenchFormColumn()
+        StorebenchPicker("Starting Text and Media", selection: $copyFrom) {
             SelectionOption("Start empty", value: "")
             selectionOptions(model.version?.localizations ?? []) { SelectionOption("Copy \(StoreLocales.name($0.locale))", value: $0.locale) }
             selectionOptions((model.version?.localizations ?? []).filter { translatable.contains($0.locale) }) {
@@ -197,6 +199,8 @@ struct VersionListingView: View {
             }
         }.storebenchFormColumn()
         .help("Translate uses Apple’s translation on this Mac. The name and links are copied unchanged.")
+    }
+    @ViewBuilder private func languageCommand(_ model: VersionListingEditor) -> some View {
         if !newLocale.isEmpty && (copyFrom.isEmpty || model.workflow.shown.ready) {
             let translating = Self.translationSource(copyFrom) != nil
             StorebenchFieldCommands {
@@ -233,8 +237,7 @@ struct VersionListingView: View {
                     guard let session else { throw PublishFailure.conflict }
                     do {
                         let request = try model.publishingRequest()
-                        let client = try await session.client(for: account)
-                        prepared = try await session.prepareLanguageListingReview(account: account, request: request, client: client)
+                        prepared = try await session.prepareLanguageListingReview(account: account, request: request)
                     } catch { failure = (error as? PublishFailure)?.message; throw error }
                 }
             } else { prepare = nil }

@@ -8,10 +8,19 @@ extension AssetLibrary {
         public let id: String, fileName: String, hash: String, ext: String, category: Category, kind: Kind, referenceName: String
         public let size: Int, width: Int, height: Int, hasAlpha: Bool, hasAudio: Bool
         public let duration: Double?, frameRate: Double?, timeCode: String?
+        /// Optional so files and reads saved before descriptions existed still decode.
+        private var described: String?, tagged: [String]?
+        /// What the screenshot shows, written for AI cards; empty when not described.
+        public var aiDescription: String { described ?? "" }
+        public var tags: [String] { tagged ?? [] }
+        func describing(_ description: String, tags: [String]) -> File { var copy = self; copy.described = description; copy.tagged = tags; return copy }
+        /// Two files are the same when everything saved about them is, so a file without a description equals one with an empty one.
+        public static func == (left: File, right: File) -> Bool { left.json == right.json }
         var json: JSONText {
             .object([("id", .string(id)), ("fileName", .string(fileName)), ("hash", .string(hash)), ("extension", .string(ext)), ("category", .string(category.rawValue)), ("kind", .string(kind.rawValue)),
                      ("referenceName", .string(referenceName)), ("size", .number(Double(size))), ("width", .number(Double(width))), ("height", .number(Double(height))), ("hasAlpha", .bool(hasAlpha)), ("hasAudio", .bool(hasAudio)),
-                     ("duration", duration.map(JSONText.number) ?? .null), ("frameRate", frameRate.map(JSONText.number) ?? .null), ("timeCode", timeCode.map(JSONText.string) ?? .null)])
+                     ("duration", duration.map(JSONText.number) ?? .null), ("frameRate", frameRate.map(JSONText.number) ?? .null), ("timeCode", timeCode.map(JSONText.string) ?? .null),
+                     ("aiDescription", .string(aiDescription)), ("tags", .array(tags.map(JSONText.string)))])
         }
         init(_ value: JSONText) throws {
             guard let id = value["id"]?.text, validID(id), let fileName = value["fileName"]?.text, !fileName.isEmpty, fileName.utf16.count <= 200,
@@ -24,6 +33,15 @@ extension AssetLibrary {
             self.id = id; self.fileName = fileName; self.hash = hash; self.ext = ext; self.kind = kind; self.category = category; referenceName = try AssetLibrary.referenceName(name)
             self.size = size; self.width = width; self.height = height; hasAlpha = alpha; hasAudio = audio; duration = number(value["duration"]); frameRate = number(value["frameRate"]); timeCode = value["timeCode"]?.text
             if kind == .video { guard let duration, duration > 0, let frameRate, frameRate > 0 else { throw failure("The saved video metadata is invalid.") } }
+            // Files saved before descriptions existed have none.
+            let description = value["aiDescription"]?.text ?? ""
+            guard description.utf16.count <= AssetLibrary.descriptionLimit, TextSemantics.validControlText(description) else { throw failure("The saved screenshot description is invalid.") }
+            described = description
+            if case .array(let saved)? = value["tags"] {
+                let names = saved.compactMap(\.text)
+                guard names.count == saved.count, AssetLibrary.tags(from: names.joined(separator: ",")) == names else { throw failure("The saved screenshot tags are invalid.") }
+                tagged = names
+            }
         }
         static func inspect(_ url: URL, category: Category, name: String, timeCode: String?) throws -> (JSONText, Int) {
             try TestIsolation.check(url)
@@ -170,6 +188,20 @@ extension WorkspaceSession {
                 try storeAccess { store in try store.insertIfAbsent(namespace: "asset_library_files", key: prefix + file.id, json: file.json.data) }
             }
             return file
+        }
+    }
+    /// Saves what a screenshot shows and its tags for AI cards. The file itself is unchanged; only its description is written.
+    public func describeAssetLibraryFile(accountId: String, appId: String, id: String, description: String, tags: [String]) throws -> AssetLibrary.File {
+        let prefix = try libraryFilePrefix(accountId, appId), directory = try storeAccess { $0.directory }
+        let text = TextSemantics.trim(description)
+        guard text.utf16.count <= AssetLibrary.descriptionLimit, TextSemantics.validControlText(text), AssetLibrary.tags(from: tags.joined(separator: ",")) == tags else {
+            throw AssetLibrary.failure("Use up to \(AssetLibrary.descriptionLimit) characters and \(AssetLibrary.tagLimit) short tags.")
+        }
+        return try FileMutex.withLock(directory.appendingPathComponent("asset_library_files.mutex")) {
+            let file = try libraryFile(accountId: accountId, appId: appId, id: id).describing(text, tags: tags)
+            let saved = try AssetLibrary.File(file.json)
+            try storeAccess { store in try store.transaction { _ in [.put(namespace: "asset_library_files", key: prefix + id, json: saved.json.data)] } }
+            return saved
         }
     }
     public func removeAssetLibraryFile(accountId: String, appId: String, id: String) throws {

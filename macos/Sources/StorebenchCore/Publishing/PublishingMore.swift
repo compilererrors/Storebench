@@ -149,17 +149,18 @@ extension WorkspaceSession {
             }
         }
         guard !proposed.isEmpty else { planner.notes.append("Saved model and country prices already match Apple, or all selected countries are protected."); return "No price changes" }
-        var points: [AppStoreConnectClient.Resource] = []
-        var codes: [String] = []
-        for item in proposed where !codes.contains(item.territory) { codes.append(item.territory) }
-        for start in stride(from: 0, to: codes.count, by: 25) {
-            points += try await planner.list("/v1/apps/\(request.appId)/appPricePoints?filter%5Bterritory%5D=\(codes[start..<min(start + 25, codes.count)].joined(separator: "%2C"))&limit=200")
+        var codes: [String] = [], needs: [String: Decimal] = [:]
+        for item in proposed {
+            if !codes.contains(item.territory) { codes.append(item.territory) }
+            if let amount = PricingMath.decimal(item.amount) { needs[item.territory] = max(needs[item.territory] ?? amount, amount) }
         }
+        // Each country is read only as far as its highest proposed amount, so an exact match is found or known to be missing.
+        let points = try await planner.pricePoints(.app(request.appId), needs: needs)
         let changes = try proposed.map { item -> PriceInterval in
-            guard let point = points.first(where: { Self.linked($0, "territory") == item.territory && Apple.text($0.attributes?["customerPrice"]).flatMap(PricingMath.decimal) == PricingMath.decimal(item.amount) }) else {
+            guard let point = points.first(where: { $0.territory == item.territory && PricingMath.decimal($0.customerPrice) == PricingMath.decimal(item.amount) }) else {
                 throw PublishFailure.invalid("\(item.territory): \(item.amount) \(item.currency) is not an available Apple price point. Choose an available amount in Pricing; Storebench will not silently change it.")
             }
-            var change = item; change = PriceInterval(territory: item.territory, pointId: point.id, amount: item.amount, currency: item.currency, start: item.start, end: item.end); return change
+            return PriceInterval(territory: item.territory, pointId: point.id, amount: item.amount, currency: item.currency, start: item.start, end: item.end)
         }
         let baseChanges = changes.contains { $0.territory == snapshot.base }
         var final = originalManual

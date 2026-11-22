@@ -41,7 +41,7 @@ struct PageRefreshConfirmation: View {
     let confirmation: EditorRefresh.Confirmation
     let choose: (EditorRefresh.Choice) -> Void
     var body: some View {
-        StorebenchDialog(title: "Save Changes Before Refreshing?", wide: true, height: 320, subtitle: "Refresh Status updates the cards in this release step.") {
+        StorebenchDialog(title: "Save Changes Before Refreshing?", kind: .confirmation, subtitle: "Refresh Status updates the cards in this release step.") {
             Text("Save keeps your edits as local drafts. Discard restores the saved drafts before refreshing. Cancel keeps editing. Nothing is sent to Apple.")
                 .font(.sbCallout).fixedSize(horizontal: false, vertical: true)
         } actions: {

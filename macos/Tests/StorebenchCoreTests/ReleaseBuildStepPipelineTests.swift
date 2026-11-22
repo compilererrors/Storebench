@@ -187,4 +187,25 @@ final class SyntheticSwitch: @unchecked Sendable {
         #expect(await session.reviewsAhead.isEmpty)
         #expect(await session.reviewPreparedAhead(request) == nil)
     }
+
+    /// Replacing a build is one place: Remove from Review, choose the new build and Add for Review again, all in the Build step.
+    @Test func replacingABuildOffersAddForReviewInTheBuildStepOnceTheNewBuildIsAttached() {
+        func ready(_ compliance: ReleaseReadiness.State = .ready, accessibility: ReleaseReadiness.State = .ready) -> [ReleaseReadiness.Step] {
+            [step("local:en-US", .ready), step("version", .ready), step("copyright", .ready), step("build", .ready), step("export-compliance", compliance),
+             step("review-info", .ready), step("age-rating", .ready), step("accessibility", accessibility), step("territories", .ready), step("submission", .unknown)]
+        }
+        // In review: the build step removes the version from review first.
+        let inReview = ReleaseGuide.guide(ready(), appleState: "IN_REVIEW")
+        #expect(inReview.removable && !ReleaseWizard.addsForReviewInBuildStep(inReview))
+        // Removed from review with the new build attached and nothing else missing: Add for Review is right there.
+        #expect(ReleaseWizard.addsForReviewInBuildStep(ReleaseGuide.guide(ready(), appleState: "DEVELOPER_REJECTED")))
+        #expect(ReleaseWizard.replacingBuild(ReleaseGuide.guide(ready(), appleState: "DEVELOPER_REJECTED")) && !ReleaseWizard.replacingBuild(inReview))
+        // While the new build still needs its compliance answer, or something else is missing, it is not offered yet.
+        #expect(!ReleaseWizard.addsForReviewInBuildStep(ReleaseGuide.guide(ready(.blocked), appleState: "DEVELOPER_REJECTED")))
+        #expect(!ReleaseWizard.addsForReviewInBuildStep(ReleaseGuide.guide(ready(accessibility: .blocked), appleState: "DEVELOPER_REJECTED")))
+        // A first submission keeps its own Add for Review step.
+        #expect(!ReleaseWizard.addsForReviewInBuildStep(ReleaseGuide.guide(ready(), appleState: "PREPARE_FOR_SUBMISSION")))
+        // The lock notice names App Store Connect's own command.
+        #expect(inReview.lockNotice?.description.contains("Remove from Review") == true && inReview.lockNotice?.description.contains("Cancel Submission") == false)
+    }
 }

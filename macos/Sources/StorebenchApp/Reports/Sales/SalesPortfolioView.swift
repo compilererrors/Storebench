@@ -16,7 +16,10 @@ struct SalesPortfolioView: View {
     private struct Range: Equatable { var from, through: String }
     private struct Read { let apps: [SalesPortfolio.App], money: ReportMoney.Context?, status: String }
     private var range: SalesPresentation.Range? { try? .init(beginDate: from, endDate: through) }
-    private var analysis: SalesPortfolio.Analysis? { range.flatMap { try? SalesPortfolio.analyze(apps, range: $0) } }
+    /// The analysis of the shown apps and dates, worked out away from the interface each time either changes.
+    @State private var analysis: SalesPortfolio.Analysis?
+    /// Changes whenever the saved reports are read again, so the analysis follows them.
+    @State private var appsRead = 0
     var body: some View {
         let selected = analysis
         ScrollView {
@@ -28,10 +31,10 @@ struct SalesPortfolioView: View {
                 else if !apps.isEmpty {
                     if apps.contains(where: \.unavailable) { Text("Some app reports could not be read. Their coverage is unknown and their data is excluded.").foregroundStyle(StorebenchTheme.muted) }
                     if !from.isEmpty || !through.isEmpty {
-                        Card(title: "Shared reporting range", subtitle: "Pacific date labels. Only whole saved periods count for each app.") {
+                        Card(title: "Shared Reporting Range", subtitle: "Pacific date labels. Only whole saved periods count for each app.") {
                             HStack { StorebenchTextField("Start date · YYYY-MM-DD", text: $from); StorebenchTextField("End date · YYYY-MM-DD", text: $through) }
                         }
-                        if let selected { summary(selected) } else { Text("Choose valid start and end dates in order.").foregroundStyle(StorebenchTheme.muted) }
+                        if let selected { summary(selected) } else if range == nil { Text("Choose valid start and end dates in order.").foregroundStyle(StorebenchTheme.muted) }
                     }
                     StorebenchCollection(items: apps, title: { $0.title }, empty: "No apps with saved sales for these dates.") { app in
                         let row = selected?.rows.first { $0.id == app.id }
@@ -48,8 +51,14 @@ struct SalesPortfolioView: View {
             }.modifier(StorebenchPageContent())
         }
         .task {
-            if apps.isEmpty, let read = history?.rememberedRead("sales-portfolio", as: Read.self) { apps = read.apps; money = read.money; status = read.status }
+            if apps.isEmpty, let read = history?.rememberedRead("sales-portfolio", as: Read.self) { apps = read.apps; appsRead += 1; money = read.money; status = read.status }
             await load()
+        }
+        .task(id: "\(appsRead)|\(from)|\(through)") {
+            guard let range else { analysis = nil; return }
+            let apps = apps
+            let value = await Task.detached(priority: .userInitiated) { try? SalesPortfolio.analyze(apps, range: range) }.value
+            if !Task.isCancelled { analysis = value }
         }
         .historyValue("sales-portfolio", Binding(get: { Range(from: from, through: through) }, set: { from = $0.from; through = $0.through }))
         .onDisappear { loadId = UUID() }
@@ -58,12 +67,12 @@ struct SalesPortfolioView: View {
     private func summary(_ analysis: SalesPortfolio.Analysis) -> some View {
         let context = money ?? ReportMoney.Context(currency: "USD"), converted = ReportMoney.convert(analysis.proceeds, context: context)
         let complete = money != nil && analysis.moneyComplete && analysis.productsComplete && converted.complete
-        return Card(title: "Sales portfolio", subtitle: "Proceeds keep their original currencies. Reference conversion does not confirm a payout.") {
+        return Card(title: "Sales Portfolio", subtitle: "Proceeds keep their original currencies. Reference conversion does not confirm a payout.") {
             StorebenchMetricGrid {
-            Fact(title: "Paid app purchases", value: String(analysis.paid))
-            Fact(title: "Apps with complete coverage", value: "\(analysis.completeApps) / \(apps.count)", info: "Apps with a saved report for every day in the shared range.")
+            Fact(title: "Paid App Purchases", value: String(analysis.paid))
+            Fact(title: "Apps with Complete Coverage", value: "\(analysis.completeApps) / \(apps.count)", info: "Apps with a saved report for every day in the shared range.")
             Fact(title: "Estimated proceeds · \(context.currency)\(complete ? "" : " · Partial")", value: money == nil ? "—" : ReportMoney.label(converted.amount, currency: context.currency), info: "Reported proceeds converted to your display currency with dated reference rates. An estimate, not a payout.")
-            Fact(title: "Saved report periods", value: String(analysis.rows.reduce(0) { $0 + $1.periods }))
+            Fact(title: "Saved Report Periods", value: String(analysis.rows.reduce(0) { $0 + $1.periods }))
             }
             Text(analysis.proceeds.map { "\($0.amount) \($0.currency)" }.joined(separator: " · ")).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             Text("Rate dates: \(converted.dates.isEmpty ? "same-currency amounts or no converted rates" : converted.dates.joined(separator: ", ")). Missing reports, product coverage and rates keep the estimate partial.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
@@ -73,7 +82,7 @@ struct SalesPortfolioView: View {
         guard !loading, let session else { return }; let id = UUID(); loadId = id; loading = true; defer { if loadId == id { loading = false } }
         do {
             let saved = try await session.salesPortfolio(); guard loadId == id, !Task.isCancelled else { return }
-            apps = saved; failed = false
+            apps = saved; appsRead += 1; failed = false
             let dates = saved.flatMap(\.periods).flatMap { [$0.beginDate, $0.endDate] }.sorted()
             if from.isEmpty, through.isEmpty { from = dates.first ?? ""; through = dates.last ?? "" }
             do {

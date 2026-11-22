@@ -34,6 +34,8 @@ public actor AppleReadAdmission {
         public var nextActive = 5
         /// Background requests running at once.
         public var backgroundActive = 3
+        /// Requests running at once for one account while another account's requests wait, so one account never takes every slot.
+        public var accountActive = 4
         /// Requests that may wait per priority before new ones of that priority are dropped. Visible reads always wait.
         public var nextWaiting = 48, backgroundWaiting = 24
         public init() {}
@@ -52,24 +54,32 @@ public actor AppleReadAdmission {
         return lock.withLock {
             if let queue = queues[key] { return queue }
             if queues.count >= 64 { queues.removeAll() }
-            let queue = AppleReadAdmission(); queues[key] = queue; return queue
+            let queue = AppleReadAdmission(limits: sharedLimits); queues[key] = queue; return queue
         }
     }
     private static let lock = NSLock()
     nonisolated(unsafe) private static var queues: [String: AppleReadAdmission] = [:]
+    nonisolated(unsafe) private static var sharedLimits = Limits()
+    /// The limits of every shared queue, now and for queues made later. Requests already running finish; a lower limit applies as they do.
+    public static func configureShared(_ limits: Limits) {
+        let existing = lock.withLock { sharedLimits = limits; return Array(queues.values) }
+        for queue in existing { Task { await queue.configure(limits) } }
+    }
+    public func configure(_ next: Limits) { limits = next; pump() }
     /// The shared read a request belongs to, so a reader that joins it can raise its priority.
     @TaskLocal public static var key: String?
 
     private struct Waiter {
-        let id: UUID, key: String?, order: Int, cost: AppleReadCost
+        let id: UUID, key: String?, account: String?, order: Int, cost: AppleReadCost
         var priority: AppleReadPriority, bypasses = 0
         let continuation: CheckedContinuation<AppleReadPriority, Error>
     }
     /// A newer, smaller request may pass an older request only this many times at the same urgency.
     static let maximumCostBypasses = 8
-    private let limits: Limits
+    private var limits: Limits
     private var waiting: [Waiter] = []
     private var active: [AppleReadPriority: Int] = [:]
+    private var accounts: [String: Int] = [:]
     private var raised: [String: AppleReadPriority] = [:]
     private var order = 0, dropped = 0
 
@@ -80,11 +90,13 @@ public actor AppleReadAdmission {
     }
 
     /// Runs one request when a slot is free for its priority, with smaller requests first at the same urgency.
+    /// `account` names the API key the request uses; nil counts toward no account's limit.
     public func run<T: Sendable>(_ priority: AppleReadPriority = AppleReadPriority.current, key: String? = AppleReadAdmission.key,
-                                 cost: AppleReadCost = AppleReadCost.current ?? .standard,
+                                 cost: AppleReadCost = AppleReadCost.current ?? .standard, account: String? = nil,
                                  _ body: @Sendable () async throws -> T) async throws -> T {
-        let slot = try await acquire(priority, key: key, cost: cost)
-        do { try Task.checkCancellation(); let value = try await body(); release(slot, key: key); return value } catch { release(slot, key: key); throw error }
+        let slot = try await acquire(priority, key: key, cost: cost, account: account)
+        do { try Task.checkCancellation(); let value = try await body(); release(slot, key: key, account: account); return value }
+        catch { release(slot, key: key, account: account); throw error }
     }
 
     /// A more urgent reader joined the shared read for `key`: a request of it that waits, or has not reached the queue yet, moves up.
@@ -95,22 +107,28 @@ public actor AppleReadAdmission {
         pump()
     }
 
-    private func acquire(_ requested: AppleReadPriority, key: String?, cost: AppleReadCost) async throws -> AppleReadPriority {
+    private func acquire(_ requested: AppleReadPriority, key: String?, cost: AppleReadCost, account: String?) async throws -> AppleReadPriority {
         try Task.checkCancellation()
         let priority = max(requested, key.flatMap { raised[$0] } ?? requested)
-        if !waiting.contains(where: { $0.priority >= priority }), startable(priority) { active[priority, default: 0] += 1; return priority }
+        if !waiting.contains(where: { $0.priority >= priority && $0.account == account }), startable(priority, account: account) { take(priority, account); return priority }
         let limit = priority == .next ? limits.nextWaiting : priority == .background ? limits.backgroundWaiting : Int.max
         guard waiting.count(where: { $0.priority == priority }) < limit else { dropped += 1; throw Failure.full }
         let id = UUID()
         order += 1; let position = order
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                waiting.append(Waiter(id: id, key: key, order: position, cost: cost, priority: priority, continuation: continuation))
+                waiting.append(Waiter(id: id, key: key, account: account, order: position, cost: cost, priority: priority, continuation: continuation))
             }
         } onCancel: { Task { await self.cancel(id) } }
     }
 
-    private func startable(_ priority: AppleReadPriority) -> Bool {
+    private func take(_ priority: AppleReadPriority, _ account: String?) {
+        active[priority, default: 0] += 1
+        if let account { accounts[account, default: 0] += 1 }
+    }
+    private func startable(_ priority: AppleReadPriority, account: String?) -> Bool {
+        // The per-account limit applies only while another account's request waits, so a single account can use every slot.
+        if let account, accounts[account, default: 0] >= limits.accountActive, waiting.contains(where: { $0.account != nil && $0.account != account }) { return false }
         let total = active.values.reduce(0, +), ahead = (active[.next] ?? 0) + (active[.background] ?? 0)
         switch priority {
         case .visible: return total < limits.active
@@ -119,15 +137,16 @@ public actor AppleReadAdmission {
         }
     }
 
-    private func release(_ slot: AppleReadPriority, key: String?) {
+    private func release(_ slot: AppleReadPriority, key: String?, account: String?) {
         active[slot, default: 1] -= 1
+        if let account { accounts[account, default: 1] -= 1; if accounts[account] == 0 { accounts[account] = nil } }
         if let key { raised[key] = nil }
         pump()
     }
 
     /// Urgency always wins. Within it, smaller requests go first, then FIFO; an older request passed often enough goes next.
     private func nextWaiter() -> Int? {
-        let eligible = waiting.indices.filter { startable(waiting[$0].priority) }
+        let eligible = waiting.indices.filter { startable(waiting[$0].priority, account: waiting[$0].account) }
         guard let priority = eligible.map({ waiting[$0].priority }).max() else { return nil }
         let peers = eligible.filter { waiting[$0].priority == priority }
         if let oldest = peers.filter({ waiting[$0].bypasses >= Self.maximumCostBypasses }).min(by: { waiting[$0].order < waiting[$1].order }) { return oldest }
@@ -141,7 +160,7 @@ public actor AppleReadAdmission {
             for older in waiting.indices where waiting[older].priority == waiter.priority && waiting[older].order < waiter.order {
                 waiting[older].bypasses = min(Self.maximumCostBypasses, waiting[older].bypasses + 1)
             }
-            active[waiter.priority, default: 0] += 1
+            take(waiter.priority, waiter.account)
             waiter.continuation.resume(returning: waiter.priority)
         }
     }

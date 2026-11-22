@@ -99,7 +99,9 @@ struct ReleaseWizardTests {
         // Quick Release is its own entry right after Release, with a stable key for saved links.
         #expect(AppNavigation.Section.quickRelease.title == "Quick Release" && LibraryChooser.sections.firstIndex(of: .quickRelease) == LibraryChooser.sections.firstIndex(of: .release).map { $0 + 1 })
         #expect(AppNavigation.Section(key: "quick-release") == .quickRelease)
-        #expect(AppNavigation.Section.allCases.filter { ![.release, .pricing].contains($0) }.allSatisfy { $0.title == $0.rawValue })
+        // Titles use title-style capitalization; the raw values are stable identities.
+        #expect(AppNavigation.Section.overview.title == "App Overview" && AppNavigation.Section.publish.title == "App Store Changes" && AppNavigation.Section.journal.title == "Change Journal")
+        #expect(AppNavigation.Section.allCases.filter { ![.release, .pricing, .overview, .publish, .journal].contains($0) }.allSatisfy { $0.title == $0.rawValue })
         // Every App Store Connect page belongs to a guide or stands on its own; a guide never points to another guide.
         #expect(AppNavigation.Section.allCases.compactMap(\.guide).allSatisfy { $0.group == .guides })
         #expect([AppNavigation.Section.groups, .externalTesting, .testers, .testInformation, .feedback].allSatisfy { $0.group == .testflight && $0.guide == .startTesting })
@@ -141,7 +143,7 @@ struct ReleaseWizardTests {
         #expect(information.missing == ["User name", "Password", "Last name", "Phone number", "Email"])
         var review = step("review-info", .blocked)
         review.issues = ["Phone number", "Email"].map { .init(field: "review", message: $0, section: "missing") }
-        #expect(ReleaseWizard.presented(review).detail == "Missing at App Store Connect: Phone number, Email. Fill it in below, choose Save, then Send to Apple in the list of changes to send it.")
+        #expect(ReleaseWizard.presented(review).detail == "Missing at App Store Connect: Phone number, Email. Fill it in below, choose Sync to Apple, then Save in the review to send it.")
         #expect(ReleaseWizard.presented(step("review-info", .ready)).detail == "Synthetic detail")
     }
 
@@ -160,5 +162,24 @@ struct ReleaseWizardTests {
         #expect(ReleaseWizard.prefetchDelay(failures: 0, lifetime: .seconds(5)) == .seconds(20))
         #expect(ReleaseWizard.prefetchDelay(failures: 0, lifetime: .seconds(3_600)) == .seconds(600))
         #expect((1...7).map { ReleaseWizard.prefetchDelay(failures: $0, lifetime: .seconds(300)) } == [20, 40, 80, 160, 300, 300, 300].map { .seconds($0) })
+    }
+
+    /// A language that is only on this Mac is one row that says what is ready to upload, not three warnings.
+    @Test func aNewLanguageOnlyOnThisMacIsOneRowReadyToSend() {
+        let rows = ["apple-text:ja", "apple-info:ja", "media:ja", "apple-text:fr-FR"].map { id -> ReleaseReadiness.Step in
+            .init(id: id, label: id, detail: id.hasPrefix("media:") ? "This language is missing at Apple." : "Synthetic detail", href: "/synthetic", action: "Save", state: .blocked, territories: nil, guideHref: nil)
+        }
+        var changed = ReleaseReadiness.Step(id: "apple-text:sv", label: "sv", detail: "Synthetic", href: "/synthetic", action: "Save", state: .blocked, territories: nil, guideHref: nil)
+        var issue = ReleaseMaterial.Issue(field: "description", message: "Description", section: ReleaseMaterial.changedAtApple); issue.apple = "Synthetic newer"
+        changed.issues = [issue]
+        let grouped = ReleaseWizard.grouped((rows + [changed]).map(ReleaseWizard.presented))
+        let japanese = grouped.filter { $0.label.hasPrefix(StoreLocales.name("ja")) }
+        #expect(japanese.count == 1 && ReleaseWizard.readyToSend(japanese[0]), "\(grouped.map(\.label))")
+        #expect(japanese[0].detail.hasPrefix("Its version text, name, subtitle and privacy policy and screenshots"), "Parts in reading order: \(japanese[0].detail)")
+        #expect(japanese[0].action.isEmpty, "A merged row has no command that could open nothing")
+        #expect(grouped.filter { $0.label.hasPrefix(StoreLocales.name("fr-FR")) }.count == 1)
+        // A field changed in App Store Connect still asks for a choice, on its own row.
+        let swedish = grouped.filter { $0.id == "apple-text:sv" }
+        #expect(swedish.count == 1 && !ReleaseWizard.readyToSend(swedish[0]) && swedish[0].issues.count == 1)
     }
 }

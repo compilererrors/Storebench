@@ -49,7 +49,7 @@
         ],
         [
           "How do I resume?",
-          "If the expected material is missing, choose Sync app material. Storebench starts a new download and keeps earlier revisions and drafts. When status is unavailable, choose Refresh import status first; it checks the existing job rather than starting another one."
+          "If the expected material is missing, choose Sync App Material. Storebench starts a new download and keeps earlier revisions and drafts. When status is unavailable, choose Refresh import status first; it checks the existing job rather than starting another one."
         ],
         [
           "What if another import is running?",
@@ -73,7 +73,7 @@
         ],
         [
           "What should I do when status is unavailable?",
-          "Open the affected app’s Sync app data card and choose Refresh Status. If a request timed out, the download may still be running. Check its status before starting another job, then choose Open beside the affected source to check its saved result."
+          "Open the affected app’s Sync App Data card and choose Refresh Status. If a request timed out, the download may still be running. Check its status before starting another job, then choose Open beside the affected source to check its saved result."
         ],
         [
           "What should I do after an interruption?",
@@ -149,7 +149,7 @@
       "questions": [
         [
           "How do I send a build for external beta review?",
-          "Stage an IPA or PKG in Storebench Build delivery and approve its exact upload review, or use Xcode or Transporter. Save a description for each TestFlight app language with Edit test information, then save contact and demo access with Beta review details. Use Export Compliance only after deciding whether the build uses non-exempt encryption under Apple's guidance; no answer is preselected. If a declaration is needed, choose an existing approved declaration that accurately describes this build. Each change has its own approval. When processing finishes, choose Review beta build beside an eligible build and approve its separate App Store changes review. Apple decides beta approval."
+          "Stage an IPA or PKG in Storebench Build Delivery and approve its exact upload review, or use Xcode or Transporter. Save a description for each TestFlight app language with Edit test information, then save contact and demo access with Beta review details. Use Export Compliance only after deciding whether the build uses non-exempt encryption under Apple's guidance; no answer is preselected. If a declaration is needed, choose an existing approved declaration that accurately describes this build. Each change has its own approval. When processing finishes, choose Review beta build beside an eligible build and approve its separate App Store changes review. Apple decides beta approval."
         ],
         [
           "Where do I enter What to Test?",
@@ -196,7 +196,7 @@
       "summary": "Download a private snapshot of written reviews, compare ratings and territories, and use feedback to plan work.",
       "questions": [
         [
-          "What does Download reviews do?",
+          "What does Download Reviews do?",
           "It reads customer reviews using the selected app’s API connection, newest first, and adds them to the saved reviews. There is no limit: every review is kept, and a review Apple no longer returns stays saved. Later downloads stop once they reach reviews that are already saved and unchanged; at least once a week, and whenever older reviews may be missing, every page is read so edits to older reviews arrive too. You can leave this view while the background job runs. The progress bar is indeterminate because the final count is unknown until all pages are checked. Reporter tokens do not fetch reviews."
         ],
         [
@@ -421,7 +421,7 @@
     },
     {
       "id": "storage",
-      "title": "Encrypted local storage",
+      "title": "Encrypted Local Storage",
       "summary": "Saved work is kept in a shared SQLCipher database and authenticated encrypted media files on this device.",
       "questions": [
         [
@@ -610,7 +610,7 @@
     {
       "id": "sync",
       "title": "Sync data from Apple",
-      "summary": "Sync New Data downloads one app’s data from Apple; Sync All Apps downloads across your library. Local edits stay local. The Sync app data card shows results, Check Setup and recovery actions.",
+      "summary": "Sync New Data downloads one app’s data from Apple; Sync All Apps downloads across your library. Local edits stay local. The Sync App Data card shows results, Check Setup and recovery actions.",
       "questions": [
         [
           "What does the source count mean?",
@@ -730,7 +730,7 @@
         ],
         [
           "What if preparing a review takes too long or fails?",
-          "Check for a macOS Keychain prompt. After two minutes, Storebench stops waiting and shows a reportable error code. Check Publishing history before retrying: a review may have been saved even if its response did not arrive. Open an unexpired review to continue. Copy issue details includes the public error code and guidance, without your app data or Apple’s explanation."
+          "Check for a macOS Keychain prompt. After two minutes, Storebench stops waiting and shows a reportable error code. Check Publishing History before retrying: a review may have been saved even if its response did not arrive. Open an unexpired review to continue. Copy issue details includes the public error code and guidance, without your app data or Apple’s explanation."
         ],
         [
           "How do I start a new Apple release?",
@@ -749,8 +749,8 @@
           "No. Submit to App Review is a separate action. Select a processed, unexpired App Store eligible build for the same platform and version, delivered through Storebench, Xcode or Transporter. Apple validates required metadata, review information, agreements and export compliance. Approved versions using manual release can then be released from App Store changes."
         ],
         [
-          "Can I cancel an App Review submission?",
-          "Choose Cancel Submission beside the version in Versions at Apple, or in App Store changes, then review the exact submission. Storebench allows it only when that version is the sole item in a waiting, in-review or unresolved submission. Apple returns the version to Developer Rejected; submitting again restarts review."
+          "Can I remove a version from App Review?",
+          "Choose Remove from Review beside the version in Versions at Apple, or in Release step 4, Build, then review the exact submission. To replace the build, choose the new build in the same step once App Store Connect shows Developer Rejected, and Add for Review appears right there. Storebench allows it only when that version is the sole item in a waiting, in-review or unresolved submission. Apple returns the version to Developer Rejected; submitting again restarts review."
         ],
         [
           "What if something changes after I review?",

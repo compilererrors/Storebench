@@ -5,9 +5,28 @@ import Foundation
 public enum ReleaseWizard {
     /// The build the Build step selects. A chosen build stays while only part of the list is read, so a choice from a later page
     /// is not replaced by the first page; only a complete list that lacks it lets the build Apple has, then the first valid one, take over.
-    public static func chosenBuild(_ current: String?, matching: [TestFlightBuild], attachedId: String?, complete: Bool) -> String? {
+    public static func chosenBuild(_ current: String?, matching: [TestFlightBuild], attachedId: String?, complete: Bool, replacing: Bool = false) -> String? {
+        // A version removed from review for a new build moves to the newest processed build uploaded after the one it has.
+        if replacing, current == nil || current == attachedId, let newer = newerBuilds(matching, attachedId: attachedId).first(where: { $0.processingState == "VALID" }) { return newer.id }
         if let current, matching.contains(where: { $0.id == current }) || !complete { return current }
         return matching.first(where: { $0.id == attachedId })?.id ?? matching.first(where: { $0.processingState == "VALID" })?.id ?? matching.first?.id
+    }
+    /// The builds uploaded after the build the version has, newest first; empty while Apple names no build for the version.
+    public static func newerBuilds(_ matching: [TestFlightBuild], attachedId: String?) -> [TestFlightBuild] {
+        guard let attached = matching.first(where: { $0.id == attachedId }), let since = ISODateParser.date(attached.uploadedDate) else { return [] }
+        return matching.filter { build in build.id != attached.id && ISODateParser.date(build.uploadedDate).map { $0 > since } == true }
+            .sorted { (ISODateParser.date($0.uploadedDate) ?? .distantPast) > (ISODateParser.date($1.uploadedDate) ?? .distantPast) }
+    }
+    /// Uploads Apple has received for the version that are not in its build list yet, such as one still being processed or one that
+    /// failed, newest first. With `after`, only uploads since that time count, such as those after the version's current build.
+    public static func pendingUploads(_ uploads: [BuildDelivery], platform: String, version: String, builds: [TestFlightBuild], after: String?) -> [BuildDelivery] {
+        let listed = Set(builds.map(\.id)), numbers = Set(builds.map(\.version)), since = after.flatMap(ISODateParser.date)
+        func time(_ upload: BuildDelivery) -> Date? { (upload.uploadedDate ?? upload.createdDate).flatMap(ISODateParser.date) }
+        return uploads.filter { upload in
+            upload.platform == platform && upload.version == version && upload.state != "Complete"
+                && !(upload.buildId.map(listed.contains) ?? false) && !numbers.contains(upload.buildNumber)
+                && (since == nil || time(upload).map { $0 > since! } == true)
+        }.sorted { (time($0) ?? .distantPast) > (time($1) ?? .distantPast) }
     }
     /// When the open step reads its next step ahead again. After a read it waits until shortly before the shared answers expire,
     /// at least 20 seconds and at most 10 minutes; after failed reads it waits 20, 40, 80 and 160 seconds, then 5 minutes each time.
@@ -88,6 +107,17 @@ public enum ReleaseWizard {
         phase.locked ? [] : phase.steps.filter { $0.state == .blocked }
     }
 
+    /// After a version was removed from review to replace its build, the Build step offers Add for Review itself once the new
+    /// build is attached and nothing else is missing, so a build is replaced in one place.
+    /// True while a version removed from review, or rejected, can take a newer build in the Build step.
+    public static func replacingBuild(_ guide: ReleaseGuide.Guide) -> Bool {
+        ["DEVELOPER_REJECTED", "REJECTED", "METADATA_REJECTED"].contains(guide.appleState ?? "") && guide.phases.first(where: { $0.id == "build" })?.locked == false
+    }
+    public static func addsForReviewInBuildStep(_ guide: ReleaseGuide.Guide) -> Bool {
+        guard ["DEVELOPER_REJECTED", "REJECTED", "METADATA_REJECTED"].contains(guide.appleState ?? ""),
+              let build = guide.phases.first(where: { $0.id == "build" }), !build.locked, missing(build).isEmpty else { return false }
+        return submissionProblems(guide).isEmpty
+    }
     /// One ordered list of confirmed problems before submission, including fields in earlier release steps.
     /// Unknown and manual checks stay separate: they are not evidence that a required answer is missing.
     public static func submissionProblems(_ guide: ReleaseGuide.Guide) -> [ReleaseReadiness.Step] {
@@ -121,19 +151,54 @@ public enum ReleaseWizard {
         // Step 3's own checks name what is only on this Mac and that saving on this step uploads it; there is nothing to open elsewhere.
         for (prefix, what) in [("apple-text:", "Version text"), ("apple-info:", "Name, subtitle and privacy policy"), ("media:", "Screenshots and app previews")] where step.id.hasPrefix(prefix) && step.state == .blocked {
             let locale = String(step.id.dropFirst(prefix.count))
-            return ReleaseReadiness.Step(id: step.id, label: "\(StoreLocales.name(locale)) (\(locale)) · \(what)", detail: localOnly(step, prefix: prefix),
-                                         href: step.href, action: step.action, state: step.state, territories: step.territories, guideHref: step.guideHref)
+            var named = ReleaseReadiness.Step(id: step.id, label: "\(StoreLocales.name(locale)) (\(locale)) · \(what)", detail: localOnly(step, prefix: prefix),
+                                              href: step.href, action: step.action, state: step.state, territories: step.territories, guideHref: step.guideHref)
+            // Text changed at App Store Connect gets its own choice per field; text only on this Mac is sent by the review below.
+            named.issues = step.issues.filter { $0.changedAtApple || $0.changedOnBothSides }.map(ReleaseMaterial.presented)
+            return named
         }
         if step.id == "review-info", step.state == .blocked {
             let named = step.issues.map(\.message)
             return ReleaseReadiness.Step(id: step.id, label: step.label,
                                          detail: (named.isEmpty ? "App Store Connect does not have complete App Review Information for this version yet." : "Missing at App Store Connect: " + named.joined(separator: ", ") + ".")
-                                            + " Fill it in below, choose Save, then Send to Apple in the list of changes to send it.",
+                                            + " Fill it in below, choose Sync to Apple, then Save in the review to send it.",
                                          href: step.href, action: step.action, state: step.state, territories: step.territories, guideHref: step.guideHref)
         }
         guard step.id == "build", step.state == .blocked, step.detail.hasPrefix("No build is attached") else { return step }
         return ReleaseReadiness.Step(id: step.id, label: step.label, detail: "No build is added to this version at Apple. Add Build prepares the review that adds the chosen build. It is not submitted for review yet.",
                                      href: step.href, action: "Add Build", state: step.state, territories: step.territories, guideHref: step.guideHref)
+    }
+
+    /// True for a row that only waits for step 3 to upload what is saved on this Mac: nothing to choose, fix or replace.
+    public static func readyToSend(_ step: ReleaseReadiness.Step) -> Bool {
+        guard step.state == .blocked, step.issues.isEmpty else { return false }
+        return step.id.hasPrefix("upload:") || ["apple-text:", "apple-info:", "media:"].contains { step.id.hasPrefix($0) } && !step.detail.hasPrefix("Apple does not accept")
+    }
+    /// Step 3's rows with every language that only waits for its upload merged into one row per language, naming what it uploads.
+    /// Rows that ask for a choice or a fix stay as they are.
+    public static func grouped(_ steps: [ReleaseReadiness.Step]) -> [ReleaseReadiness.Step] {
+        var result: [ReleaseReadiness.Step] = [], merged: [String: Int] = [:], parts: [String: Set<String>] = [:]
+        // In the order a listing reads: its text, then its name and subtitle, then its media.
+        let order = ["apple-text:", "apple-info:", "media:"]
+        let names = ["apple-text:": "version text", "apple-info:": "name, subtitle and privacy policy", "media:": "screenshots and app previews"]
+        for step in steps {
+            guard readyToSend(step), let prefix = order.first(where: { step.id.hasPrefix($0) }) else { result.append(step); continue }
+            let locale = String(step.id.dropFirst(prefix.count))
+            parts[locale, default: []].insert(prefix)
+            if merged[locale] == nil { merged[locale] = result.count; result.append(step) }
+        }
+        for (locale, index) in merged {
+            // A single row keeps its own detail, which names the fields it uploads.
+            let what = order.filter { parts[locale]?.contains($0) == true }.compactMap { names[$0] }
+            guard what.count > 1 else { continue }
+            let list = what.dropLast().joined(separator: ", ") + " and " + what.last!
+            let first = result[index]
+            // Nothing to open: Prepare Review on the same step sends it, so the merged row has no command of its own.
+            result[index] = ReleaseReadiness.Step(id: "upload:" + locale, label: "\(StoreLocales.name(locale)) (\(locale)) · " + (what.count == names.count ? "New Language" : "Changes to Upload"),
+                detail: "Its " + list + " are saved on this Mac and not in App Store Connect yet. Prepare Review below lists them, and Save uploads them.",
+                href: first.href, action: "", state: first.state, territories: first.territories, guideHref: first.guideHref)
+        }
+        return result
     }
 
     /// What step 3 still has to upload, by name: "Only on this Mac, not in App Store Connect yet: Promotional Text, Keywords."
@@ -143,6 +208,12 @@ public enum ReleaseWizard {
         let rejected = step.issues.filter { $0.section == "rejected" }.map(\.message)
         if !rejected.isEmpty { return "Apple does not accept these sizes. " + rejected.joined(separator: " ") + " Replace the screenshots in step 2, Text and Screenshots, before saving." }
         let named = step.issues.filter { $0.section == "missing" }.map(\.message)
+        let elsewhere = step.issues.filter(\.changedAtApple).map(\.message), both = step.issues.filter(\.changedOnBothSides).map(\.message)
+        if !elsewhere.isEmpty || !both.isEmpty {
+            return [elsewhere.isEmpty ? nil : "Changed in App Store Connect since your draft: " + elsewhere.joined(separator: ", ") + ". Use App Store Connect's text, or keep yours and the review below sends it.",
+                    both.isEmpty ? nil : "Changed in App Store Connect and on this Mac: " + both.joined(separator: ", ") + ". Choose which text to keep.",
+                    named.isEmpty ? nil : "Only on this Mac, not in App Store Connect yet: " + named.joined(separator: ", ") + "." + save].compactMap { $0 }.joined(separator: " ")
+        }
         if !named.isEmpty { return "Only on this Mac, not in App Store Connect yet: " + named.joined(separator: ", ") + "." + save }
         switch prefix {
         case "apple-text:": return "This language is not in the version at App Store Connect yet. Its text is only on this Mac." + save

@@ -3,10 +3,13 @@ import Foundation
 
 public enum ScreenshotFailure: Error, Equatable {
     case invalidImage(String), size(String), limit(String), stale, notFound, batch(String)
+    /// A display size of this language already has screenshots, and the addition only fills empty sizes.
+    case occupied(String)
 
     public var message: String {
         switch self {
         case .invalidImage(let text), .size(let text), .limit(let text), .batch(let text): text
+        case .occupied(let type): "\(StoreLocales.displayTypeName(type)) already has screenshots in this language. Choose Replace Existing to swap them."
         case .stale: "Saved media changed in another window, import or upload. Your edits are still here. Reload the latest layout before saving again."
         case .notFound: "Screenshot language or size not found."
         }
@@ -219,8 +222,13 @@ extension WorkspaceSession {
         try addScreenshotsWithReceipt(accountId: accountId, appId: appId, revisionId: revisionId, localizationId: localizationId, setId: setId, files: files).count
     }
 
+    /// How an addition treats screenshots already in a display size: kept with the new ones after them, excluded so only the new
+    /// ones remain, or left alone by refusing the addition.
+    public enum ScreenshotAddition: Sendable { case append, replace, onlyIntoEmpty }
+
     /// `assetIds` names, per file, the Asset Library file it already is at Apple, so a Save adds that file instead of uploading it again.
-    public func addScreenshotsWithReceipt(accountId: String, appId: String, revisionId: String, localizationId: String, setId: String?, files: [(name: String, data: Data)], assetIds: [String?] = []) throws -> MediaAdditionReceipt {
+    public func addScreenshotsWithReceipt(accountId: String, appId: String, revisionId: String, localizationId: String, setId: String?, files: [(name: String, data: Data)], assetIds: [String?] = [],
+                                          addition: ScreenshotAddition = .append) throws -> MediaAdditionReceipt {
         guard !files.isEmpty else { throw ScreenshotFailure.batch("Choose at least one screenshot.") }
         guard assetIds.isEmpty || assetIds.count == files.count, assetIds.allSatisfy({ $0.map(AssetLibrary.validID) ?? true }) else { throw ScreenshotFailure.batch("Choose the Asset Library files again.") }
         guard files.count <= ScreenshotSpecs.maximum else { throw ScreenshotFailure.batch("Choose no more than 10 images. Save any exclusions first to free slots.") }
@@ -253,11 +261,15 @@ extension WorkspaceSession {
                     set = locale()?.1.screenshotSets.first { $0.displayType == item.type }
                 }
                 guard let set else { throw ScreenshotFailure.notFound }
-                if !affected.contains(set.id) { affected.append(set.id) }
+                let first = !affected.contains(set.id)
+                if first { affected.append(set.id) }
                 let id = "local-\(UUID().uuidString.lowercased())"
                 let existing = set.screenshots.map(\.id) + Self.uploads(updated).filter { $0.1["setId"]?.text == set.id }.map(\.0)
                 let current = updated["screenshotLayouts"]?[set.id]
-                let hidden = Self.strings(current?["hidden"])
+                var hidden = Self.strings(current?["hidden"])
+                if first, addition == .onlyIntoEmpty, !Set(existing).subtracting(hidden).isEmpty { throw ScreenshotFailure.occupied(item.type) }
+                // Replacing excludes what the size shows now; the screenshots themselves stay saved and can be shown again.
+                if first, addition == .replace { hidden = existing }
                 guard Set(existing).subtracting(hidden).count < ScreenshotSpecs.maximum else {
                     throw ScreenshotFailure.limit("This language and display size already has 10 screenshots. Exclude an item and save the layout before adding another. No images in this batch were added.")
                 }

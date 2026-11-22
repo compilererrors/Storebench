@@ -23,7 +23,7 @@ metadata_tool=(/usr/bin/swift "$repo/scripts/tools/package-info.swift")
 # Unsigned builds carry placeholder metadata rather than release values.
 version=0.0.0 build_number=1 bundle_id=app.storebench.desktop
 
-build_root=$(mktemp -d "${TMPDIR:-/tmp}/storebench-native-release-XXXXXX")
+build_root=$(mktemp -d "${TMPDIR:-/tmp}/storebench-package-XXXXXX")
 build_root=$(cd "$build_root" && pwd -P)
 output="$repo/dist-desktop" stage=source
 finish() {
@@ -152,7 +152,7 @@ mkdir -p -m 700 "$output"
 release=$(mktemp -d "$output/$name-XXXXXX")
 cp -R "$app" "$release/Storebench.app"
 cp "$installer" "$release/"
-summary=$(printf '{\n  "schemaVersion": 1,\n  "bundleId": "%s",\n  "version": "%s",\n  "buildNumber": "%s",\n  "architectures": ["arm64", "x86_64"],\n  "beforeBytes": %s,\n  "afterBytes": %s,\n  "budgetBytes": %s,\n  "distribution": "%s",\n  "signed": %s,\n  "uploaded": false,\n  "installed": false,\n  "started": false,\n  "notarized": false\n}' \
+summary=$(printf '{\n  "schemaVersion": 1,\n  "bundleId": "%s",\n  "version": "%s",\n  "buildNumber": "%s",\n  "architectures": ["arm64", "x86_64"],\n  "beforeBytes": %s,\n  "afterBytes": %s,\n  "budgetBytes": %s,\n  "distribution": "%s",\n  "signed": %s,\n  "uploaded": false,\n  "installed": false,\n  "started": false\n}' \
   "$bundle_id" "$version" "$build_number" "$before" "$after" "$budget" local false)
 printf '%s\n' "$summary" > "$release/artifact.json"; chmod 600 "$release/artifact.json"
 if [ $json = 1 ]; then printf '%s\n' "$summary"

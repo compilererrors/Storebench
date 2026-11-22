@@ -36,7 +36,8 @@ public struct SearchLint: Sendable {
     }
     /// With `locale`, plural forms are matched only for English and never for words such as "news", and a plural match is a possible
     /// overlap that Clean Up leaves in place. Without it, the earlier English-only rules apply to every language.
-    public init(_ keywords: String, name: String = "", subtitle: String = "", locale: String? = nil) {
+    /// `categories` are the app's category names in English; with an English `locale`, a keyword made only of their words is a possible overlap.
+    public init(_ keywords: String, name: String = "", subtitle: String = "", locale: String? = nil, categories: [String] = []) {
         let english = locale.map { $0.lowercased().hasPrefix("en") } ?? true
         func singular(_ word: String) -> String { !english ? word : locale != nil && Self.unpluralized.contains(word) ? word : Self.singular(word) }
         let terms = keywords.components(separatedBy: ",").map(TextSemantics.trim).filter { !$0.isEmpty }
@@ -44,6 +45,7 @@ public struct SearchLint: Sendable {
         let spacing = keywords.utf8.count - terms.joined(separator: ",").utf8.count
         if spacing > 0 { findings.append(.init(kind: "spacing", terms: [], bytes: spacing, message: "\(spacing) \(spacing == 1 ? "byte is" : "bytes are") spaces or empty entries around commas.")) }
         let titleWords = Self.words(name) + Self.words(subtitle), exactTitle = Set(titleWords), title = Set(titleWords.map(singular))
+        let category = Set(categories.flatMap(Self.words).filter { !Self.fillers.contains($0) }.map(singular))
         var kept: [String] = [], seen = Set<String>(), singulars = Set<String>(), removed: [String: [String]] = [:]
         for term in terms {
             let key = Self.normalized(term), words = Self.words(term)
@@ -54,13 +56,14 @@ public struct SearchLint: Sendable {
             // With a language, another word form of a title word is only a possible overlap; without one, the earlier rule removes it.
             else if !words.isEmpty && words.allSatisfy({ title.contains(singular($0)) }) { kind = locale == nil ? "in-title" : "title-form" }
             else if singulars.contains(words.map(singular).joined(separator: " ")) { kind = "plural" }
+            else if locale != nil, english, !words.isEmpty, words.allSatisfy({ category.contains(singular($0)) }) { kind = "category" }
             else { kind = nil }
             // A possible overlap is reported, but the term stays in the cleaned list.
-            let possible = (kind == "plural" || kind == "title-form") && locale != nil
+            let possible = ["plural", "title-form", "category"].contains(kind ?? "") && locale != nil
             if let kind { removed[kind, default: []].append(term) }
             if kind == nil || possible { seen.insert(key); singulars.insert(words.map(singular).joined(separator: " ")); kept.append(term) }
         }
-        for kind in ["duplicate", "in-title", "title-form", "plural", "filler"] {
+        for kind in ["duplicate", "in-title", "title-form", "plural", "category", "filler"] {
             guard let terms = removed[kind], !terms.isEmpty else { continue }
             let message: String
             switch kind {
@@ -68,10 +71,11 @@ public struct SearchLint: Sendable {
             case "in-title": message = "Already in the app name or subtitle, which Apple indexes too."
             case "plural": message = locale == nil ? "Apple matches singular and plural forms; one of them is enough."
                 : "Possibly another form of a keyword already listed. App Store search often matches singular and plural forms; check before removing it."
+            case "category": message = "Possibly already covered by the app's category name, which App Store search may also use. Check before removing it."
             case "title-form": message = "Possibly another form of a word in the app name or subtitle. App Store search often matches singular and plural forms; check before removing it."
             default: message = "Filler words such as “app” or device names add no search reach."
             }
-            findings.append(.init(kind: kind, terms: terms, bytes: terms.reduce(0) { $0 + $1.utf8.count + 1 }, message: message, certain: !((kind == "plural" || kind == "title-form") && locale != nil)))
+            findings.append(.init(kind: kind, terms: terms, bytes: terms.reduce(0) { $0 + $1.utf8.count + 1 }, message: message, certain: !(["plural", "title-form", "category"].contains(kind) && locale != nil)))
         }
         let subtitleWords = Set(Self.words(subtitle).map(singular))
         var shared: [String] = []

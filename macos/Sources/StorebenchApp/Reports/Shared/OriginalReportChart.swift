@@ -43,7 +43,7 @@ struct OriginalReportChart: View {
                 }.storebenchFormColumn()
             }
             if ChartMeasures.scaleOffered(metric: selectedMetric, currencies: source.currencies.count) {
-                StorebenchCardSection(title: "Original report currencies") {
+                StorebenchCardSection(title: "Original Report Currencies") {
                     ChartMeasureToggles(options: source.currencies.map { (key: $0, title: $0) }, chosen: chosen) { currencies = $0 }
                     ChartScalePicker(indexed: $indexed)
                     if chosen.count > 1 && !indexed {

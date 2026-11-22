@@ -324,6 +324,12 @@ struct EditorWindowGuard: NSViewRepresentable {
         }
         return nil
     }
+    /// Ends the wait for unfinished work and quits. A sync that was being sent is found stopped at the next start and is never sent again by itself.
+    func quitNow() {
+        guard terminationTask != nil else { return }
+        terminationTask?.cancel(); terminationTask = nil
+        NSApp.reply(toApplicationShouldTerminate: true)
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard terminationTask == nil else { return .terminateLater }
         terminationTask = Task { @MainActor in
@@ -331,6 +337,8 @@ struct EditorWindowGuard: NSViewRepresentable {
                 terminationTask = nil; sender.reply(toApplicationShouldTerminate: false); return
             }
             await prepareToTerminate?()
+            // Quit Now may already have answered while the work was finishing.
+            guard terminationTask != nil else { return }
             terminationTask = nil; sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

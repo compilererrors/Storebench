@@ -75,13 +75,46 @@ struct StorebenchProgressStatus: View {
     var value: Double? = nil
     var total: Double = 1
     var height: CGFloat = StorebenchLoadPhase.statusHeight
+    /// Shows a moving bar instead of a spinner while the amount is unknown, where a bar with an amount follows in the same place.
+    var activity = false
     var body: some View {
         Group {
             if let value { ProgressView(value: min(max(0, value), max(total, 0.000_001)), total: max(total, 0.000_001)) { label } }
+            else if activity {
+                VStack(alignment: .leading, spacing: 7) {
+                    if !message.isEmpty || height > 0 { label.font(.sbCaption).foregroundStyle(StorebenchTheme.muted) }
+                    StorebenchActivityBar()
+                }
+            }
             else { ProgressView { label } }
         }.progressViewStyle(StorebenchProgressStyle()).frame(maxWidth: .infinity, alignment: .leading)
     }
     private var label: some View { StorebenchTextSlot(text: message, height: height, font: nil, color: nil, live: true) }
+}
+
+/// Work in progress whose amount is unknown: a short stretch of the track's color moves along it, so it never looks stalled.
+/// It has the same track as a bar with an amount, so one can follow the other without the layout changing. With Reduce Motion
+/// the stretch stays in place and fades in and out.
+struct StorebenchActivityBar: View {
+    /// A thinner track for an edge, such as the top of the window's bar; nil is the shared progress height.
+    var height: CGFloat? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1 / 30)) { context in
+            let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6) / 1.6
+            GeometryReader { geometry in
+                let stretch = geometry.size.width * 0.3
+                Capsule().fill(StorebenchTheme.border)
+                    .overlay(alignment: .leading) {
+                        Capsule().fill(StorebenchTheme.accent).frame(width: stretch)
+                            .offset(x: reduceMotion ? (geometry.size.width - stretch) / 2 : (geometry.size.width + stretch) * phase - stretch)
+                            .opacity(reduceMotion ? 0.45 + 0.55 * abs(sin(phase * .pi)) : 1)
+                    }
+                    .clipShape(Capsule())
+            }
+        }.frame(height: height ?? StorebenchTheme.measure("progressHeight")).frame(maxWidth: .infinity)
+            .accessibilityElement(children: .ignore).accessibilityLabel("In progress")
+    }
 }
 
 extension View {
@@ -159,7 +192,7 @@ extension EnvironmentValues {
     /// Scrolls the page to a view id with a visible animation; nil outside an app workspace.
     var pageScroll: ((String, UnitPoint) -> Void)? { get { self[PageScrollKey.self] } set { self[PageScrollKey.self] = newValue } }
     /// Brings an anchor to the middle of the page and keeps it there while the page restores its position and lays out, such as
-    /// Send to Apple after Save prepared its review.
+    /// the review's send command after Save prepared it.
     var pageReveal: ((String) -> Void)? { get { self[PageRevealKey.self] } set { self[PageRevealKey.self] = newValue } }
     /// Keeps the header a person expanded or collapsed visible after the content finishes laying out.
     var pageDisclosureFocus: ((String) -> Void)? { get { self[PageDisclosureFocusKey.self] } set { self[PageDisclosureFocusKey.self] = newValue } }

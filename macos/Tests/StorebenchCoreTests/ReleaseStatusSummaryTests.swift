@@ -37,8 +37,44 @@ import Testing
         #expect(tax.next?.id == "tax")
     }
 
-    private func build(_ id: String) -> TestFlightBuild {
-        TestFlightBuild(id: id, version: id, platform: "IOS", appVersion: "2.0", processingState: "VALID", uploadedDate: "2026-03-01T00:00:00.000Z", expirationDate: "", audience: "APP_STORE_ELIGIBLE",
+    @Test func aVersionRemovedForANewBuildMovesToTheNewestProcessedBuildUploadedAfterItsOwn() {
+        let current = build("64", uploaded: "2026-03-01T10:00:00.000Z"), older = build("63", uploaded: "2026-02-20T10:00:00.000Z")
+        let processing = build("66", uploaded: "2026-03-02T09:00:00.000Z", state: "PROCESSING"), newer = build("65", uploaded: "2026-03-01T18:30:00.000Z")
+        #expect(ReleaseWizard.newerBuilds([current, older], attachedId: "64").isEmpty)
+        #expect(ReleaseWizard.newerBuilds([older, newer, current, processing], attachedId: "64").map(\.id) == ["66", "65"])
+        #expect(ReleaseWizard.newerBuilds([newer, current], attachedId: nil).isEmpty, "Without the version's build, nothing counts as newer")
+        // Replacing moves from the version's build to the newest processed newer one; a build still processing is not chosen.
+        #expect(ReleaseWizard.chosenBuild("64", matching: [processing, newer, current], attachedId: "64", complete: true, replacing: true) == "65")
+        #expect(ReleaseWizard.chosenBuild("64", matching: [processing, current], attachedId: "64", complete: true, replacing: true) == "64")
+        #expect(ReleaseWizard.chosenBuild("63", matching: [newer, current, older], attachedId: "64", complete: true, replacing: true) == "63", "Another build the owner chose stays")
+        #expect(ReleaseWizard.chosenBuild("64", matching: [newer, current], attachedId: "64", complete: true) == "64", "Without replacing, the version's build stays")
+    }
+
+    @Test func anUploadAppleReceivedShowsUntilItsBuildIsListed() {
+        func upload(_ number: String, at: String, state: String = "Processing", buildId: String? = nil, version: String = "2.0", platform: String = "IOS") -> BuildDelivery {
+            BuildDelivery(id: "upload-\(number)", version: version, buildNumber: number, platform: platform, state: state, createdDate: at, uploadedDate: at, buildId: buildId,
+                          deletable: false, details: [], omittedDetails: 0)
+        }
+        let current = build("64", uploaded: "2026-03-01T10:00:00.000Z")
+        let uploads = [upload("63", at: "2026-02-20T10:00:00Z"), upload("64", at: "2026-03-01T10:00:00Z", state: "Complete", buildId: "64"),
+                       upload("65", at: "2026-03-01T18:30:00Z"), upload("66", at: "2026-03-02T08:00:00Z", state: "Failed"),
+                       upload("67", at: "2026-03-02T09:00:00Z", version: "2.1"), upload("68", at: "2026-03-02T09:00:00Z", platform: "MAC_OS")]
+        // Another version, another platform, a completed upload and anything before the version's build are left out; newest first.
+        #expect(ReleaseWizard.pendingUploads(uploads, platform: "IOS", version: "2.0", builds: [current], after: current.uploadedDate).map(\.buildNumber) == ["66", "65"])
+        #expect(ReleaseWizard.pendingUploads(uploads, platform: "IOS", version: "2.0", builds: [current], after: nil).map(\.buildNumber) == ["66", "65", "63"])
+        // Once Apple lists the build, its upload no longer shows on its own.
+        #expect(ReleaseWizard.pendingUploads(uploads, platform: "IOS", version: "2.0", builds: [current, build("65", uploaded: "2026-03-01T18:30:00.000Z"), build("66")], after: nil).map(\.buildNumber) == ["63"])
+    }
+
+    @Test func aBuildUploadShowsItsDayAndTwentyFourHourTime() throws {
+        let utc = try #require(TimeZone(identifier: "UTC")), stockholm = try #require(TimeZone(identifier: "Europe/Stockholm"))
+        #expect(AppStoreNames.dateTime("2026-11-20T13:05:00.000Z", timeZone: utc) == "Nov 20, 2026 13:05")
+        #expect(AppStoreNames.dateTime("2026-11-20T23:30:00Z", timeZone: stockholm) == "Nov 21, 2026 00:30")
+        #expect(AppStoreNames.dateTime("not a date", timeZone: utc) == nil)
+    }
+
+    private func build(_ id: String, uploaded: String = "2026-03-01T00:00:00.000Z", state: String = "VALID") -> TestFlightBuild {
+        TestFlightBuild(id: id, version: id, platform: "IOS", appVersion: "2.0", processingState: state, uploadedDate: uploaded, expirationDate: "", audience: "APP_STORE_ELIGIBLE",
                         expired: false, usesNonExemptEncryption: false, externalState: nil, internalState: nil, betaReviewState: nil)
     }
     @Test func aChosenBuildFromALaterPageStaysUntilTheCompleteListLacksIt() {

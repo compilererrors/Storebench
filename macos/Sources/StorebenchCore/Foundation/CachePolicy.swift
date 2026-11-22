@@ -69,26 +69,36 @@ public struct CachePolicy: Equatable, Sendable, Codable {
         }
     }
 
-    /// Each session cache's share of the memory budget.
+    /// Each session cache's share of the memory budget. The shares of one window and the session add up to the budget;
+    /// `savedReads` is part of `windowReads`, not a share of its own.
     public struct Budget: Equatable, Sendable {
         public let appleReads: Limit, appleReadLifetime: Duration
         public let decodedRevisions: Limit, archivedRevisions: Limit, releaseStatus: Limit, pricingScreens: Limit
+        /// Saved revisions parsed for the drafts read and saved against them.
+        public let draftSources: Limit
+        /// Asset Library previews kept so a thumbnail shown again is not downloaded again.
+        public let thumbnails: Limit
         /// Screen reads one window keeps to show at once when a screen opens again, decoded and saved alike.
         public let windowReads: Limit
         /// Screen reads saved by earlier launches that a window loads at start; they count toward `windowReads` once loaded.
         public let savedReads: Limit
+        /// How many apps' release statuses one check reads from App Store Connect: more on a faster setting, never all of a very large account.
+        public let releaseStatusChecks: Int
 
         init(memoryMB: Int, lifetimeMinutes: Int) {
             let total = memoryMB * 1_048_576
             func share(_ percent: Int, count: Int) -> Limit { Limit(count: count, bytes: total / 100 * percent) }
-            appleReads = share(30, count: min(4_096, max(64, memoryMB * 2)))
+            appleReads = share(28, count: min(4_096, max(64, memoryMB * 2)))
             appleReadLifetime = .seconds(lifetimeMinutes * 60)
-            decodedRevisions = share(32, count: min(1_024, max(24, memoryMB / 2)))
-            archivedRevisions = share(18, count: min(512, max(8, memoryMB / 6)))
+            decodedRevisions = share(28, count: min(1_024, max(24, memoryMB / 2)))
+            draftSources = share(4, count: 4)
+            archivedRevisions = share(16, count: min(512, max(8, memoryMB / 6)))
             releaseStatus = Limit(count: min(256, max(8, memoryMB / 12)), bytes: max(256 * 1_024, total / 200))
             pricingScreens = share(5, count: min(128, max(4, memoryMB / 24)))
+            thumbnails = share(7, count: min(1_000, max(48, memoryMB)))
             savedReads = share(8, count: min(1_000, max(100, memoryMB)))
-            windowReads = share(12, count: min(512, max(24, memoryMB / 4)))
+            windowReads = share(11, count: min(512, max(24, memoryMB / 4)))
+            releaseStatusChecks = min(100, max(8, memoryMB / 16))
         }
     }
     public func budget(physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory) -> Budget {

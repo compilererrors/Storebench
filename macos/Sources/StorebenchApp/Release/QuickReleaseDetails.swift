@@ -86,6 +86,7 @@ struct QuickReleaseDetails: View {
         if detail == .copyright, snapshot?.targetVersionId == nil, let value = listing?.version?.fields["copyright"]?.text, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return .init(.ready, "Ready to Reuse", "The starting version has saved copyright. It will be checked on the new version.")
         }
+        if detail == .availability, let reused = QuickRelease.reusedAvailability(snapshot) { return reused }
         return QuickRelease.check(steps.filter { QuickReleaseDetail(check: $0.id) == detail })
     }
     @ViewBuilder private func content(_ detail: QuickReleaseDetail) -> some View {

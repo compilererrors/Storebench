@@ -8,7 +8,6 @@ struct ReleaseSubmittedStatus: View {
         Card(title: AppStoreNames.state(state), subtitle: version) {
             StorebenchNotice(title: "Submitted to App Review", description: "This version has already been submitted. You do not need to add it for review again.", icon: "check") { EmptyView() }
             StorebenchFact(label: "App Store Connect", value: AppStoreNames.state(state), done: true)
-            StorebenchStepLink(sentence: "Your submission is with Apple. Continue to see how this version will be released in", phaseNumber: 7, phaseTitle: "App Store Version Release")
         }.storebenchControlID("release.submitted-status")
     }
 }

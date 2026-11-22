@@ -175,7 +175,15 @@ extension WorkspaceSession {
             language.text.autosave.cancelPending()
             for media in language.media { for layout in media.screenshots.map(\.editor) + media.previews.map(\.editor) { layout.autosave.cancelPending() } }
         }
-        let result = await workflow.run(prepare: prepare)
+        // A review is prepared from the saved drafts, so every language's saved text must still be what its editor shows.
+        var checked: (@MainActor () async throws -> Void)?
+        if let prepare {
+            checked = { [weak self] in
+                for language in self?.languages ?? [] { guard await language.text.showsSavedText() else { throw DraftFailure.stale } }
+                try await prepare()
+            }
+        }
+        let result = await workflow.run(prepare: checked)
         guard active, workflow.owns(result) else { return result }
         switch result.failure {
         case nil: status = prepare == nil ? "All listing changes saved on this Mac." : "Confirm the changes in Sync to Apple."

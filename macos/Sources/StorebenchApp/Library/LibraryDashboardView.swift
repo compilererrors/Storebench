@@ -55,25 +55,27 @@ struct LibraryDashboardView: View {
                             }
                         }
                         StorebenchMetricGrid(balanced: true) {
-                            Fact(title: "Configured apps", value: String(snapshot.apps.count), hint: "Across \(snapshot.accountCount) \(snapshot.accountCount == 1 ? "account" : "accounts")")
-                            Fact(title: "Apps with material", value: snapshot.materialApps.map(String.init) ?? "Unknown", hint: "Imported or started locally", info: "Apps with saved App Store text, screenshots or a local version draft.")
-                            Fact(title: "Awaiting material", value: snapshot.awaitingMaterialApps.map(String.init) ?? "Unknown", hint: "Import or start a new version", info: "Configured apps without saved App Store text or screenshots yet. Sync an app to bring them in.")
-                            Fact(title: "Release plans", value: snapshot.releaseCount.map(String.init) ?? "Unknown", hint: "Saved plans being prepared")
+                            Fact(title: "Configured Apps", value: String(snapshot.apps.count), hint: "Across \(snapshot.accountCount) \(snapshot.accountCount == 1 ? "account" : "accounts")")
+                            Fact(title: "Apps with Material", value: snapshot.materialApps.map(String.init) ?? "Unknown", hint: "Imported or started locally", info: "Apps with saved App Store text, screenshots or a local version draft.")
+                            Fact(title: "Awaiting Material", value: snapshot.awaitingMaterialApps.map(String.init) ?? "Unknown", hint: "Import or start a new version", info: "Configured apps without saved App Store text or screenshots yet. Sync an app to bring them in.")
+                            Fact(title: "Release Plans", value: snapshot.releaseCount.map(String.init) ?? "Unknown", hint: "Saved plans being prepared")
                         }
                         if snapshot.plansUnavailable {
-                            Card(title: "Saved release plans unavailable", subtitle: "Refresh before choosing a plan. Existing saved plans have not been changed.") { EmptyView() }
+                            Card(title: "Saved Release Plans Unavailable", subtitle: "Refresh before choosing a plan. Existing saved plans have not been changed.") { EmptyView() }
                         } else if snapshot.releases.isEmpty {
                             StorebenchNotice(title: "No release plans yet", description: "Choose an app to prepare a new version with its text, languages and media.") {
                                 StorebenchMenu("Create Release", icon: "release") { ForEach(snapshot.apps) { row in Button(row.name) { navigate(row, section: .release) } } }.storebenchWorking(unavailable || loading)
                             }
                         } else {
-                            ReleaseOverviewList(releases: snapshot.releases, session: model.session, unavailable: unavailable || loading, icon: appIcon) {
+                            ReleaseOverviewList(releases: snapshot.releases, session: model.session, unavailable: unavailable || loading, icon: appIcon,
+                                                check: { checkStatus($0) }) {
                                 navigate($0.app, section: .release, plan: $0.plan)
                             }
                         }
                         StorebenchCardList(padded: true, spacing: StorebenchTheme.gap) {
                             AllAppsSyncButton(session: unavailable ? nil : model.session, showHeading: true).frame(maxWidth: .infinity, alignment: .leading)
-                            StorebenchCollection(items: snapshot.apps, title: { $0.name }, subtitle: { $0.account.name }, icon: appIcon, empty: "No apps yet. Connect an Apple account from Settings.") { row in
+                            StorebenchCollection(items: snapshot.apps, title: { $0.name }, subtitle: { $0.account.name }, icon: appIcon,
+                                                 headerStatus: { row in let glance = row.syncGlance(); return AnyView(StorebenchGlance(headline: glance.headline, detail: glance.detail, tone: glance.tone, running: glance.running)) }, empty: "No apps yet. Connect an Apple account from Settings.") { row in
                                 StorebenchDivider()
                                 ConnectedAppCard(row: row, session: model.session, unavailable: unavailable, openApp: { openSource(row, $0) }, recover: { recover(row, $0) }, changed: { Task { await load(context) } })
                                     .id(row.id + "/" + row.accountToken)
@@ -87,7 +89,9 @@ struct LibraryDashboardView: View {
         .task(id: section) {
             let id = UUID(); context = id; loading = false
             if snapshot == nil { snapshot = history?.rememberedRead("library-overview", as: LibraryOverview.Snapshot.self) }
-            await StorebenchPolling.repeating(every: .seconds(2), while: { context == id }) { await load(id) }
+            await StorebenchPolling.repeating(every: .seconds(2), stamp: { try? await model.session?.savedStateToken() },
+                                              working: { failed || snapshot.map { $0.plansUnavailable || $0.apps.contains(where: \.changing) } != false },
+                                              while: { context == id }) { await load(id) }
         }
         // App Store Connect is read in the background for each saved plan, so a version Apple already released never stays listed as being prepared.
         .task(id: snapshot?.releases.map(\.plan.token) ?? []) { await checkPlans() }
@@ -101,11 +105,28 @@ struct LibraryDashboardView: View {
         guard !unavailable, !loading, let destination = try? LibraryOverview.Destination(row: row, section: section, plan: plan) else { return }
         openApp(destination)
     }
+    /// The release cards on the Overview's first page, as "account:app", read before any other app.
+    private var shownReleases: [String] { (snapshot?.releases ?? []).prefix(10).map { $0.plan.accountId + ":" + $0.plan.appId } }
     private func checkPlans(fresh: Bool = false) async {
         guard let session = model.session else { return }
-        await session.refreshReleaseOverviews(maxAge: fresh ? 0 : 60)
+        // The cards on screen are read first; how many apps one check reads follows the Performance setting.
+        await session.refreshReleaseOverviews(maxAge: fresh ? 0 : 60, first: shownReleases)
         guard !Task.isCancelled, model.session === session else { return }
         await load(context, wait: true)
+    }
+    /// Expanded cards read their status at once; expanding many at once reads them as one check within the Performance setting.
+    private func checkStatus(_ releases: [LibraryOverview.Release]) {
+        guard let session = model.session, !releases.isEmpty else { return }
+        let id = context
+        Task {
+            if releases.count == 1, let release = releases.first {
+                await session.checkReleaseStatus(accountId: release.plan.accountId, appId: release.plan.appId)
+            } else {
+                await session.refreshReleaseOverviews(maxAge: 30, first: releases.map { $0.plan.accountId + ":" + $0.plan.appId })
+            }
+            guard !Task.isCancelled, model.session === session else { return }
+            await load(id, wait: true)
+        }
     }
     private func load(_ id: UUID, wait: Bool = false) async {
         while wait && readGate.active {

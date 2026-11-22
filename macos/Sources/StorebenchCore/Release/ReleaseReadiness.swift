@@ -42,6 +42,22 @@ public enum ReleaseReadiness {
     @inline(never) private static func count(_ value: JSONText?) throws -> Int {
         guard case .number(let number)? = value, let result = Int(exactly: number), (0...100_000).contains(result) else { throw Failure.invalid }; return result
     }
+    /// Each field whose saved text differs from Apple's, and why: a change only on this Mac that Save sends, a change made at
+    /// App Store Connect after the draft took its text, or a change on both sides. `origin` holds the import's text, the draft's
+    /// own values and the Apple text the person chose to overwrite.
+    static func textDifferences(_ keys: [String], apple: JSONText?, saved: JSONText?, origin: JSONText?, scope: TextDrafts.Scope) -> [ReleaseMaterial.Issue] {
+        return keys.filter { !TextSemantics.sameStoreText(text(apple?[$0]), text(saved?[$0])) }.map { key in
+            let label = TextDrafts.labels[key] ?? key, now = text(apple?[key]), base = text(origin?["base"]?[key])
+            let drafted = origin?["draft"]?[key].map { !TextSemantics.sameStoreText(text($0), base) } ?? false
+            let kept = origin?["kept"]?[key]?.text == JSONText.string(now).rawSHA256
+            // Keep Mine over this exact Apple text, or a change made only on this Mac, is text the step's review sends.
+            // Without the import's text there is nothing to tell an Apple change from, so the difference is this Mac's to send.
+            let section = origin == nil || kept || drafted && TextSemantics.sameStoreText(now, base) ? "missing" : drafted ? ReleaseMaterial.changedOnBothSides : ReleaseMaterial.changedAtApple
+            var issue = ReleaseMaterial.Issue(field: key, message: label, section: section)
+            if section != "missing" { issue.localizationId = origin?["id"]?.text; issue.scope = scope; issue.apple = now; issue.base = base; issue.mine = text(saved?[key]) }
+            return issue
+        }
+    }
     @inline(never) private static func locales(_ values: [JSONText]?) throws -> [Data: (fields: JSONText, duplicate: Bool)] {
         var result: [Data: (fields: JSONText, duplicate: Bool)] = [:]
         for value in values ?? [] {
@@ -118,16 +134,16 @@ public enum ReleaseReadiness {
             }
             let value = remote[Data(code.utf8)], info = remoteInfo[Data(code.utf8)], fields = item["fields"], appFields = item["appInfoFields"] == .null ? nil : item["appInfoFields"]
             let textMatches = value.map { entry in !entry.duplicate && TextDrafts.versionFields.allSatisfy { key in TextSemantics.sameStoreText(text(entry.fields[key]), text(fields?[key])) } } == true
-            func differing(_ keys: [String], _ apple: JSONText?, _ saved: JSONText?) -> [ReleaseMaterial.Issue] {
-                keys.filter { !TextSemantics.sameStoreText(text(apple?[$0]), text(saved?[$0])) }.map { ReleaseMaterial.Issue(field: $0, message: TextDrafts.labels[$0] ?? $0, section: "missing") }
+            func differing(_ keys: [String], _ apple: JSONText?, _ saved: JSONText?, origin: JSONText?, scope: TextDrafts.Scope) -> [ReleaseMaterial.Issue] {
+                Self.textDifferences(keys, apple: apple, saved: saved, origin: origin, scope: scope)
             }
             add("apple-text:" + code, code + " · version text at Apple", version == nil || appleLocales == nil || value?.duplicate == true ? .unknown : textMatches ? .ready : .blocked,
                 version == nil ? "Create the target version before comparing its languages." : appleLocales == nil || value?.duplicate == true ? "The version's Apple languages could not be verified." : textMatches ? "The saved version text matches Apple's current values for this language." : "This language is missing at Apple or its version text differs from the local material.", root + "/publish?scope=metadata&draft=1", "Review text upload",
-                issues: version == nil || textMatches ? [] : value.map { differing(TextDrafts.versionFields, $0.fields, fields) } ?? [])
+                issues: version == nil || textMatches ? [] : value.map { differing(TextDrafts.versionFields, $0.fields, fields, origin: item["origin"], scope: .version) } ?? [])
             let infoMatches = appFields != nil && info.map { entry in !entry.duplicate && TextDrafts.appInfoFields.allSatisfy { key in TextSemantics.sameStoreText(text(entry.fields[key]), text(appFields?[key])) } } == true
             add("apple-info:" + code, code + " · app information at Apple", version == nil || appInfoLocales == nil || info?.duplicate == true ? .unknown : infoMatches ? .ready : .blocked,
                 version == nil ? "Create the target version before comparing its app information." : appInfoLocales == nil || info?.duplicate == true ? "Apple's app information records disagree or could not be verified. Compare them in the Publish review." : appFields == nil ? "Saved app information for this language is missing or duplicated." : info == nil ? "This language's app information is missing at Apple." : infoMatches ? "Saved app name, subtitle and privacy information match Apple's current app information records. This does not prove the live store display." : "Saved app name, subtitle or privacy information differs from Apple's current values.", root + "/publish?scope=metadata&draft=1", "Review app information",
-                issues: version == nil || infoMatches || appFields == nil ? [] : info.map { differing(TextDrafts.appInfoFields, $0.fields, appFields) } ?? [])
+                issues: version == nil || infoMatches || appFields == nil ? [] : info.map { differing(TextDrafts.appInfoFields, $0.fields, appFields, origin: item["appInfoOrigin"], scope: .appInfo) } ?? [])
         }
         let copyright = TextSemantics.trim(text(version?["copyright"]))
         add("copyright", "Version copyright", version == nil ? .unknown : copyright.isEmpty ? .blocked : .ready, version == nil ? "Check after the Apple version exists." : copyright.isEmpty ? "Version copyright is missing at Apple." : "Apple has saved version copyright.", root + "/publish?scope=version-copyright", "Review copyright")

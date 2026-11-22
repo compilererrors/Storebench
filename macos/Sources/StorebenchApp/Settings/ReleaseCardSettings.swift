@@ -27,7 +27,8 @@ struct ReleaseCardSettings: View {
         .task(id: model.session.map(ObjectIdentifier.init)) {
             guard let session = model.session else { editor = nil; return }
             if editor?.session !== session { editor = ReleaseCardsEditor(session: session) }
-            await StorebenchPolling.repeating(every: .seconds(2), while: { !Task.isCancelled }) { await editor?.load() }
+            await StorebenchPolling.repeating(every: .seconds(2), stamp: { try? await model.session?.savedStateToken() }, working: { editor?.preferences == nil || editor?.status.isEmpty == false },
+                                              while: { !Task.isCancelled }) { await editor?.load() }
         }
     }
 }

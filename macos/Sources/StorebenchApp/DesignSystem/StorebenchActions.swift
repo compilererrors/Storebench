@@ -47,6 +47,7 @@ struct StorebenchActionRow<Copy: View, Actions: View>: View {
     @ViewBuilder let actions: () -> Actions
     var body: some View {
         StorebenchHeader(stackAt: stackAt) { copy() } actions: { StorebenchActionGroup(alignment: .trailing) { actions() } }
+            .storebenchScrollAnchor()
     }
 }
 

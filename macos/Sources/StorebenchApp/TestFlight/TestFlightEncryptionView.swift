@@ -40,7 +40,7 @@ struct TestFlightEncryptionView: View {
                         if let compliance { content(compliance).storebenchWorking(draft?.loaded != true) }
                     } placeholder: {
                         Text("Current declaration: placeholder").font(.sbCallout)
-                        StorebenchPicker("Approved declaration", selection: .constant("")) { SelectionOption("Choose a declaration", value: "") }.storebenchFormColumn()
+                        StorebenchPicker("Approved Declaration", selection: .constant("")) { SelectionOption("Choose a declaration", value: "") }.storebenchFormColumn()
                     }
                     StorebenchFeedback(text: status, height: 40, error: !status.isEmpty)
                     if let draft { LocalDraftActions(editor: draft, value: draftValue, restore: restoreDraft, blocked: busy) }
@@ -85,7 +85,7 @@ struct TestFlightEncryptionView: View {
             Text("Apple is reviewing this declaration. If Apple asks for documents, upload them below. Apple usually decides within two business days; refresh to see its decision.")
                 .font(.sbCallout).fixedSize(horizontal: false, vertical: true)
         case .choose:
-            StorebenchPicker("Approved declaration", selection: $declarationId) {
+            StorebenchPicker("Approved Declaration", selection: $declarationId) {
                 SelectionOption("Choose a declaration", value: "")
                 selectionOptions(compliance.approved.filter { $0.id != compliance.currentId }) { SelectionOption(describe($0), value: $0.id) }
             }.storebenchFormColumn().onChange(of: declarationId) { if !declarationId.isEmpty { creating = false } }
@@ -115,7 +115,7 @@ struct TestFlightEncryptionView: View {
         Text(encryption.nextStep).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).frame(minHeight: 40, alignment: .topLeading).fixedSize(horizontal: false, vertical: true)
         StorebenchActionGroup(alignment: .leading) {
             StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Preparing…", busy: working) { Task { await answer() } }
-                    .help(encryption.missing ?? "Shows exactly what is sent; Send to Apple in the review below sends it to App Store Connect")
+                    .help(encryption.missing ?? "Shows exactly what is sent; Save in the review below sends it to App Store Connect")
                 .storebenchWorking(!(encryption.missing == nil))
             if compliance?.next == .choose { Button("Cancel") { reset() } }
         }

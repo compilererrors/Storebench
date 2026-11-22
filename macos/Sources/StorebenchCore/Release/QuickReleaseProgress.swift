@@ -43,6 +43,8 @@ extension QuickRelease {
         }
         let steps = snapshot?.steps ?? [], submitted = snapshot.map { if case .submitted = stage($0) { return true }; return false } ?? false
         let unknown = Check(.review, "Not Checked", "Checking this version against App Store Connect.")
+        // Without a read of Apple's versions nothing says the version or its build is missing; that stays Not Checked.
+        let versionsKnown = snapshot?.observations["appleVersions"] != .string("unknown")
         let prepared: Check
         if plan == nil { prepared = .init(.review, "Start Here", "Choose the version number and prepare the release on this Mac.") }
         else if edited { prepared = .init(.review, "Save Draft", "The version settings have unsaved changes.") }
@@ -52,7 +54,11 @@ extension QuickRelease {
             let target = WorkspaceSession.items(snapshot.observations["appleVersions"]).first { $0["id"]?.text == snapshot.targetVersionId }
             prepared = target?["releaseType"]?.text.map { !$0.isEmpty && $0 != (plan?.releaseType ?? "MANUAL") } == true
                 ? .init(.review, "Sync Needed", "Review the saved release option and sync it to Apple.") : .init(.ready, "Ready", "The version is prepared in App Store Connect.")
-        } else { prepared = .init(.review, "Sync Needed", "The local version is saved. Approve its creation in App Store Connect here.") }
+        } else if snapshot != nil && !versionsKnown { prepared = unknown }
+        else {
+            let number = plan?.targetVersion ?? ""
+            prepared = .init(.review, "Ready to Create", "Version \(number) is saved on this Mac. Choose Sync to Apple below to create it in App Store Connect; nothing is sent until you approve.")
+        }
         let locals = steps.filter { $0.id.hasPrefix("local:") }
         let missingNotes = locals.flatMap(\.issues).filter { $0.field == "whatsNew" }
         let notes: Check
@@ -73,8 +79,9 @@ extension QuickRelease {
         }
         let build: Check
         if submitted && snapshot?.targetState != "WAITING_FOR_EXPORT_COMPLIANCE" { build = .init(.ready, "Ready", "Apple has the build for this submitted version.") }
-        else if snapshot?.parts.contains(.versions) == true && snapshot?.targetVersionId == nil {
-            build = .init(.missing, "Build Is Missing", "Choose and add the processed build for the new version.")
+        else if snapshot?.parts.contains(.versions) == true && versionsKnown && snapshot?.targetVersionId == nil {
+            // A build is added to a version App Store Connect has, so before step 1 this is the next step, not a problem.
+            build = .init(.review, "After Step 1", "Create the version in step 1, then choose its build here.")
         } else { build = check(steps.filter { ["build", "export-compliance"].contains($0.id) }) }
         let remaining = check(steps.filter { !handledHere($0.id) }, excluding: ["whatsNew"])
         let review = submitted ? Check(.ready, AppStoreNames.state(snapshot?.targetState ?? ""), "Apple has this version from its submission.")
@@ -86,6 +93,17 @@ extension QuickRelease {
             .init(id: "build", number: 3, title: "Add Build", purpose: "Choose the processed build and confirm its export compliance.", check: build),
             .init(id: "submit", number: 4, title: "Add for Review", purpose: "Check the remaining requirements and approve the submission here.", check: review),
         ]
+    }
+    /// The Apple parts a step shows, read before the rest so the open step answers first; every other part follows in the background,
+    /// cheapest first. Before a step is chosen, the parts that decide which step opens are read. Screenshots and previews at Apple
+    /// are never read ahead of a step, since no step shows them.
+    public static func reads(_ step: String?) -> ReleaseReadiness.Parts {
+        switch step {
+        case "version": [.versions]
+        case "text": [.versions, .versionText, .appInfoText]
+        case "build": [.versions, .build]
+        default: [.versions, .versionText, .appInfoText, .build]
+        }
     }
     public static func initialStep(_ phases: [Phase]) -> String {
         if phases.first?.check.status != .ready { return "version" }

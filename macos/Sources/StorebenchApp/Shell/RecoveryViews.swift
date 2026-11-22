@@ -154,7 +154,7 @@ private struct IssueCopyActions: View {
             try? await Task.sleep(for: .seconds(2)); copy.clearCopied()
         }
         .sheet(isPresented: Binding(get: { copy.fallback != nil }, set: { if !$0 { copy.dismissFallback() } })) {
-            StorebenchDialog(title: "Copy error details", height: 340, close: { copy.dismissFallback() }) {
+            StorebenchDialog(title: "Copy error details", kind: .question, close: { copy.dismissFallback() }) {
                 Text("Clipboard access is unavailable. Select this text and use Copy.").foregroundStyle(StorebenchTheme.muted)
                 ScrollView { Text(copy.fallback ?? "").font(.system(.body, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.accessibilityLabel("Text to copy")
             } actions: {

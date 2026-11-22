@@ -37,13 +37,13 @@ struct KeywordPickerView: View {
     private var selection: KeywordListingSelection? { try? snapshot?.selection(current: current, selected: chosen, mode: mode) }
 
     var body: some View {
-        StorebenchDialog(title: "Choose keyword ideas", wide: true, close: { dismiss() }) {
+        StorebenchDialog(title: "Choose keyword ideas", kind: .content, close: { dismiss() }) {
             StorebenchTextSlot(text: "Saved Ready to try ideas for \(locale). Choose terms and compare the resulting keywords. Using them changes this unsaved editor only; it does not save or publish the listing.", height: 56, font: .sbCallout, color: StorebenchTheme.muted)
             if !loaded && issueCode == nil { StorebenchLoadState(state: .loading("Reading saved keyword ideas…")) { EmptyView() } }
             if loaded {
             VStack(alignment: .leading, spacing: StorebenchTheme.space(2)) {
                 StorebenchFormGrid {
-                    StorebenchPicker("Idea territory", selection: $territory) {
+                    StorebenchPicker("Idea Territory", selection: $territory) {
                         SelectionOption("All research territories", value: ""); SelectionOption("Any / unspecified", value: "any")
                         selectionOptions(Array(Set((snapshot?.rows ?? []).map(\.territory).filter { !$0.isEmpty })).sorted()) { SelectionOption($0, value: $0) }
                     }

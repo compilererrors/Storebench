@@ -94,9 +94,11 @@ private final class QuickReleaseApple: @unchecked Sendable {
                     return apple.page(value)
                 case ("PATCH", "/v1/reviewSubmissions/submission-1"):
                     apple.writes.append((method, path, body))
-                    submissions[0]["attributes"] = ["platform": "IOS", "state": "WAITING_FOR_REVIEW"]
+                    // Remove from Review cancels the submission, and App Store Connect shows the version as Developer Rejected.
+                    let canceled = (data?["attributes"] as? [String: Any])?["canceled"] as? Bool == true
+                    submissions[0]["attributes"] = ["platform": "IOS", "state": canceled ? "COMPLETE" : "WAITING_FOR_REVIEW"]
                     var attributes = apple.versions[1]["attributes"] as! [String: Any]
-                    attributes["appVersionState"] = "WAITING_FOR_REVIEW"; apple.versions[1]["attributes"] = attributes
+                    attributes["appVersionState"] = canceled ? "DEVELOPER_REJECTED" : "WAITING_FOR_REVIEW"; apple.versions[1]["attributes"] = attributes
                     return apple.page(submissions[0])
                 default: Issue.record("Unexpected synthetic release write: \(method) \(path)"); return (405, [:], Data())
                 }
@@ -192,6 +194,11 @@ private extension WorkspaceSession {
             ([host] + window.sheets.compactMap(\.contentView)).flatMap(views).compactMap { $0 as? StorebenchControlMarker }
                 .first { $0.identifier?.rawValue == id && !$0.isHiddenOrHasHiddenAncestor }
         }
+        /// Visible text on the page and its sheets, for a failure message that says what the page showed.
+        func shownText(containing words: [String]) -> String {
+            ([host] + window.sheets.compactMap(\.contentView)).flatMap(views).compactMap { ($0 as? NSTextField)?.stringValue }
+                .filter { text in words.contains { text.localizedCaseInsensitiveContains($0) } }.prefix(12).joined(separator: " | ")
+        }
         func hasText(_ text: String) -> Bool {
             ([host] + window.sheets.compactMap(\.contentView)).flatMap(views).contains {
                 (($0 as? NSTextField)?.stringValue ?? ($0 as? NSTextView)?.string ?? "").contains(text)
@@ -216,7 +223,10 @@ private extension WorkspaceSession {
                     if let scroll = view as? NSScrollView, let document = scroll.documentView {
                         document.layoutSubtreeIfNeeded()
                         let rect = marker.convert(marker.bounds, to: document), clip = scroll.contentView
-                        if !clip.bounds.insetBy(dx: 0, dy: 20).contains(rect) {
+                        // A card taller than the page keeps its top pinned over the page's top edge, so a control there is not clickable.
+                        var visible = clip.bounds.insetBy(dx: 0, dy: 20)
+                        if clip.isFlipped { visible.origin.y += StorebenchStickyHeaders.height; visible.size.height -= StorebenchStickyHeaders.height }
+                        if !visible.contains(rect) {
                             let y = min(max(document.bounds.minY, rect.midY - clip.bounds.height / 2), max(document.bounds.minY, document.bounds.maxY - clip.bounds.height))
                             clip.scroll(to: CGPoint(x: clip.bounds.minX, y: y)); scroll.reflectScrolledClipView(clip)
                         }
@@ -297,18 +307,20 @@ private extension WorkspaceSession {
         let probe = Probe(), ui = Window(Harness(account: account, session: session, controller: controller, owner: owner, history: history, probe: probe), width: width)
         do {
             try await ui.press("version-plan.save")
-            try await ui.wait { ui.marker("publish.prepare") != nil }
+            // Step 1 has one Sync to Apple, on the version card; the Create Version panel below shows its status and review.
+            try await ui.wait(detail: "The saved plan did not show its Create Version status") { ui.marker("publish.current-status") != nil }
+            #expect(ui.marker("publish.prepare") == nil, "Step 1 has no second Sync to Apple")
             #expect(ui.window.sheets.isEmpty && apple.writes.isEmpty)
             try await ui.press("version-plan.sync")
             try await ui.wait(detail: "Creation approval did not open") { ui.marker("publish.sync.approve") != nil }
             #expect(apple.writes.isEmpty)
             try await ui.press("publish.sync.approve")
             try await completed(.release, session: session, account: account)
-            try await ui.wait { apple.writes.count == 1 && ui.window.sheets.isEmpty }
+            try await ui.wait(detail: "The version was not created, or its review stayed open: \(apple.writes.count) writes, \(ui.window.sheets.count) sheets") { apple.writes.count == 1 && ui.window.sheets.isEmpty }
             #expect(apple.writes[0].1 == "/v1/appStoreVersions")
             try await ui.press("quick.step.text")
             let field = "quick.field.en-US.whatsNew", notes = "Synthetic improvements for this update."
-            try await ui.wait { ui.marker(field) != nil }
+            try await ui.wait(detail: "What's New did not appear in the text step") { ui.marker(field) != nil }
             try ui.edit(field, value: notes)
             try await ui.press("quick.next")
             try await ui.press("quick.back")
@@ -322,27 +334,41 @@ private extension WorkspaceSession {
             try await ui.wait(detail: "Text approval did not open") { ui.marker("publish.sync.approve") != nil }
             #expect(apple.writes.count == 1)
             try await ui.press("publish.sync.cancel")
-            try await ui.wait { ui.window.sheets.isEmpty }
+            try await ui.wait(detail: "The cancelled review stayed open") { ui.window.sheets.isEmpty }
             #expect(apple.writes.count == 1)
             #expect(try ui.text(field).string == notes)
-            try await ui.press("quick.text.sync")
+            // Add for Review names the text Apple doesn't have yet, and its Sync to Apple opens that text review right there:
+            // the step stays open, so Add for Review is next without going back through step 2.
+            try await ui.press("quick.step.submit")
+            let needed = "quick.needed.sync.apple-text:en-US"
+            try await ui.wait(detail: "Add for Review did not offer Sync to Apple for the text: " + ui.shownText(containing: ["needed", "waiting"])) { ui.marker(needed) != nil }
+            try await ui.press(needed)
+            try await ui.wait(detail: "Sync to Apple in Add for Review did not open the text review") { ui.marker("publish.sync.approve") != nil }
+            #expect(ui.marker("quick.current.submit") != nil && ui.marker("quick.current.text") == nil, "Sync to Apple in Add for Review left its step")
+            try await ui.press("publish.sync.cancel")
+            try await ui.wait(detail: "The cancelled review stayed open") { ui.window.sheets.isEmpty }
+            #expect(apple.writes.count == 1)
+            try await ui.press(needed)
             try await ui.press("publish.sync.approve")
             try await completed(.metadata, session: session, account: account)
-            try await ui.wait { apple.notes == notes && ui.window.sheets.isEmpty }
+            try await ui.wait(detail: "What's New was not sent, or its review stayed open: \(ui.window.sheets.count) sheets") { apple.notes == notes && ui.window.sheets.isEmpty }
+            #expect(ui.marker("quick.current.submit") != nil, "The approved text sync left Add for Review")
             try await ui.press("quick.step.build")
             try await ui.press("draft.sync.release-build")
-            try await ui.wait { ui.marker("publish.sync.approve") != nil }
+            try await ui.wait(detail: "The build review did not open") { ui.marker("publish.sync.approve") != nil }
             #expect(!apple.writes.contains { $0.1 == "/v1/appStoreVersions/version-2" })
             try await ui.press("publish.sync.approve")
             try await completed(.versionBuild, session: session, account: account)
-            try await ui.wait { apple.writes.contains { $0.1 == "/v1/appStoreVersions/version-2" } && ui.window.sheets.isEmpty }
+            try await ui.wait(detail: "The build was not added, or its review stayed open: \(ui.window.sheets.count) sheets") { apple.writes.contains { $0.1 == "/v1/appStoreVersions/version-2" } && ui.window.sheets.isEmpty }
             try await ui.press("quick.next")
             try await ui.press("publish.prepare")
-            try await ui.wait { ui.marker("publish.sync.approve") != nil }
+            let shown = { "The Add for Review approval did not open; prepare available: \(ui.marker("publish.prepare")?.available == true), sheets: \(ui.window.sheets.count); "
+                + ui.shownText(containing: ["review", "needed", "missing", "could not", "add for", "prepar", "wait", "check"]) }
+            do { try await ui.wait { ui.marker("publish.sync.approve") != nil } } catch { throw Failure.timeout(shown()) }
             #expect(!apple.writes.contains { $0.1 == "/v1/reviewSubmissions" })
             try await ui.press("publish.sync.approve")
             try await completed(.submit, session: session, account: account)
-            try await ui.wait { apple.state == "WAITING_FOR_REVIEW" && ui.window.sheets.isEmpty }
+            try await ui.wait(detail: "The version was not added for review: \(apple.state), \(ui.window.sheets.count) sheets") { apple.state == "WAITING_FOR_REVIEW" && ui.window.sheets.isEmpty }
             #expect(probe.section == .quickRelease)
             #expect(apple.writes.count == 6)
             #expect(!apple.writes.contains { $0.1.contains("Screenshot") || $0.1.contains("appAssetLibrary") || $0.0 == "DELETE" })
@@ -351,6 +377,19 @@ private extension WorkspaceSession {
             let completed = try #require(reviews.first { $0.state == "complete" })
             let client = try await session.client(for: account)
             await #expect(throws: PublishFailure.used) { try await session.approvePublishing(account: account, appId: appId, id: completed.id, fingerprint: completed.fingerprint, client: client) }
+            // A newer build for the version in review: Replace the Build removes it from review after its own approval, and Add Build
+            // opens again once App Store Connect shows the version as editable.
+            let replaceShown = { "Replace the Build was not offered for the version in review; prepare: \(String(describing: ui.marker("publish.prepare")?.available)); "
+                + ui.shownText(containing: ["replace", "remove", "review", "submitted", "waiting", "step", "next version", "prepar", "up to date"]) }
+            do { try await ui.wait { ui.hasText("To send a newer build of") && ui.marker("publish.prepare")?.available == true } } catch { throw Failure.timeout(replaceShown()) }
+            try await ui.press("publish.prepare")
+            try await ui.wait(detail: "The Remove from Review approval did not open") { ui.marker("publish.sync.approve") != nil }
+            #expect(!apple.writes.contains { ($0.2?["data"] as? [String: Any]).flatMap { ($0["attributes"] as? [String: Any])?["canceled"] as? Bool } == true })
+            try await ui.press("publish.sync.approve")
+            try await self.completed(.cancelSubmission, session: session, account: account)
+            let buildShown = { "Add Build did not open after removing the version from review: \(apple.state); "
+                + ui.shownText(containing: ["replace", "remove", "review", "submitted", "rejected", "build", "step"]) }
+            do { try await ui.wait { ui.marker("quick.current.build") != nil } } catch { throw Failure.timeout(buildShown()) }
         } catch {
             let reviews = (try? await session.publishHistory(accountId: account.id, appId: appId)) ?? []
             print("Synthetic journey reviews: " + reviews.map { $0.request.scope.rawValue + ":" + $0.state }.joined(separator: ", "))

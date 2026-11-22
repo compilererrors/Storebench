@@ -204,7 +204,7 @@ extension AITests {
         StubProtocol.handle("api.openai.com") { request in
             do {
                 let body = try JSONText.parse(StubProtocol.body(request))
-                if body["instructions"]?.text?.contains("to de-DE.") == true { return (429, [:], Data()) }
+                if body["instructions"]?.text?.contains("(de-DE).") == true { return (429, [:], Data()) }
                 guard case .array(let input)? = body["input"], case .array(let parts)? = input.first?["content"], let text = parts.first?["text"]?.text,
                       case .array(let texts) = try JSONText.parse(Data(text.utf8)) else { throw AIFailure.response }
                 #expect(!texts.contains(.string(source.version["description"]!)))
@@ -243,7 +243,7 @@ extension AITests {
         StubProtocol.handle("api.openai.com") { request in
             do {
                 let body = try JSONText.parse(StubProtocol.body(request))
-                #expect(body["instructions"]?.text?.contains("to de-DE.") == true)
+                #expect(body["instructions"]?.text?.contains("(de-DE).") == true)
                 let result = JSONText.object([("translations", .array(source.segments.indices.map { .string("de-\($0)") }))])
                 return (200, [:], f.response(result, provider: .openai))
             } catch { return (501, [:], Data()) }

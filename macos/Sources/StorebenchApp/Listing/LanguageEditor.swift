@@ -18,6 +18,7 @@ struct LanguageEditor: View {
         try await session.prepareLanguageListingReview(account: account, request: request, client: try await session.client(for: account))
     }
     @State private var inlineReview: PublishReview?
+    @State private var categories: [String] = []
     @State private var publishing = false
     @State private var latestReading = false
     @State private var model: LanguageDraftEditor?
@@ -80,6 +81,7 @@ struct LanguageEditor: View {
             if contained { draftContent }
             else { Card(title: "\(locale) language draft", subtitle: summary) { draftContent } }
         }
+        .task(id: scope.appId) { categories = await session?.searchCategoryNames(account: account, appId: scope.appId) ?? [] }
         .task(id: identity) {
             firstVersion = (try? await session?.isFirstVersion(accountId: account.id, appId: revision.app.id, platform: version.platform, number: version.number)) ?? false
             await load()
@@ -155,7 +157,7 @@ struct LanguageEditor: View {
             if let app = account.apps.first(where: { $0.id == scope.appId }) {
                 ReviewPanel(account: account, app: app, session: session, review: $inlineReview, done: finishedSync, busyChanged: { publishing = $0 }, actionsBusy: changed || failed || busy, syncConfirmation: true)
             }
-            StorebenchCardSection(title: "Saved baseline and reused text", accessory: AnyView(
+            StorebenchCardSection(title: "Saved Baseline and Reused Text", accessory: AnyView(
                 StorebenchIconButton(title: "Refresh Copied Sources", icon: "refresh") { Task { await readSources() } }.storebenchWorking(busy || failed)
             )) {
             LatestSaveReview(busy: busy, reading: latestReading, hasEdits: changed || failed, available: model != nil, changes: differences, note: nil, onRead: { Task { await readLatest() } },
@@ -182,10 +184,8 @@ struct LanguageEditor: View {
                     if !failed { StorebenchToggle("Show changed fields only", isOn: $showChanges).storebenchWorking(busy) }
                 }
             }
-            let over = editor.fields.filter { TextDrafts.used($0.key, editor.value($0)) > (TextDrafts.limits[$0.key] ?? .max) }
-            statusTrack(over.isEmpty ? "Text budgets and source comparisons remain visible in closed section headings." : "Over Apple’s limit: " + over.map(\.label).joined(separator: ", "), height: 24, error: !over.isEmpty)
             if !failed { ForEach(LanguageEditorLayout.Group.allCases, id: \.self) { group in
-                let entries = group.fields.filter { !omittedFields.contains($0) && !(firstVersion && $0 == "whatsNew") }.flatMap { key in editor.fields.filter { $0.key == key } }
+                let entries = group.fields.filter { !omittedFields.contains($0) && !(firstVersion && $0 == "whatsNew") }.flatMap { key in editor.shownFields.filter { $0.key == key } }
                 if !entries.isEmpty {
                     if group != .copy { StorebenchDivider().padding(.vertical, StorebenchTheme.space(1)) }
                     DisclosureGroup(isExpanded: groupBinding(group)) {
@@ -202,7 +202,7 @@ struct LanguageEditor: View {
                                     .font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
                             }.frame(maxWidth: .infinity, alignment: .leading)
                             Text(groupSummary(entries)).font(.sbCaption).foregroundStyle(entries.contains { problem($0) != nil } ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true).frame(width: 120, alignment: .trailing)
-                        }
+                        }.frame(maxWidth: .infinity, alignment: .leading)
                         .storebenchControlID("language.section-toggle." + locale + "." + group.rawValue)
                     }.storebenchWorking(busy || layout?.ready == false)
                         .id(LanguageSectionNavigation.anchor(locale, group))
@@ -224,12 +224,16 @@ struct LanguageEditor: View {
     @ViewBuilder private var draftActions: some View {
         Button("View Changes", action: openChanges).storebenchControlID("language.diff.footer")
             .storebenchWorking(busy || !hasDifferences)
-        StorebenchBusyButton(title: "Save Draft", loadingTitle: "Saving…", busy: busy) { operation = Task { _ = await save() } }
+        // Save Draft has something to do only with unsaved edits; Sync to Apple saves them first, and rests once Apple has this text.
+        StorebenchBusyButton(title: "Save Draft", loadingTitle: "Saving…", busy: saving) { operation = Task { _ = await save() } }
             .storebenchControlID("language.save.\(locale)")
-            .storebenchWorking(failed || session == nil)
+            .storebenchWorking(failed || session == nil || (!changed && !saving) || (busy && !saving))
+            .help(changed ? "Save this language's text on your Mac" : "Everything is saved on this Mac")
         if showUpload && !failed && editor != nil && session != nil {
-            StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Preparing…", busy: busy, variant: changed || editor?.fields.contains(where: { editor?.differsFromImport($0) == true }) == true ? .primary : .secondary) { operation = Task { await prepare() } }
+            StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Preparing…", busy: preparing || publishing, variant: .primary) { operation = Task { await prepare() } }
                 .storebenchControlID("language.sync.\(locale)")
+                .storebenchWorking((synced && !changed) || (busy && !preparing && !publishing))
+                .help(synced && !changed ? "App Store Connect already has this language's text" : changed ? "Save your edits, then open the review that sends them to App Store Connect" : "Open the review that sends this language's text to App Store Connect")
         }
     }
     private var hasDifferences: Bool { editor.map { value in value.dirty || value.fields.contains { value.differsFromImport($0) } } == true }
@@ -250,19 +254,25 @@ struct LanguageEditor: View {
         guard let editor else { return AnyView(EmptyView()) }
         let value = editor.value(field), used = TextDrafts.used(field.key, value), limit = TextDrafts.limits[field.key] ?? 0
         let title = editor.searchTitle
-        let lint = field.key == "keywords" ? SearchLint(value, name: title.name, subtitle: title.subtitle, locale: locale) : nil
+        let lint = field.key == "keywords" ? SearchLint(value, name: title.name, subtitle: title.subtitle, locale: locale, categories: categories) : nil
         let problem = problem(field), focused = focused(field), danger = StorebenchTheme.color("color-danger")
         return AnyView(VStack(alignment: .leading, spacing: 6) {
+            // The label keeps the field's left edge; a problem follows it on the same line, so nothing below moves.
             HStack(spacing: 6) {
-                StorebenchIcon(name: "warning", size: 14).foregroundStyle(danger).opacity(problem == nil ? 0 : 1).accessibilityHidden(true)
-                Text(field.label).font(.sbCaption.weight(.semibold)).foregroundStyle(problem == nil ? StorebenchTheme.muted : danger)
-                Spacer()
+                Text(field.label).font(.sbCaption.weight(.semibold)).foregroundStyle(problem == nil ? StorebenchTheme.muted : danger).layoutPriority(1)
+                if let problem, backToChecklist == nil {
+                    StorebenchIcon(name: "warning", size: 12).foregroundStyle(danger).accessibilityHidden(true)
+                    Text(problem).font(.sbCaption).foregroundStyle(danger).lineLimit(1).truncationMode(.tail).help(problem)
+                }
+                Spacer(minLength: StorebenchTheme.space(2))
                 Text("\(used) / \(limit)\(field.key == "keywords" ? " bytes" : "")").font(.sbCaption.monospacedDigit()).foregroundStyle(used > limit ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted)
             }
             LanguageTextControl(field: field.key, label: field.label, text: Binding(get: { self.editor?.value(field) ?? "" }, set: { change(field, $0) }), focusRequest: focused ? fieldFocus?.ticket : nil)
                 .storebenchControlID("language.field.\(locale).\(field.key)")
                 .overlay(StorebenchControlOutline(border: problem == nil ? .clear : StorebenchTheme.color("color-danger-border")).allowsHitTesting(false))
             VStack(alignment: .leading, spacing: StorebenchTheme.space(2)) {
+                // Returning to the step's checklist keeps its status and Done command under each field.
+                if backToChecklist != nil {
                     StorebenchActionRow {
                         HStack(alignment: .center, spacing: 8) {
                             StorebenchIcon(name: problem == nil ? "check" : "warning", size: 14).foregroundStyle(problem == nil ? StorebenchTheme.color("color-success") : danger)
@@ -278,12 +288,13 @@ struct LanguageEditor: View {
                                 .opacity(focused ? 1 : 0).allowsHitTesting(focused).accessibilityHidden(!focused)
                         }
                     }
+                }
                 if editor.differsFromImport(field) {
                     DisclosureGroup("Compare \(field.label.lowercased()) with \(originalLabel)") {
                         LanguageTextComparison(before: editor.original(field), after: value, beforeLabel: revision.isLocalDraft ? "Starting text" : "Imported text", afterLabel: "Current editor")
                         Text("Updates this editor. Save the draft to keep it.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
                         StorebenchActionGroup(alignment: .leading) {
-                            Button(revision.isLocalDraft ? "Use Starting" : "Use Imported") { do { try model?.restoreImport(field); preparedReview = nil; status = "" } catch { status = DraftFailure.invalid.message } }.help("Use \(revision.isLocalDraft ? "Starting" : "Imported") \(field.label)").accessibilityLabel("Use \(revision.isLocalDraft ? "Starting" : "Imported") \(field.label)")
+                            Button(revision.isLocalDraft ? "Use Starting" : "Use Imported") { do { if let original = model?.editor?.original(field) { try model?.changeShown(field, to: original) }; preparedReview = nil; status = "" } catch { status = DraftFailure.invalid.message } }.help("Use \(revision.isLocalDraft ? "Starting" : "Imported") \(field.label)").accessibilityLabel("Use \(revision.isLocalDraft ? "Starting" : "Imported") \(field.label)")
                         }
                     }
                 }
@@ -295,7 +306,10 @@ struct LanguageEditor: View {
         }
         .background { ReleaseFocusFrame(visible: focused, identifier: "language.focus.\(locale).\(field.key)") }
         .onChange(of: focused ? fieldFocus?.ticket : nil, initial: true) {
-            if focused { pageScroll?(ReleaseReadiness.fieldAnchor(locale, field.key), .center) }
+            // Once per request: a field shown again after the editor reloads, as after a save, leaves the page where it is.
+            guard focused, let ticket = fieldFocus?.ticket, !StorebenchFocusRequests.applied(ticket, .page) else { return }
+            StorebenchFocusRequests.record(ticket, .page)
+            pageScroll?(ReleaseReadiness.fieldAnchor(locale, field.key), .center)
         }
         .id(ReleaseReadiness.fieldAnchor(locale, field.key)))
     }
@@ -324,7 +338,7 @@ struct LanguageEditor: View {
         }
     }
     private func change(_ field: LanguageEditorState.Field, _ value: String) {
-        do { try model?.change(field, to: value); preparedReview = nil; preparedResult = nil; syncReceipt = nil; inlineReview = nil; status = "" }
+        do { try model?.changeShown(field, to: value); preparedReview = nil; preparedResult = nil; syncReceipt = nil; inlineReview = nil; status = "" }
         catch { status = "Keep each local text field within 10,000 UTF-16 characters. Your previous text is retained." }
     }
     private func groupBinding(_ group: LanguageEditorLayout.Group) -> Binding<Bool> {

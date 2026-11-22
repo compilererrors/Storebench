@@ -166,7 +166,7 @@ struct AppInformationView: View {
                 ageOptions("kidsAgeBand", AgeRating.kidsValues, emptyClears: true)
                 ageOptions("ageRatingOverrideV2", AgeRating.globalValues)
                 ageOptions("koreaAgeRatingOverride", AgeRating.koreaValues)
-                StorebenchTextField("Age rating information URL", text: ageBinding("developerAgeRatingInfoUrl", emptyClears: true), placeholder: "Optional HTTPS URL")
+                StorebenchTextField("Age Rating Information URL", text: ageBinding("developerAgeRatingInfoUrl", emptyClears: true), placeholder: "Optional HTTPS URL")
             }.storebenchPlaceholder(!editor.ageReady)
             }
             Text("\(editor.ageChanges.count) \(editor.ageChanges.count == 1 ? "answer" : "answers") changed for review.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
@@ -182,7 +182,7 @@ struct AppInformationView: View {
     private var accessibilityCard: some View {
         Card(title: "Accessibility", subtitle: "Self-reported accessibility features, per device family. Saving an Apple draft and publishing it require separate reviews.") {
             StorebenchFeedback(text: accessibilityStatus, height: 40)
-            StorebenchPicker("Device family", selection: $family) { selectionOptions(AccessibilityDeclarations.families) { SelectionOption($0.1, value: $0.0) } }.storebenchFormColumn().onChange(of: family) { review = nil }
+            StorebenchPicker("Device Family", selection: $family) { selectionOptions(AccessibilityDeclarations.families) { SelectionOption($0.1, value: $0.0) } }.storebenchFormColumn().onChange(of: family) { review = nil }
             if editor.accessibilityReady || reading(editor.accessibilityReady) {
                 let records = (editor.declarations ?? []).filter { $0.family == family && $0.state != "REPLACED" }
                 Text(records.isEmpty ? "No declaration for this device family." : records.map { "\($0.state.capitalized) declaration" }.joined(separator: " · ")).font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
@@ -224,7 +224,7 @@ struct AppInformationView: View {
             Text("Future App Store territories: \(editor.information?.availableInNewTerritories.map { $0 ? "Automatically added" : "Not automatically added" } ?? "Unavailable")").font(.sbCallout)
             Text("Future territories, pre-orders and unknown pre-order settings are managed under Pricing and Availability → App Availability in App Store Connect.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
             if editor.informationReady && editor.information?.availabilityError == nil {
-            StorebenchTextField("Search countries", text: $query).storebenchFormColumn()
+            StorebenchTextField("Search Countries", text: $query).storebenchFormColumn()
             StorebenchCollection(items: editor.ordinaryTerritories.filter { query.isEmpty || (WorkspaceSession.countryName($0.id) + " " + $0.id).range(of: query, options: [.caseInsensitive, .literal]) != nil }, title: { WorkspaceSession.countryName($0.id) }, subtitle: { $0.available ? "Selected at Apple" : "Not selected at Apple" }, empty: query.isEmpty ? "No supported region changes are available." : "No countries or regions match. Change or clear the search.") { territory in
                 StorebenchActionRow {
                     Text(WorkspaceSession.countryName(territory.id)).fixedSize(horizontal: false, vertical: true)
@@ -234,7 +234,7 @@ struct AppInformationView: View {
                 }
             }
             } else if reading(editor.informationReady) {
-                StorebenchTextField("Search countries", text: .constant("")).storebenchFormColumn().storebenchPlaceholder()
+                StorebenchTextField("Search Countries", text: .constant("")).storebenchFormColumn().storebenchPlaceholder()
                 ForEach(0..<5, id: \.self) { _ in
                     StorebenchActionRow { Text("Country or region name"); Text("Not selected at Apple") } actions: { Button("Review Selection") {}.buttonStyle(StorebenchButtonStyle(.quiet)) }.storebenchPlaceholder()
                 }

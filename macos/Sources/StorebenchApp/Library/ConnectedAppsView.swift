@@ -48,7 +48,8 @@ struct ConnectedAppsView: View {
         .task(id: model.session.map { ObjectIdentifier($0) }) {
             let id = UUID(); context = id; loading = false
             if !ready, let read = history?.rememberedRead("connected-apps", as: [ConnectedApps.Row].self) { rows = read; ready = true }
-            await StorebenchPolling.repeating(every: .seconds(2), while: { context == id }) { await load(id) }
+            await StorebenchPolling.repeating(every: .seconds(2), stamp: { try? await model.session?.savedStateToken() }, working: { failed || !ready || rows.contains(where: \.changing) },
+                                              while: { context == id }) { await load(id) }
         }
         .onDisappear { context = UUID(); readGate.end() }
     }

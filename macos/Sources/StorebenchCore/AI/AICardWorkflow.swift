@@ -9,7 +9,7 @@ extension WorkspaceSession {
         guard let saved = try localEditorDraft(scope), saved.revision == expected else { throw AIFailure.changed }
         let value = saved.value
         guard let name = value["name"]?.text, !TextSemantics.trim(name).isEmpty, MediaCards.validText(name, MediaCards.nameLimit), !name.contains("\n"),
-              let brief = value["brief"]?.text, !TextSemantics.trim(brief).isEmpty, brief.utf16.count <= 2000, TextSemantics.validControlText(brief),
+              let brief = value["brief"]?.text, value["useListing"] != .bool(false) || !TextSemantics.trim(brief).isEmpty, brief.utf16.count <= 2000, TextSemantics.validControlText(brief),
               let language = value["language"]?.text, StoreLocales.codes.contains(language),
               let provider = value["provider"]?.text.flatMap(AIProvider.init(rawValue:)),
               let target = MediaCards.targets.first(where: { $0.id == value["target"]?.text }),
@@ -27,7 +27,7 @@ extension WorkspaceSession {
         var images: [AIImage] = []
         for shot in shots {
             try Task.checkCancellation()
-            let bytes = try media.read(shot.hash)
+            let bytes = try await mediaBytes(shot.hash)
             let info = try ScreenshotEditing.inspect(bytes)
             guard info.width == shot.width, info.height == shot.height else { throw AIFailure.changed }
             images.append(try await AICards.image(bytes, recognizeText: provider == .apple, textLimit: min(1800, 6000 / shots.count)))
@@ -35,7 +35,10 @@ extension WorkspaceSession {
         let directions = try AICardDirection.selected(in: value)
         let variationID = value["variationID"]?.text
         if let variationID { guard UUID(uuidString: variationID) != nil else { throw AIFailure.configuration } }
-        let request = try AICards.request(brief: brief, language: language, target: target, images: images, directions: directions, cardDraft: value, variationID: variationID, customInstructions: customInstructions)
+        // The app's own App Store text keeps the cards about this app, unless the person turned it off for this set.
+        let listing = value["useListing"] == .bool(false) ? nil : try aiCardListing(accountId: accountId, appId: appId, language: language)
+        guard listing != nil || !TextSemantics.trim(brief).isEmpty else { throw AIFailure.configuration }
+        let request = try AICards.request(brief: brief, language: language, target: target, images: images, directions: directions, cardDraft: value, variationID: variationID, customInstructions: customInstructions, listing: listing)
         let result = try await runAIJob(accountId: accountId, appId: appId, provider: provider, request: request, model: model)
         try Task.checkCancellation()
         guard try localEditorDraft(scope) == saved else { throw AIFailure.changed }

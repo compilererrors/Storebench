@@ -28,7 +28,7 @@ public enum MediaCardTranslation {
         guard translations.count == segments(source).count else { throw MediaCardFailure.translation }
         var remaining = translations[...], result = source
         result.id = UUID().uuidString.lowercased(); result.name = name(source.name, language: language)
-        result.language = language; result.savedCards = nil
+        result.language = language; result.savedCards = nil; result.translatedFrom = source.id
         for index in result.cards.indices {
             result.cards[index].id = UUID().uuidString.lowercased()
             for (field, limit) in zip(fields, limits) where !TextSemantics.trim(result.cards[index][keyPath: field]).isEmpty {

@@ -8,6 +8,7 @@ struct SavedRevisionList: View {
     @State private var deleting = false
     @State private var status = ""
     @Environment(\.confirmDestructive) private var confirm
+    @Environment(\.editorNavigation) private var navigation
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             StorebenchFeedback(text: status, height: 48)
@@ -18,11 +19,12 @@ struct SavedRevisionList: View {
                         .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
                     if revision.id == planSourceId { Text("Used by the version plan, so it cannot be deleted.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted) }
                     Text(revision.id).font(.sbCaption).foregroundStyle(StorebenchTheme.muted).textSelection(.enabled)
-                    if available && revision.id != planSourceId {
-                        StorebenchActionGroup(alignment: .leading) {
+                    StorebenchActionGroup(alignment: .leading) {
+                        Button("Open Version History") { navigation.open(.history, locale: nil) }.help("Read this saved version's text and screenshots in Version history")
+                        if available && revision.id != planSourceId {
                             Button("Delete…", role: .destructive) { delete(revision) }.help("Delete this saved \(revision.local ? "draft" : "import")")
-                        }.storebenchWorking(busy || deleting)
-                    }
+                        }
+                    }.storebenchWorking(busy || deleting)
                 }
                 StorebenchDivider()
             }

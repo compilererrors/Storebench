@@ -89,6 +89,8 @@ public struct MediaCardSet: Equatable, Sendable, Codable, Identifiable {
     public var language: String? = nil
     /// The cards as they were when all of them were last saved to Asset Library; nil before the first save.
     public var savedCards: [MediaCard]? = nil
+    /// The set this one was translated from, so translating it again into the same language updates this copy.
+    public var translatedFrom: String? = nil
     public init(id: String = UUID().uuidString.lowercased(), name: String, target: ScreenshotEditing.Target) {
         self.id = id; self.name = name; displayType = target.type; width = target.width; height = target.height
         cards = [MediaCard()]

@@ -35,12 +35,12 @@ struct ScreenshotsEditor: View {
                     }
                 }
             }
-            Text("Add PNG or JPEG files from this Mac or Asset Library, or drag them here. Up to 10 per display size. Removed screenshots can be restored.")
+            Text("PNG or JPEG, up to 10 per display size. Drag files here to add them.")
                 .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
             ForEach(model.screenshotSelections.filter(\.dirty)) { selected in
                 PendingScreenshotRow(selected: selected, busy: workflowBusy || model.workflow.busy) { fix(selected) }
             }
-            StorebenchCollection(items: model.screenshots, title: { StoreLocales.displayTypeName($0.displayType) }, subtitle: { "\($0.editor.included) included screenshots" },
+            StorebenchCollection(items: model.screenshots, title: { StoreLocales.displayTypeName($0.displayType) }, subtitle: { "\($0.editor.included) of \(ScreenshotSpecs.maximum) screenshots" },
                                  empty: "No screenshots yet. Choose Add Screenshots or drop PNG or JPEG files here.") { entry in
                 ScreenshotSetEditor(scope: scope, entry: entry, model: model, workflow: model.workflow, session: session, add: { add(entry.id, entry.displayType) }, drop: { drop($0, entry.id, entry.displayType) })
             }
@@ -89,11 +89,13 @@ struct ScreenshotSetEditor: View {
     private var canReorder: Bool { !scope.local && !editor.state.blocked && !workflowBusy && !workflow.busy }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // One line beside the size's options: what is saved and how to reorder, or why the size cannot be saved yet.
             StorebenchHeader(stackAt: 0) {
-                VStack(alignment: .leading, spacing: StorebenchTheme.space(1)) {
-                    StorebenchTextSlot(text: "Screenshot order", height: StorebenchTheme.measure("sectionTitle"), font: .sbHeadline)
-                    StorebenchTextSlot(text: "\(editor.included) of \(ScreenshotSpecs.maximum) included", height: StorebenchTheme.measure("fieldLabel"), font: .sbCaption, color: editor.included > ScreenshotSpecs.maximum ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted)
-                }
+                StorebenchTextSlot(text: editor.included > ScreenshotSpecs.maximum ? "\(editor.included) of \(ScreenshotSpecs.maximum) included. Remove some before saving."
+                                   : editor.dirty ? "Unsaved changes. Save Draft keeps them on this Mac." : "Saved on this Mac. Drag to change the order.",
+                                   height: StorebenchTheme.controlHeight, font: .sbCaption,
+                                   color: editor.included > ScreenshotSpecs.maximum ? StorebenchTheme.color("color-danger") : editor.dirty ? StorebenchTheme.color("color-accent-strong") : StorebenchTheme.muted, live: true)
+                    .storebenchControlID("screenshots.order-status")
             } actions: {
                     if !scope.local {
                         StorebenchIconMenu(title: "Screenshot Order Options · " + StoreLocales.displayTypeName(entry.displayType)) {
@@ -104,8 +106,6 @@ struct ScreenshotSetEditor: View {
                         }
                     }
             }
-            StorebenchTextSlot(text: editor.dirty ? "Unsaved changes · Save Draft keeps additions, removals and order on this Mac. Sync to Apple prepares a separate review."
-                             : "Saved on this Mac · Drag to change the order. Sync to Apple reviews the saved changes before sending them.", height: 40, font: .sbCaption, color: editor.dirty ? StorebenchTheme.color("color-accent-muted") : StorebenchTheme.muted, live: true)
             if let draft, !editor.includedOrder.isEmpty {
                 StorebenchMetricGrid(maximumColumns: 4, minimumWidth: 260, spacing: StorebenchTheme.measure("assetGridGap")) {
                     ForEach(Array(editor.includedOrder.enumerated()), id: \.element) { index, id in

@@ -51,15 +51,20 @@ extension WorkspaceSession {
     /// Reads the exact assigned revision, never a newer pointer or an unrelated local draft.
     func committedImport(accountId: String, appId: String, revisionId: String, store: EncryptedDocumentStore) throws -> Revision? {
         guard ReportJobs.uuid(revisionId) else { throw ImportFailure.status }
-        guard let record = try store.document(namespace: "revisions", key: "\(accountId):\(appId):\(revisionId)") else { return nil }
+        let key = "\(accountId):\(appId):\(revisionId)", cacheKey = "direct/" + key, stamp = try store.namespaceStamp("revisions")
+        // A revision checked before, with no revision written or removed since, is the same committed import.
+        if committedImports[key] == stamp, let cached = decodedRevisions.value(for: cacheKey) { return cached.revision.isLocalDraft ? nil : cached.revision }
+        guard let record = try store.document(namespace: "revisions", key: key) else { return nil }
         do {
-            let value = try JSONText.parse(record.payload), revision = try JSONDecoder().decode(Revision.self, from: record.payload)
+            let value = try JSONText.parse(record.payload), revision = try decodedRevision(record, cacheKey: cacheKey) { try JSONDecoder().decode(Revision.self, from: record.payload) }
             guard revision.schemaVersion == 1, revision.id == revisionId, revision.app.id == appId, value["account"]?["id"]?.text == accountId,
                   ReportTimestamps.valid(revision.importedAt) else { throw ImportFailure.status }
             for version in revision.versions { for locale in version.localizations { for set in locale.screenshotSets { for image in set.screenshots {
                 guard image.sha256.range(of: #"\A[a-f0-9]{64}\z"#, options: .regularExpression) != nil,
                       image.contentType == "image/png" || image.contentType == "image/jpeg" else { throw ImportFailure.status }
             } } } }
+            if committedImports.count >= SavedListMemo.capacity, committedImports[key] == nil { committedImports.removeAll() }
+            committedImports[key] = stamp
             return revision.isLocalDraft ? nil : revision
         } catch { throw ImportFailure.status }
     }
@@ -100,6 +105,14 @@ extension WorkspaceSession {
         catch is CancellationError { reportTasks[name]?.cancel() }
         catch { reportTaskFailures.insert(ownership.id); reportTasks[name]?.cancel() }
     }
+    /// Marks the running import as downloading screenshots before its first download starts; the count follows as languages finish.
+    func announceScreenshots(_ ownership: ReportJobs.Ownership, now: Date) throws {
+        try storeAccess { store in
+            guard var job = try ReportJobs.parsed(ImportJob.self, store.document(namespace: "jobs", key: ownership.key), family: .material), job.id == ownership.id, job.isActive else { throw ReportJobFailure.status }
+            job.phase = "Downloading screenshots"; job.completed = 0; job.updatedAt = CustomerReview.isoString(now)
+            try ReportJobs.update(job, ownership: ownership, store: store)
+        }
+    }
     func executeImport(account: Account, appId: String, client: AppStoreConnectClient, job: ImportJob, ownership: ReportJobs.Ownership, now: @escaping @Sendable () -> Date) async throws -> ImportResult {
         var current = job
         let name = try ReportJobs.name(.material, accountId: account.id, appId: appId)
@@ -117,6 +130,7 @@ extension WorkspaceSession {
         do {
             try check()
             let result = try await importRevision(account: account, appId: appId, revisionId: job.id, client: client, now: now, check: check,
+                announce: { try check(); try self.announceScreenshots(ownership, now: now()) },
                 progress: { phase, completed in
                     try check(); current.phase = phase; current.completed = completed; current.updatedAt = CustomerReview.isoString(now())
                     try self.storeAccess { try ReportJobs.update(current, ownership: ownership, store: $0) }
@@ -163,7 +177,11 @@ extension WorkspaceSession {
             if let recovered, recovered.state == .complete { ownership.release(); return (recovered, nil) }
             let client = try client ?? self.client(for: account)
             let job = ImportJob(id: id, now: now()); try storeAccess { try ReportJobs.start(job, ownership: ownership, store: $0, binding: binding) }
-            let task = try ownedReport { try await self.executeImport(account: account, appId: appId, client: client, job: job, ownership: ownership, now: now) }
+            // A material import is what Release and Quick Release wait for, whoever started it, so it never runs at background priority:
+            // a job started ahead at startup keeps pace when the person then opens that app. Visible reads still go first.
+            let task = try ownedReport { try await AppleReadPriority.$current.withValue(max(.next, AppleReadPriority.current)) {
+                try await self.executeImport(account: account, appId: appId, client: client, job: job, ownership: ownership, now: now)
+            } }
             let name = try ReportJobs.name(.material, accountId: account.id, appId: appId); reportTasks[name] = (id, { task.cancel() }); return (job, task)
         } catch { ownership.release(); if error is CancellationError || (error as? URLError)?.code == .cancelled { throw error }; throw ImportFailure(error) }
     }

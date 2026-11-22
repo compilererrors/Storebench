@@ -19,7 +19,7 @@ struct StorebenchMenu<Content: View>: View {
         }.menuStyle(.button).menuIndicator(.hidden).buttonStyle(StorebenchPressStyle())
             .frame(maxWidth: stretch ? StorebenchTheme.actionMaxWidth : StorebenchTheme.actionWidth)
             .frame(width: stretch ? nil : StorebenchTheme.actionWidth, height: StorebenchTheme.controlHeight)
-            .onHover { hovering = $0 }
+            .storebenchHover { hovering = $0 }
             .help(title).accessibilityLabel(title)
     }
 }
@@ -37,7 +37,7 @@ struct StorebenchIconMenu<Content: View>: View {
         }.menuStyle(.button).menuIndicator(.hidden)
             .buttonStyle(StorebenchPressStyle())
             .frame(width: StorebenchTheme.controlHeight, height: StorebenchTheme.controlHeight)
-            .onHover { hovering = $0 }
+            .storebenchHover { hovering = $0 }
             .help(title).accessibilityLabel(title)
     }
 }
@@ -99,8 +99,11 @@ struct StorebenchNativePicker<Value: Hashable>: View {
     @State private var focused = false
     private var available: Bool { options.contains(where: \.isEnabled) && Set(options.map(\.value)).count == options.count }
     var body: some View {
+        // The pop-up keeps macOS's menu, keyboard and accessibility; the field around it is the one every input shares.
         NativeSelectionControl(title: title, selection: $selection, options: options, focused: $focused)
-            .frame(minWidth: 0, maxWidth: .infinity).frame(height: StorebenchTheme.controlHeight)
+            .padding(.leading, 5).padding(.trailing, 4)
+            .frame(minWidth: 0, maxWidth: .infinity)
+            .modifier(StorebenchFieldSurface(focused: focused))
             .disabled(!available)
     }
 }
@@ -113,8 +116,9 @@ private struct NativeSelectionControl<Value: Hashable>: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> SelectionPopUpButton {
         let view = SelectionPopUpButton(frame: .zero, pullsDown: false)
-        view.isTransparent = false; view.isBordered = true; view.bezelStyle = .rounded
-        view.focusRingType = .default; view.controlSize = .large
+        view.isTransparent = false; view.isBordered = false
+        (view.cell as? NSPopUpButtonCell)?.arrowPosition = .arrowAtBottom
+        view.focusRingType = .none; view.controlSize = .large
         view.font = .systemFont(ofSize: StorebenchTheme.measure("inputFont"))
         view.cell?.lineBreakMode = .byTruncatingMiddle
         view.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -345,9 +349,10 @@ struct StorebenchTextField: View {
             .scrollFocus(focusTicket, active: enabled && visible)
             .task(id: StorebenchInputFocusRequest(ticket: focusTicket, active: enabled && visible)) {
                 if focusTicket == nil, appliedFocus != nil { inputFocused = false; appliedFocus = nil }
-                guard let focusTicket, enabled, visible else { return }
+                // Each request is applied once: a control that becomes enabled again, as after a save, never takes focus back.
+            guard let focusTicket, enabled, visible, !StorebenchFocusRequests.applied(focusTicket, .focus) else { return }
                 await Task.yield(); guard !Task.isCancelled else { return }
-                inputFocused = true; appliedFocus = focusTicket
+                inputFocused = true; appliedFocus = focusTicket; StorebenchFocusRequests.record(focusTicket, .focus)
             }
     }
 }
@@ -398,7 +403,7 @@ struct StorebenchSearchPicker<Value: Hashable>: View {
     var body: some View {
         StorebenchFormField(label: title, hint: hint, hideLabel: hideLabel, hideHint: hideLabel) {
             Button { if enabled { open = true } } label: { StorebenchMenuFace(title: selected, searchable: true, emphasized: hovered) }
-                .buttonStyle(StorebenchPressStyle()).onHover { hovered = $0 }
+                .buttonStyle(StorebenchPressStyle()).storebenchHover { hovered = $0 }
                 .popover(isPresented: $open, arrowEdge: .bottom) {
                     StorebenchSearchList(title: title, selection: $selection, options: options) { open = false }
                 }
@@ -457,7 +462,7 @@ private struct StorebenchSearchList<Value: Hashable>: View {
                 .background(active && option.isEnabled ? StorebenchTheme.accent : .clear, in: RoundedRectangle(cornerRadius: 6))
                 .contentShape(Rectangle())
         }.buttonStyle(.plain).disabled(!option.isEnabled)
-            .onHover { if $0 && option.isEnabled { highlighted = option.value } }
+            .storebenchHover { if $0 && option.isEnabled { highlighted = option.value } }
             .help(option.detail.map { option.title + "\n" + $0 } ?? option.title).accessibilityLabel(option.title).accessibilityAddTraits(chosen ? [.isSelected] : [])
     }
     private func move(_ direction: Int) {
@@ -572,9 +577,10 @@ struct StorebenchSecureField: View {
         .scrollFocus(focusTicket, active: enabled && visible)
         .task(id: StorebenchInputFocusRequest(ticket: focusTicket, active: enabled && visible)) {
             if focusTicket == nil, appliedFocus != nil { inputFocused = false; appliedFocus = nil }
-            guard let focusTicket, enabled, visible else { return }
+            // Each request is applied once: a control that becomes enabled again, as after a save, never takes focus back.
+            guard let focusTicket, enabled, visible, !StorebenchFocusRequests.applied(focusTicket, .focus) else { return }
             await Task.yield(); guard !Task.isCancelled else { return }
-            inputFocused = true; appliedFocus = focusTicket
+            inputFocused = true; appliedFocus = focusTicket; StorebenchFocusRequests.record(focusTicket, .focus)
         }
     }
 }
@@ -602,6 +608,8 @@ struct StorebenchTextArea: View {
                 .focused($inputFocused)
                 .foregroundStyle(active ? StorebenchTheme.ink : StorebenchTheme.subtle)
                 .scrollContentBackground(.hidden)
+                // Long text shows where it is and can be dragged, as well as scrolled with the pointer over it.
+                .scrollIndicators(.visible)
                 .padding(.vertical, StorebenchTheme.measure("textareaPaddingY"))
                 .padding(.horizontal, StorebenchTheme.measure("textareaPaddingX"))
                 .background(active ? StorebenchTheme.surface : StorebenchTheme.color("color-surface-sunken"))
@@ -611,9 +619,10 @@ struct StorebenchTextArea: View {
         .scrollFocus(focusTicket, active: enabled && visible)
         .task(id: StorebenchInputFocusRequest(ticket: focusTicket, active: enabled && visible)) {
             if focusTicket == nil, appliedFocus != nil { inputFocused = false; appliedFocus = nil }
-            guard let focusTicket, enabled, visible else { return }
+            // Each request is applied once: a control that becomes enabled again, as after a save, never takes focus back.
+            guard let focusTicket, enabled, visible, !StorebenchFocusRequests.applied(focusTicket, .focus) else { return }
             await Task.yield(); guard !Task.isCancelled else { return }
-            inputFocused = true; appliedFocus = focusTicket
+            inputFocused = true; appliedFocus = focusTicket; StorebenchFocusRequests.record(focusTicket, .focus)
         }
     }
 }
@@ -650,10 +659,14 @@ struct StorebenchDisclosureStyle: DisclosureGroupStyle {
 struct StorebenchDisclosureButton<Label: View>: View {
     @Binding var isExpanded: Bool
     var card = false
+    /// A card heading's target fills the height it is given, such as the row beside a card's main command.
+    var fillsHeight = false
     @ViewBuilder let label: () -> Label
     @Environment(\.isEnabled) private var enabled
     @Environment(\.actionBusy) private var actionBusy
-    @State private var hovering = false
+    @State private var pointer = false
+    @Environment(\.hoverPreview) private var preview
+    private var hovering: Bool { preview ?? pointer }
     @State private var scrollAnchor = "disclosure-" + UUID().uuidString
     @State private var scrollFocus = StorebenchScrollFocus()
     @FocusState private var headerFocused: Bool
@@ -688,9 +701,9 @@ struct StorebenchDisclosureButton<Label: View>: View {
                 HStack(alignment: .top, spacing: StorebenchTheme.space(3)) {
                     StorebenchIcon(name: "disclosure", size: StorebenchTheme.measure("disclosureIcon"), filled: true).rotationEffect(.degrees(isExpanded ? 90 : 0)).padding(.top, 6)
                     label().frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                }.padding(StorebenchTheme.space(2)).frame(maxWidth: .infinity, minHeight: StorebenchTheme.controlHeight, alignment: .leading)
-                    .foregroundStyle(enabled || actionBusy ? StorebenchTheme.ink : StorebenchTheme.subtle).contentShape(Rectangle())
-                    .background(enabled && hovering ? StorebenchTheme.color("color-surface-subtle") : .clear, in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
+                }.padding(StorebenchTheme.space(2)).frame(maxWidth: .infinity, minHeight: StorebenchTheme.controlHeight, maxHeight: fillsHeight ? .infinity : nil, alignment: .leading)
+                    .foregroundStyle(enabled || actionBusy ? StorebenchTheme.ink : StorebenchTheme.subtle)
+                    .storebenchHoverFill(enabled && hovering)
                     .overlay(StorebenchControlOutline(border: .clear))
             } else {
                 StorebenchHugWidth {
@@ -701,23 +714,30 @@ struct StorebenchDisclosureButton<Label: View>: View {
                 }.padding(.vertical, StorebenchTheme.measure("disclosurePaddingY"))
                     .padding(.trailing, StorebenchTheme.space(2))
                     .frame(minHeight: StorebenchTheme.controlHeight, alignment: .leading)
-                    .foregroundStyle(enabled || actionBusy ? StorebenchTheme.ink : StorebenchTheme.subtle).contentShape(Rectangle())
-                    .background(enabled && hovering ? StorebenchTheme.color("color-surface-subtle") : .clear, in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
+                    .foregroundStyle(enabled || actionBusy ? StorebenchTheme.ink : StorebenchTheme.subtle)
+                    .storebenchHoverFill(enabled && hovering)
                     .overlay(StorebenchControlOutline(border: .clear))
                 }
             }
-        }.onHover { hovering = $0 }
+        }.storebenchHover { pointer = $0 }
     }
 }
 
+private struct DisclosureIndentKey: EnvironmentKey { static let defaultValue: CGFloat = 0 }
+extension EnvironmentValues {
+    /// How far a disclosure moves its options under its label; a card inside it takes that room back to keep the page's grid.
+    var disclosureIndent: CGFloat { get { self[DisclosureIndentKey.self] } set { self[DisclosureIndentKey.self] = newValue } }
+}
+
 private struct StorebenchDisclosureBody: View {
+    static let indent = StorebenchTheme.measure("disclosureIcon") + StorebenchTheme.measure("disclosureGap")
     let configuration: DisclosureGroupStyleConfiguration
     @State private var mounted = false
     var body: some View {
         surface.frame(maxWidth: .infinity, alignment: .leading)
             .onChange(of: configuration.isExpanded, initial: true) { if configuration.isExpanded { mounted = true } }
     }
-    /// Only the label is a disclosure target. Expanded content keeps its parent's grid and leading edge.
+    /// Only the label is a disclosure target. Options start under the label; a card keeps its parent's grid and leading edge.
     private var surface: some View {
         VStack(alignment: .leading, spacing: 0) {
             StorebenchDisclosureButton(isExpanded: Binding(get: { configuration.isExpanded }, set: { configuration.isExpanded = $0 })) { configuration.label }
@@ -726,7 +746,8 @@ private struct StorebenchDisclosureBody: View {
                     .disclosureGroupStyle(StorebenchDisclosureStyle())
                     .font(.sbCallout).foregroundStyle(StorebenchTheme.color("color-text-secondary"))
                     .padding(.top, StorebenchTheme.space(1)).padding(.bottom, StorebenchTheme.space(2))
-                    .padding(.leading, StorebenchTheme.measure("disclosureIcon") + StorebenchTheme.measure("disclosureGap"))
+                    .padding(.leading, Self.indent)
+                    .environment(\.disclosureIndent, Self.indent)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .collectionVisibility(configuration.isExpanded)
             }

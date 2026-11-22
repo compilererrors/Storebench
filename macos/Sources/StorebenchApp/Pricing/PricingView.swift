@@ -107,7 +107,7 @@ struct CountryPricesView: View {
             if loaded { ModelCard(account: account, app: app, session: session, current: saved?.snapshot?.rows ?? [], onState: { id, blocked in guideProfileId = id; modelBlocked = blocked }, onPreview: { modelPreview = $0 }).storebenchWorking(guideBusy) }
             else if reading {
                 // The pricing model's own card, with a status line until its prices are read.
-                Card(title: "Pricing model", subtitle: "Plan prices across countries from one model.") { StorebenchLoadingStatus(message: "Reading saved prices…", surface: false) }
+                Card(title: "Pricing Model", subtitle: "Plan prices across countries from one model.") { StorebenchLoadingStatus(message: "Reading saved prices…", surface: false) }
             }
             SalesReportsView(account: account, app: app, session: session, blocked: guideShown || guideBusy || working || refreshing, onChanged: { await load() })
             }
@@ -237,10 +237,10 @@ struct CountryPricesView: View {
 
     /// Country drafts for the selected countries; protected countries are refused while protection is held.
     private var draftCard: some View {
-        Card(title: "Country drafts", subtitle: "Planned prices are saved on this Mac and published later in App Store changes.", help: "overrides") {
+        Card(title: "Country Drafts", subtitle: "Planned prices are saved on this Mac and published later in App Store changes.", help: "overrides") {
             if focusedStrategy == nil {
             Text(selected.isEmpty ? "Select countries in Apple prices." : "\(selected.count) countries selected").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
-            StorebenchCardSection(title: "Draft settings", help: "methods") {
+            StorebenchCardSection(title: "Draft Settings", help: "methods") {
             StorebenchChoicePicker("Change", selection: $mode, options: [("percent", "Percentage of current price"), ("exact", "Exact price")])
             StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 230) {
                 if mode == "percent" {
@@ -250,7 +250,7 @@ struct CountryPricesView: View {
                     StorebenchTextField("Amount", text: $amount)
                 }
             }
-            StorebenchToggle("Temporary price", isOn: $temporary)
+            StorebenchToggle("Temporary Price", isOn: $temporary)
             if temporary {
                 StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 230) { StorebenchDateField("From", selection: $start, displayedComponents: .date); StorebenchDateField("Through", selection: $end, displayedComponents: .date) }
             }
@@ -274,6 +274,15 @@ struct CountryPricesView: View {
                         Task { await remove(draft) }
                     }.buttonStyle(StorebenchButtonStyle(.quiet)).storebenchWorking(guideBusy || working || !pricingReadable)
                 }
+            }
+            if !drafts.isEmpty, let session {
+                // The drafts reach Apple only through their own guarded review: it shows every change first and waits for approval.
+                PublishActionPanel(account: account, app: app, session: session, actions: [.pricing],
+                                   initialRequest: PublishRequest(accountId: account.id, appId: app.id, scope: .pricing),
+                                   guided: ("Sync Country Drafts", "Sends the \(drafts.count) country \(drafts.count == 1 ? "draft" : "drafts") to App Store Connect as one price schedule. Protected countries and Apple's future prices are kept. Every change is shown first and waits for your approval."),
+                                   syncTitle: "Sync to Apple", showsDestinationChoices: false,
+                                   done: { review in if review?.state == "complete" { Task { await load() } } })
+                    .id("pricing-drafts-sync").storebenchControlID("pricing.drafts.sync")
             }
         }
     }
@@ -401,12 +410,12 @@ struct ModelCard: View {
     }
 
     var body: some View {
-        Card(title: "Pricing model", subtitle: "Set a guide price and how other countries follow it. The preview uses Apple's price points; nothing is published.", help: "model") {
-            StorebenchCardSection(title: "Model and guide price") {
+        Card(title: "Pricing Model", subtitle: "Set a guide price and how other countries follow it. The preview uses Apple's price points; nothing is published.", help: "model") {
+            StorebenchCardSection(title: "Model and Guide Price") {
             StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 230) {
                 StorebenchPicker("Profile", selection: Binding(get: { profileId }, set: requestProfile)) { selectionOptions(profiles) { SelectionOption($0.name, value: $0.id) } }.storebenchWorking(working)
                 if let editor {
-                    StorebenchTextField("Guide price", text: Binding(get: { self.editor?.inputs.base ?? "" }, set: { self.editor?.inputs.base = $0 })).storebenchWorking(working)
+                    StorebenchTextField("Guide Price", text: Binding(get: { self.editor?.inputs.base ?? "" }, set: { self.editor?.inputs.base = $0 })).storebenchWorking(working)
                 }
             }
             if let editor { Text("Guide price: \(editor.inputs.currency) in \(WorkspaceSession.countryName(editor.inputs.profile.guideTerritory))").font(.sbCaption).foregroundStyle(StorebenchTheme.muted) }

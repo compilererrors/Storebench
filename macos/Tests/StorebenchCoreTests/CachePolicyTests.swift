@@ -62,4 +62,41 @@ import Testing
         private(set) var count = 0
         func next() -> Data { count += 1; return Data("synthetic response \(count)".utf8) }
     }
+
+    @Test func aReadMakesAnEntryTheLastToBeEvictedAndAnUpdateKeepsItsPlace() {
+        var cache = BoundedMemoryCache<String, Int>(capacity: 3, byteLimit: 300)
+        for index in 0..<3 { cache.insert(index, for: "synthetic-\(index)", cost: 50) }
+        #expect(cache.value(for: "synthetic-0") == 0 && cache.peek("synthetic-1") == 1)
+        cache.insert(3, for: "synthetic-3", cost: 50)
+        // The entry read last stayed; the one only peeked at was the least recently used.
+        #expect(cache.count == 3 && cache.peek("synthetic-1") == nil && cache.peek("synthetic-0") == 0)
+        cache.update(20, for: "synthetic-2", cost: 150)
+        #expect(cache.cost == 250 && cache.peek("synthetic-2") == 20)
+        cache.update(9, for: "synthetic-missing", cost: 10)
+        #expect(cache.count == 3 && cache.peek("synthetic-missing") == nil)
+        // The updated entry is still the oldest, so it goes first when the next insert needs its room.
+        cache.insert(4, for: "synthetic-4", cost: 100)
+        #expect(cache.peek("synthetic-2") == nil && cache.count == 3 && cache.cost == 200)
+        cache.removeAll { $0 == 3 }
+        #expect(cache.count == 2 && cache.cost == 150 && cache.peek("synthetic-3") == nil)
+        cache.insert(5, for: "synthetic-5", cost: 400)
+        #expect(cache.peek("synthetic-5") == nil && cache.count == 2)
+        cache.removeAll()
+        #expect(cache.count == 0 && cache.cost == 0 && cache.value(for: "synthetic-0") == nil)
+    }
+
+    @Test func aDecodedResponseIsKeptOnceAndCountedInTheBudget() async throws {
+        let cache = AppStoreReadCache(lifetime: .seconds(3_600))
+        let bytes = try await cache.read("synthetic") { Data("synthetic response".utf8) }
+        #expect(await cache.decoded("synthetic", for: bytes) == nil)
+        await cache.keepDecoded("decoded", "synthetic", for: bytes)
+        #expect(await cache.decoded("synthetic", for: bytes) as? String == "decoded")
+        #expect(await cache.retainedBytes == bytes.count * (1 + AppStoreReadCache.decodedFactor))
+        // Another response for the same key never gets the earlier one's decoded form.
+        #expect(await cache.decoded("synthetic", for: Data("another response".utf8)) == nil)
+        await cache.keepDecoded("unused", "synthetic", for: Data("another response".utf8))
+        #expect(await cache.decoded("synthetic", for: bytes) as? String == "decoded")
+        await cache.trim()
+        #expect(await cache.decoded("synthetic", for: bytes) == nil)
+    }
 }

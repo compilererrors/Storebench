@@ -1,11 +1,11 @@
 import StorebenchCore
 import SwiftUI
 
-/// A bounded sheet with separately reserved header, scrolling body and action footer.
+/// A bounded sheet with separately reserved header, scrolling body and action footer. Its kind says what it shows and sets its
+/// size, so a dialog that only reports progress stays small and one with lists or media gets the room they need.
 struct StorebenchDialog<Content: View, Actions: View>: View {
     let title: String
-    var wide = false
-    var height: CGFloat = 720
+    let kind: DialogKind
     var scrollBody = true
     var inlineActions = false
     var media = false
@@ -17,7 +17,7 @@ struct StorebenchDialog<Content: View, Actions: View>: View {
     @Environment(\.workspaceWidth) private var width
     @Environment(\.workspaceHeight) private var viewportHeight
     var body: some View {
-        let dimensions = ComponentLayout.dialog(viewportWidth: width, viewportHeight: viewportHeight, wide: wide, preferredHeight: height)
+        let dimensions = ComponentLayout.dialog(viewportWidth: width, viewportHeight: viewportHeight, kind: kind)
         let shape = RoundedRectangle(cornerRadius: StorebenchTheme.measure("dialogRadius"))
         VStack(spacing: 0) {
             HStack(spacing: 16) {

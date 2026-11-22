@@ -38,8 +38,8 @@ struct KeywordsView: View {
         VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             Card(title: "1. Collect keyword ideas", subtitle: "Your shortlist of words to test in App Store keywords. Save research, mark promising words Ready to try, then use them in Localizations.", help: "keywords") {
                 StorebenchMetricGrid(maximumColumns: 3) {
-                    Fact(title: "Your ideas", value: "\(notebook?.items.count ?? 0)", hint: "A private shortlist for this app")
-                    Fact(title: "Ready to try", value: "\(notebook?.items.filter { $0.status == "ready" }.count ?? 0)", hint: "Mark promising terms after research")
+                    Fact(title: "Your Ideas", value: "\(notebook?.items.count ?? 0)", hint: "A private shortlist for this app")
+                    Fact(title: "Ready to Try", value: "\(notebook?.items.filter { $0.status == "ready" }.count ?? 0)", hint: "Mark promising terms after research")
                     Fact(title: "Selected", value: "\(chosen.count)", hint: "Ideas chosen for composition below")
                 }
                 Text("Storebench stores your research. It does not estimate search volume, competition or ranking.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
@@ -57,9 +57,9 @@ struct KeywordsView: View {
             )) {
                 StorebenchFilterBar {
                     StorebenchTextField("Find an idea", text: $query, hint: "Search a term, source note or reference.")
-                    StorebenchPicker("Listing language", selection: $locale, hint: "Use one language when composing listing keywords.") { SelectionOption("All listing languages", value: ""); selectionOptions(StoreLocales.codes) { SelectionOption("\(StoreLocales.name($0)) · \($0)", value: $0) } }
+                    StorebenchPicker("Listing Language", selection: $locale, hint: "Use one language when composing listing keywords.") { SelectionOption("All listing languages", value: ""); selectionOptions(StoreLocales.codes) { SelectionOption("\(StoreLocales.name($0)) · \($0)", value: $0) } }
                 }
-                DisclosureGroup("More filters") {
+                DisclosureGroup("More Filters") {
                     StorebenchFilterBar(columns: 3) {
                         StorebenchPicker("Territory", selection: $territory, hint: "Research context, separate from listing language.") {
                             SelectionOption("All territories", value: ""); SelectionOption("Any / unspecified", value: "unspecified")
@@ -78,7 +78,7 @@ struct KeywordsView: View {
                 }
                 DisclosureGroup("Selected ideas · \(selected.count)") {
                     Text("Selection includes other pages. Status changes and removals are saved on this Mac right away.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
-                    StorebenchPicker("New status", selection: $bulkStatus) { selectionOptions(KeywordIdea.statuses) { SelectionOption($0.1, value: $0.0) } }
+                    StorebenchPicker("New Status", selection: $bulkStatus) { selectionOptions(KeywordIdea.statuses) { SelectionOption($0.1, value: $0.0) } }
                     StorebenchActionGroup {
                         if !filtered.isEmpty { Button("Select Matching Ideas") { chosen.formUnion(filtered.map(\.id)) } }
                         if !chosen.isEmpty { Button("Clear Selection") { chosen = [] } }
@@ -105,7 +105,7 @@ struct KeywordsView: View {
                     }
                 }
             }
-            Card(title: "Saved on this Mac", subtitle: "Every idea you add, edit or remove is saved on this Mac right away. Saved Ready to try ideas are available in the listing editor's keyword picker.") {
+            Card(title: "Saved on This Mac", subtitle: "Every idea you add, edit or remove is saved on this Mac right away. Saved Ready to try ideas are available in the listing editor's keyword picker.") {
                 StorebenchTextSlot(text: message.isEmpty ? (working ? "Saving the shortlist on this Mac…" : editor?.dirty == true ? "These changes are not saved yet. Save them, or discard them." : "Saving the shortlist keeps your research; it does not change App Store text.") : message,
                                    height: 56, font: .sbCallout, color: problem ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted, live: true)
                 RecoveryActions(code: issueCode)
@@ -152,7 +152,7 @@ struct KeywordsView: View {
     private func keywordCard(_ row: KeywordIdea) -> some View {
         VStack(alignment: .leading, spacing: StorebenchTheme.space(3)) {
             StorebenchMetricGrid(maximumColumns: 3, minimumWidth: 180) {
-                Fact(title: "Research territory", value: row.territory.isEmpty ? "Any territory" : WorkspaceSession.countryName(row.territory), info: "The App Store country you looked at when you found this keyword idea.")
+                Fact(title: "Research Territory", value: row.territory.isEmpty ? "Any territory" : WorkspaceSession.countryName(row.territory), info: "The App Store country you looked at when you found this keyword idea.")
                 Fact(title: "Source", value: KeywordIdea.sources.first { $0.0 == row.source }?.1 ?? row.source)
                 Fact(title: "Observed", value: row.observedOn.isEmpty ? "No date recorded" : row.observedOn)
             }
@@ -304,22 +304,22 @@ private struct KeywordIdeaEditor: View {
     @Environment(\.dismiss) private var dismiss
     init(item: KeywordIdea, use: @escaping (KeywordIdea) -> Bool) { self.item = item; self.use = use; _draft = State(initialValue: item) }
     var body: some View {
-        StorebenchDialog(title: item.term.isEmpty ? "Add keyword idea" : "Edit keyword idea", wide: true, height: 680, close: { dismiss() }) {
+        StorebenchDialog(title: item.term.isEmpty ? "Add keyword idea" : "Edit keyword idea", kind: .content, close: { dismiss() }) {
             Text("Keep a candidate word here. Mark it Ready to try to make it available when composing this language's listing keywords.")
                 .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
-            StorebenchTextField("Keyword or phrase", text: $draft.term, hint: hint("Keyword or phrase", "One word or phrase, up to 200 characters. Add lists with Add multiple ideas."))
+            StorebenchTextField("Keyword or Phrase", text: $draft.term, hint: hint("Keyword or phrase", "One word or phrase, up to 200 characters. Add lists with Add multiple ideas."))
             StorebenchFormGrid() {
-                StorebenchPicker("Listing language", selection: $draft.locale, hint: hint("Listing language", "The language whose keywords you want to improve.")) { selectionOptions(StoreLocales.codes) { SelectionOption(StoreLocales.name($0), value: $0) } }
-                StorebenchPicker("Idea status", selection: $draft.status, hint: hint("Idea status", "Ready to try → save the shortlist → choose the idea in Localizations.")) { selectionOptions(KeywordIdea.statuses) { SelectionOption($0.1, value: $0.0) } }
+                StorebenchPicker("Listing Language", selection: $draft.locale, hint: hint("Listing language", "The language whose keywords you want to improve.")) { selectionOptions(StoreLocales.codes) { SelectionOption(StoreLocales.name($0), value: $0) } }
+                StorebenchPicker("Idea Status", selection: $draft.status, hint: hint("Idea status", "Ready to try → save the shortlist → choose the idea in Localizations.")) { selectionOptions(KeywordIdea.statuses) { SelectionOption($0.1, value: $0.0) } }
             }
             DisclosureGroup("Research details (optional)", isExpanded: $evidenceExpanded) {
                 StorebenchFormGrid() {
-                    StorebenchPicker("Target territory", selection: $draft.territory, hint: hint("Target territory", "Where you researched this word.")) { SelectionOption("Any market", value: ""); selectionOptions(Territories.alpha3.values.sorted()) { SelectionOption(WorkspaceSession.countryName($0), value: $0) } }
-                    StorebenchPicker("Idea source", selection: $draft.source, hint: hint("Idea source", "Where this word came from.")) { selectionOptions(KeywordIdea.sources) { SelectionOption($0.1, value: $0.0) } }
-                    StorebenchTextField("Observation date", text: $draft.observedOn, hint: hint("Observation date", "YYYY-MM-DD or YYYYMMDD. Leave empty if unknown."), placeholder: "YYYY-MM-DD")
-                    StorebenchTextField("Source reference", text: $draft.reference, hint: hint("Source reference", "Source name, link or citation, up to 500 characters."))
+                    StorebenchPicker("Target Territory", selection: $draft.territory, hint: hint("Target territory", "Where you researched this word.")) { SelectionOption("Any market", value: ""); selectionOptions(Territories.alpha3.values.sorted()) { SelectionOption(WorkspaceSession.countryName($0), value: $0) } }
+                    StorebenchPicker("Idea Source", selection: $draft.source, hint: hint("Idea source", "Where this word came from.")) { selectionOptions(KeywordIdea.sources) { SelectionOption($0.1, value: $0.0) } }
+                    StorebenchTextField("Observation Date", text: $draft.observedOn, hint: hint("Observation date", "YYYY-MM-DD or YYYYMMDD. Leave empty if unknown."), placeholder: "YYYY-MM-DD")
+                    StorebenchTextField("Source Reference", text: $draft.reference, hint: hint("Source reference", "Source name, link or citation, up to 500 characters."))
                 }
-                StorebenchTextArea(title: "Research notes", text: $draft.notes, height: 112, hint: hint("Research notes", "Why could this word help people find your app? Up to 2,000 characters."))
+                StorebenchTextArea(title: "Research Notes", text: $draft.notes, height: 112, hint: hint("Research notes", "Why could this word help people find your app? Up to 2,000 characters."))
             }
         } actions: {
             StorebenchAdaptiveText(text: message, maximumHeight: 54, color: StorebenchTheme.color("color-danger"))

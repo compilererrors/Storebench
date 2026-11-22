@@ -20,7 +20,7 @@ public enum AIFailure: String, Error, Codable, Sendable {
         case .quota: "The AI service's usage limit was reached. Saved results are kept. Check usage with the provider, then retry."
         case .unavailable: "The AI service is unavailable. Saved results are kept; try again later."
         case .response: "The AI response was incomplete or did not match the requested format. Your saved material is unchanged."
-        case .translationLength: "The translation still exceeds an App Store text limit after automatic rewording. Review the affected field or try another model. Your saved material is unchanged."
+        case .translationLength: "A translated field is longer than App Store Connect allows and could not be shortened without cutting a sentence, so nothing was filled in. Edit it yourself or try another model. Your saved text is unchanged."
         case .tooLarge: "This AI request is too large. Choose fewer screenshots or shorter text."
         case .languageUnsupported: "The selected local model does not support this language. Choose another AI service."
         case .localUnavailable: "Apple Intelligence is unavailable. Enable it in System Settings on a compatible Mac, or choose an API connection."
@@ -99,14 +99,18 @@ public struct AIRequest: Codable, Sendable, Equatable {
             let keywords = fields.indices.filter { fields[$0] == "keywords" }
             return (individual + (keywords.isEmpty ? [] : ["Keyword inputs \(keywords.map(String.init).joined(separator: ", ")) share ONE maximum of 100 UTF-8 bytes, including one comma between terms. Aim for at most 95 bytes combined. Keep every term separate."])).joined(separator: "\n")
         } ?? "Each input has a hard maximum of 10000 UTF-16 code units."
-        return .init(purpose: "translation", instructions: "Translate App Store copy from \(source) to \(target). \(TranslationFitting.preservation) Return exactly one translation per input, in the same order. Shorten naturally to fit the supplied budgets. Limits count the final translated text, including spaces, punctuation and line breaks; they are not token limits. Return JSON only.\n" + budgets,
+        return .init(purpose: "translation", instructions: "Translate App Store copy from \(StoreLocales.name(source)) (\(source)) to \(StoreLocales.name(target)) (\(target)). \(Self.nativeWriting(target)) \(TranslationFitting.preservation) Return exactly one translation per input, in the same order. Shorten naturally to fit the supplied budgets. Limits count the final translated text, including spaces, punctuation and line breaks; they are not token limits. Return JSON only.\n" + budgets,
             input: JSONText.array(texts.map(JSONText.string)).stringify(), schema: objectSchema([("translations", .object([("type", .string("array")), ("items", stringSchema)]))]), translationFields: fields, language: target)
+    }
+    /// Listing copy reads as written for that market, not word for word: what a native App Store copywriter would say there.
+    static func nativeWriting(_ target: String) -> String {
+        "Write it the way a native \(StoreLocales.name(target)) App Store copywriter would: idiomatic, natural phrasing and word order, never a word-for-word rendering. Keep the source's tone. Keep product names, and keep technical terms the way people in that field say them in \(StoreLocales.name(target)), including English terms they normally use."
     }
     static func limit(_ field: String) -> Int {
         switch field { case "card-title": MediaCards.titleLimit; case "card-subtitle": MediaCards.subtitleLimit; case "card-body": MediaCards.bodyLimit; default: TextDrafts.limits[field] ?? TextDrafts.storedLimit }
     }
     func validateTranslations(_ value: JSONText, count: Int) throws {
-        let texts = try Self.translations(value, count: count)
+        let texts = try Self.translations(value, count: count, fields: translationFields)
         guard let fields = translationFields else { return }
         guard fields.count == texts.count else { throw AIFailure.response }
         var keywords: [String] = []
@@ -115,11 +119,20 @@ public struct AIRequest: Codable, Sendable, Equatable {
             let used = field.hasPrefix("card-") ? text.utf16.count : TextDrafts.used(field, text)
             guard used <= Self.limit(field) else { throw AIFailure.translationLength }
         }
-        guard keywords.joined(separator: ",").utf8.count <= (TextDrafts.limits["keywords"] ?? 100) else { throw AIFailure.translationLength }
+        guard keywords.isEmpty || keywords.contains(where: { !TextSemantics.trim($0).isEmpty }) else { throw AIFailure.response }
+        guard TranslationFitting.joinedKeywords(keywords).utf8.count <= (TextDrafts.limits["keywords"] ?? 100) else { throw AIFailure.translationLength }
     }
-    public static func translations(_ value: JSONText, count: Int) throws -> [String] {
-        guard case .array(let items)? = value["translations"], items.count == count else { throw AIFailure.response }
-        return try items.map { guard let text = $0.text, !TextSemantics.trim(text).isEmpty, text.utf16.count <= TextDrafts.storedLimit, TextSemantics.validControlText(text) else { throw AIFailure.response }; return text }
+    /// Model answers never leave a text empty. A finished result may leave out whole keywords, given as empty terms, when `fields` names them.
+    public static func translations(_ value: JSONText, count: Int, fields: [String]? = nil) throws -> [String] {
+        guard case .array(let items)? = value["translations"], items.count == count, fields == nil || fields?.count == count else { throw AIFailure.response }
+        return try items.enumerated().map { index, item in
+            if fields?[index] == "keywords", item.text.map({ TextSemantics.trim($0).isEmpty }) == true { return "" }
+            return try text(item)
+        }
+    }
+    private static func text(_ item: JSONText) throws -> String {
+        guard let text = item.text, !TextSemantics.trim(text).isEmpty, text.utf16.count <= TextDrafts.storedLimit, TextSemantics.validControlText(text) else { throw AIFailure.response }
+        return text
     }
 }
 

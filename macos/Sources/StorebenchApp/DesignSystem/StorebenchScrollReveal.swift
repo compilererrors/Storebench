@@ -40,6 +40,8 @@ import SwiftUI
     static func cancel(in window: NSWindow) {
         sessions.object(forKey: window)?.cancel(); sessions.removeObject(forKey: window)
     }
+    /// True while a control is being placed in view in this window, or held where the user opened it, until the user scrolls.
+    static func placing(in window: NSWindow) -> Bool { sessions.object(forKey: window)?.placing == true }
     @discardableResult func reveal(_ placement: Placement = .top) -> Bool {
         guard let view, let window = view.window, !view.isHiddenOrHasHiddenAncestor else { return false }
         var ancestor = view.superview, scrolls: [NSScrollView] = []
@@ -174,6 +176,7 @@ import SwiftUI
             if layout { for reservation in space { reservation.tighten() } }
             return geometry
         }
+        var placing: Bool { !cancelled && anchor != nil && (task != nil || placement == .preserve) }
         func cancel() {
             cancelled = true
             task?.cancel(); task = nil
@@ -271,6 +274,20 @@ struct StorebenchScrollFocusAnchor: NSViewRepresentable {
     }
 }
 
+/// Focus requests already carried out. A request is kept by its control after it was applied, and the control can be disabled
+/// and enabled again, or removed and shown again while its editor reloads; remembering the request here, outside the control,
+/// applies it once, so the page never jumps back to the field while the user scrolls elsewhere.
+@MainActor enum StorebenchFocusRequests {
+    enum Use: String { case reveal, focus, page }
+    private static var applied: [String] = []
+    static func applied(_ ticket: UUID, _ use: Use) -> Bool { applied.contains(use.rawValue + ":" + ticket.uuidString) }
+    static func record(_ ticket: UUID, _ use: Use) {
+        let key = use.rawValue + ":" + ticket.uuidString
+        guard !applied.contains(key) else { return }
+        applied.append(key); if applied.count > 256 { applied.removeFirst(applied.count - 256) }
+    }
+}
+
 extension View {
     /// A requested input stays visible while its parent sections finish opening and measuring.
     func scrollFocus(_ ticket: UUID?, active: Bool) -> some View { modifier(StorebenchInputScrollFocus(ticket: ticket, active: active)) }
@@ -283,10 +300,10 @@ private struct StorebenchInputScrollFocus: ViewModifier {
     func body(content: Content) -> some View {
         content.background(StorebenchScrollFocusAnchor(focus: focus))
             .task(id: Request(ticket: ticket, active: active)) {
-                guard ticket != nil, active else { return }
+                guard let ticket, active, !StorebenchFocusRequests.applied(ticket, .reveal) else { return }
                 await Task.yield(); guard !Task.isCancelled else { return }
                 interaction?()
-                focus.reveal(.visible)
+                if focus.reveal(.visible) { StorebenchFocusRequests.record(ticket, .reveal) }
             }
     }
 }

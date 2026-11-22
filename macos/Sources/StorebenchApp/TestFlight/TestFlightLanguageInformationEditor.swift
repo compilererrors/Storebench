@@ -46,9 +46,9 @@ struct TestFlightLanguageInformationEditor: View {
             StorebenchTextArea(title: "Beta App Description", text: $betaDescription, height: 120).storebenchWorking(locked)
             Text("\(betaDescription.utf16.count) of 4,000 characters").font(.sbCaption).foregroundStyle(betaDescription.utf16.count > 4000 ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted)
             StorebenchFormGrid {
-                StorebenchTextField("Feedback email", text: $feedbackEmail)
+                StorebenchTextField("Feedback Email", text: $feedbackEmail)
                 StorebenchTextField("Marketing URL", text: $marketingUrl, hint: "Optional HTTPS link")
-                StorebenchTextField("Privacy policy URL", text: $privacyPolicyUrl, hint: "Optional HTTPS link")
+                StorebenchTextField("Privacy Policy URL", text: $privacyPolicyUrl, hint: "Optional HTTPS link")
             }.storebenchWorking(locked)
             StorebenchTextArea(title: "tvOS privacy policy (optional)", text: $tvOsPrivacyPolicy, height: StorebenchTheme.textarea(rows: 2)).storebenchWorking(locked)
             StorebenchTextSlot(text: !dirty ? "" : complete ? "Not sent yet. Save Draft keeps these changes on this Mac. Sync to Apple prepares them for your approval." : "Enter a beta app description of up to 4,000 characters and a feedback email, then choose Prepare Review.",

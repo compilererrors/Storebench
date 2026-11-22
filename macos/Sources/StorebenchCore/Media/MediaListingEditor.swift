@@ -223,6 +223,20 @@ import Observation
             else { status = "The screenshots could not be added from Asset Library." }
         }
     }
+    /// Places a translated card set in this language's draft on this Mac, in the display size its images fit. Without `replacing`
+    /// only an empty size is filled. Returns nil when they were placed, or what kept them out.
+    public func placeTranslatedCards(_ files: [(name: String, data: Data)], replacing: Bool) async -> String? {
+        guard active, !busy, !workflow.blocked, !Task.isCancelled else { return "Finish or compare this language's media edits, then translate its screenshots again." }
+        copying = true; defer { if active { copying = false } }
+        do {
+            try await saveScreenshotLayoutsBeforeAdding()
+            let receipt = try await session.addScreenshotsWithReceipt(accountId: scope.accountId, appId: scope.appId, revisionId: scope.revisionId, localizationId: localizationId, setId: nil,
+                                                                files: files, addition: replacing ? .replace : .onlyIntoEmpty)
+            guard active else { return nil }; reconcile(receipt); return nil
+        } catch {
+            return (error as? ScreenshotFailure)?.message ?? (error as? DraftFailure)?.message ?? "The translated screenshots could not be added."
+        }
+    }
     /// Adds a chosen app preview to this language's draft on this Mac right away.
     @discardableResult public func addPreview(_ file: URL, type: String) async -> PendingPreviewSelection? {
         guard active, !workflow.busy, let selection = selectPreview(file, type: type) else {

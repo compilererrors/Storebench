@@ -16,9 +16,9 @@ struct AsoOutcomeBrowser: View {
         if let selected, !result.contains(where: { $0.id == selected.id }) { result.append(selected) }; return result
     }
     var body: some View {
-        Card(title: "Outcome review", subtitle: "Recorded changes with exact saved report coverage. This describes reported activity; it does not estimate a listing effect.") {
+        Card(title: "Outcome Review", subtitle: "Recorded changes with exact saved report coverage. This describes reported activity; it does not estimate a listing effect.") {
             if let selected {
-                StorebenchPicker("Recorded change", selection: Binding(get: { selected.id }, set: { if $0 != selected.id, protection?.allowLeaving() != false { selectedId = $0 } })) {
+                StorebenchPicker("Recorded Change", selection: Binding(get: { selected.id }, set: { if $0 != selected.id, protection?.allowLeaving() != false { selectedId = $0 } })) {
                     selectionOptions(choices) { SelectionOption("\($0.title) · \($0.time)", value: $0.id) }
                 }.storebenchFormColumn()
                 Text("The newest 200 changed records are offered. Older records remain in the journal.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
@@ -39,14 +39,16 @@ struct AsoOutcomeView: View {
     private var choices: [String] { AsoOutcome.territories(metric, analytics: analytics, sales: sales) }
     private var outcome: AsoOutcome.Review? { try? AsoOutcome.analyze(event, events: events, analytics: analytics, sales: sales, metric: metric, days: days, territory: territory, comparison: comparison) }
     var body: some View {
+        // The markets are worked out once for the whole update; each picker below reads this list.
+        let choices = self.choices
         VStack(alignment: .leading, spacing: 16) {
             StorebenchFormGrid {
-                StorebenchPicker("Primary measure", selection: $metric) { selectionOptions(AsoOutcome.metrics) { SelectionOption($0.title, value: $0.key) } }
+                StorebenchPicker("Primary Measure", selection: $metric) { selectionOptions(AsoOutcome.metrics) { SelectionOption($0.title, value: $0.key) } }
                 StorebenchPicker("Market", selection: Binding(get: { choices.contains(territory) ? territory : "" }, set: { territory = $0 })) {
                     SelectionOption("All reported territories", value: ""); selectionOptions(choices) { SelectionOption("\(Territories.name($0)) · \($0)", value: $0) }
                 }
-                StorebenchPicker("Window preset", selection: $days) { selectionOptions([1, 3, 7, 14, 30, 60, 90]) { SelectionOption("\($0) days", value: $0) }; if ![1, 3, 7, 14, 30, 60, 90].contains(days) { SelectionOption("\(days) days", value: days) } }
-                StorebenchPicker("Comparison market", selection: Binding(get: { choices.contains(comparison) && comparison != territory && !territory.isEmpty ? comparison : "" }, set: { comparison = $0 })) {
+                StorebenchPicker("Window Preset", selection: $days) { selectionOptions([1, 3, 7, 14, 30, 60, 90]) { SelectionOption("\($0) days", value: $0) }; if ![1, 3, 7, 14, 30, 60, 90].contains(days) { SelectionOption("\(days) days", value: days) } }
+                StorebenchPicker("Comparison Market", selection: Binding(get: { choices.contains(comparison) && comparison != territory && !territory.isEmpty ? comparison : "" }, set: { comparison = $0 })) {
                     SelectionOption("No comparison market", value: ""); selectionOptions(choices.filter { $0 != territory }) { SelectionOption("\(Territories.name($0)) · \($0)", value: $0) }
                 }
                 StorebenchStepper("\(days) days on each side", value: $days, in: 1...90)
@@ -73,7 +75,7 @@ struct AsoOutcomeView: View {
                         Text("Difference in saved activity around the import observation: \(difference > 0 ? "+" : "")\(difference.formatted()). This is not an estimated effect of the listing change.").font(.sbCallout).fixedSize(horizontal: false, vertical: true)
                     }
                     if let comparison = review.comparison { windows(comparison, title: "Comparison market · \(Territories.name(review.comparisonTerritory))", days: review.days) }
-                    DisclosureGroup("Report revisions and missing dates") {
+                    DisclosureGroup("Report Revisions and Missing Dates") {
                         ScrollView {
                             VStack(alignment: .leading, spacing: 8) {
                                 evidence("Before", primary.before); evidence("After", primary.after)

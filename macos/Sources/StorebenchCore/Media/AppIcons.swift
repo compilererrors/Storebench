@@ -108,9 +108,7 @@ extension WorkspaceSession {
             if let url {
                 var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
                 request.httpShouldHandleCookies = false
-                let configuration = client.session.configuration
-                configuration.httpAdditionalHeaders = nil; configuration.httpCookieStorage = nil; configuration.urlCredentialStorage = nil
-                let response = try await BoundedResponse.read(request, configuration: configuration, maximumBytes: AppIcons.maximumBytes, check: { response in
+                let response = try await client.files.read(request, maximumBytes: AppIcons.maximumBytes, check: { response in
                     let type = (response.value(forHTTPHeaderField: "Content-Type") ?? "").components(separatedBy: ";")[0].lowercased()
                     guard (200..<300).contains(response.statusCode), type == "image/png" || type == "image/jpeg" else { throw BoundedResponse.Failure.invalidResponse }
                 })

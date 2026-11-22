@@ -1,3 +1,4 @@
+import Foundation
 import Observation
 import StorebenchCore
 
@@ -11,6 +12,12 @@ import StorebenchCore
     private var pending: [ReleaseCardPreferences.Change] = []
     private var generation = 0
     init(session: WorkspaceSession) { self.session = session }
+    /// One editor per session, kept while the window lives, so the Overview shows its cards at once when the user comes back to it.
+    private static let kept = NSMapTable<WorkspaceSession, ReleaseCardsEditor>.weakToStrongObjects()
+    static func shared(for session: WorkspaceSession) -> ReleaseCardsEditor {
+        if let editor = kept.object(forKey: session) { return editor }
+        let editor = ReleaseCardsEditor(session: session); kept.setObject(editor, forKey: session); return editor
+    }
 
     func load(keys: [String] = []) async {
         guard !reading, pending.isEmpty else { return }

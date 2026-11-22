@@ -62,11 +62,11 @@ private struct StorebenchTabButton: View {
             StorebenchLabel(title, icon: icon, size: 16).font(.sbCallout.weight(selected ? .semibold : .medium)).lineLimit(2).multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity).padding(.horizontal, StorebenchTheme.space(3)).frame(height: StorebenchTheme.controlHeight)
                 .foregroundStyle(StorebenchTheme.color(selected ? "color-accent-muted" : "color-text-tertiary"))
-                .background(selected ? StorebenchTheme.surface : hovering ? StorebenchTheme.color("color-surface-subtle") : .clear, in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
-                .overlay(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius).strokeBorder(selected ? StorebenchTheme.border : .clear))
+                .background(selected ? StorebenchTheme.surface : StorebenchTheme.hoverColor(hovering), in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
+                .overlay(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius).strokeBorder(selected ? StorebenchTheme.border : StorebenchTheme.hoverOutline(hovering)))
                 .overlay(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius).strokeBorder(focused ? StorebenchTheme.accent : .clear, lineWidth: 2))
                 .contentShape(Rectangle())
-        }.buttonStyle(StorebenchPressStyle()).onHover { hovering = $0 }
+        }.buttonStyle(StorebenchPressStyle()).storebenchHover { hovering = $0 }
             .help(help).accessibilityLabel(title).accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 }
@@ -88,10 +88,10 @@ struct StorebenchSidebarRow: View {
             }.padding(.horizontal, StorebenchTheme.space(2)).padding(.vertical, StorebenchTheme.space(1))
                 .frame(maxWidth: .infinity, minHeight: StorebenchTheme.controlHeight, alignment: .leading)
                 .foregroundStyle(StorebenchTheme.ink)
-                .background(StorebenchTheme.color(selected ? "color-surface-accent-strong" : "color-surface-sunken").opacity(selected || hovering ? 1 : 0), in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
+                .background(StorebenchTheme.hoverColor(hovering, on: .page, selected: selected), in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
                 .overlay(StorebenchControlOutline(border: .clear, focusedOverride: focused))
                 .contentShape(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
-        }.buttonStyle(StorebenchPressStyle()).onHover { hovering = $0 }
+        }.buttonStyle(StorebenchPressStyle()).storebenchHover { hovering = $0 }
             .help("Open " + title).accessibilityLabel(title).accessibilityAddTraits(selected ? [.isSelected] : [])
     }
 }

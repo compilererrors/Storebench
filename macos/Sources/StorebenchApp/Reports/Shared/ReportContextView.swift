@@ -9,7 +9,7 @@ struct ReportContextView: View {
     @State private var expanded = false
     private var presentation: ReportContext.Presentation? { try? catalog?.presentation(kind, coverage: coverage) }
     var body: some View {
-        Card(title: "Report context", subtitle: "Saved reporting basis and related views.") {
+        Card(title: "Report Context", subtitle: "Saved reporting basis and related views.") {
             DisclosureGroup(presentation?.title ?? "Reporting definitions", isExpanded: $expanded) {
                 if let value = presentation {
                     VStack(alignment: .leading, spacing: 12) {

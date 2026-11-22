@@ -12,8 +12,11 @@ public enum QuickRelease {
         if check == "build" || check == "export-compliance" { return "build" }
         return "submit"
     }
+    /// What's New travels in the version text, so that waits until Apple is confirmed to have it. App information is reused from
+    /// the live listing, so it waits only when Apple is confirmed to differ; the Add for Review review checks Apple again anyway.
     public static func textNeedsAction(_ step: ReleaseReadiness.Step) -> Bool {
-        if step.id.hasPrefix("apple-text:") || step.id.hasPrefix("apple-info:") { return step.state != .ready }
+        if step.id.hasPrefix("apple-text:") { return step.state != .ready }
+        if step.id.hasPrefix("apple-info:") { return step.state == .blocked }
         return step.state == .blocked && step.id.hasPrefix("local:") && !fieldIssues(step).isEmpty
     }
     /// The fields included in the compact text review; What's New is the primary input.
@@ -34,6 +37,38 @@ public enum QuickRelease {
     static func sent(_ fields: [(String, String)], appInfo: Bool) -> [(String, String)] {
         let allowed = appInfo ? appInfoFields : versionFields
         return fields.filter { allowed.contains($0.0) }
+    }
+
+    /// The plan's own version and every version of its platform Apple reported, as numbers already used.
+    public static func usedVersions(_ snapshot: ReleaseReadinessSnapshot?, plan: ReleasePlan) -> Set<String> {
+        Set([plan.targetVersion] + WorkspaceSession.items(snapshot?.observations["appleVersions"])
+            .filter { TextSemantics.same($0["platform"]?.text, plan.platform) }.compactMap { $0["number"]?.text })
+    }
+
+    /// An app already on the App Store keeps its countries or regions for every new version, so Quick Release reuses them while
+    /// Apple's current selection can't be read. A read that names the selection still decides.
+    public static func reusedAvailability(_ snapshot: ReleaseReadinessSnapshot?) -> Check? {
+        guard let snapshot, snapshot.steps.first(where: { $0.id == "territories" })?.state == .unknown,
+              WorkspaceSession.items(snapshot.observations["appleVersions"]).contains(where: { LibraryOverview.released.contains($0["state"]?.text ?? "") }) else { return nil }
+        return Check(.ready, "Ready to Reuse", "The app is already on the App Store, and its countries or regions carry over to the new version.")
+    }
+
+    /// How Sync to Apple settles the language text that differs from App Store Connect, beyond the fields typed here.
+    public struct TextSync: Sendable {
+        /// Fields App Store Connect changed while this Mac kept the imported text. Quick Release reuses the current listing:
+        /// Sync to Apple takes Apple's current text for them into the draft, and nothing is sent for them.
+        public let adopt: [ReleaseMaterial.Issue]
+        /// Fields outside Quick Release's own changed on both sides. The person chooses which text to keep before anything is sent.
+        public let conflicts: [ReleaseMaterial.Issue]
+        /// Text in fields Quick Release doesn't show differs from App Store Connect without needing a choice, so the review covers every
+        /// text field, not only its four: text only on this Mac is sent, and a field Apple left empty is filled from the saved listing.
+        public let includesOtherText: Bool
+    }
+    public static func textSync(_ steps: [ReleaseReadiness.Step]) -> TextSync {
+        let issues = steps.filter { $0.id.hasPrefix("apple-text:") || $0.id.hasPrefix("apple-info:") }.flatMap(\.issues)
+        return TextSync(adopt: issues.filter { $0.changedAtApple && $0.localizationId != nil && $0.apple != nil },
+                        conflicts: issues.filter { $0.changedOnBothSides && !fields.contains($0.field) },
+                        includesOtherText: issues.contains { !$0.changedOnBothSides && !fields.contains($0.field) })
     }
 
     /// The review that saves this plan's Quick Release text to the version at App Store Connect, without screenshots or other fields.

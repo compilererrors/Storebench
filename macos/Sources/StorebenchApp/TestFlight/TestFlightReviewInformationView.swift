@@ -53,7 +53,7 @@ struct TestFlightReviewInformationView: View {
                 StorebenchFormFooter { actions }
             }.storebenchWorking(busy)
             if let remote {
-                Card(title: "Current beta review details at Apple", subtitle: "Read for comparison. This read does not save a draft or send a change to Apple; demo password contents are hidden.") {
+                Card(title: "Current Beta Review Details at Apple", subtitle: "Read for comparison. This read does not save a draft or send a change to Apple; demo password contents are hidden.") {
                     ScrollView { Text(remote.display).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 220)
                     StorebenchFormFooter {
                         Button("Keep My Inputs") { if !busy { self.remote = nil } }

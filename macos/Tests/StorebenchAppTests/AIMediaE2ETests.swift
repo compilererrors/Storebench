@@ -75,11 +75,11 @@ private final class MediaAIStubProtocol: URLProtocol, @unchecked Sendable {
         if let requestBody = try? JSONText.parse(body), requestBody["text"]?["format"]?["schema"]?["properties"]?["translations"] != nil,
            case .array(let input)? = requestBody["input"], case .array(let parts)? = input.first?["content"], let text = parts.first?["text"]?.text,
            case .array(let texts)? = try? JSONText.parse(Data(text.utf8)) {
-            let language = requestBody["instructions"]?.text?.contains("to de-DE.") == true ? "de" : "sv"
+            let language = requestBody["instructions"]?.text?.contains("(de-DE).") == true ? "de" : "sv"
             result = .object([("translations", .array(texts.indices.map { .string(language + "-\($0)") }))])
         }
         let requestOutcome = Self.lock.withLock {
-            Self.failedLanguages.contains { requestBody["instructions"]?.text?.contains("to " + $0 + ".") == true } ? Outcome.unavailable : outcome
+            Self.failedLanguages.contains { requestBody["instructions"]?.text?.contains("(" + $0 + ").") == true } ? Outcome.unavailable : outcome
         }
         if requestOutcome == .malformed { result = .object([("cards", .array([]))]) }
         let content = result.stringify()
@@ -217,7 +217,10 @@ private extension WorkspaceSession {
                 if let scroll = view as? NSScrollView, let document = scroll.documentView {
                     document.layoutSubtreeIfNeeded()
                     let target = marker.convert(marker.bounds, to: document), clip = scroll.contentView
-                    if !clip.bounds.insetBy(dx: 0, dy: 20).contains(target) {
+                    // A card taller than the page keeps its top pinned over the page's top edge, so a control there is not clickable.
+                    var visible = clip.bounds.insetBy(dx: 0, dy: 20)
+                    if clip.isFlipped { visible.origin.y += StorebenchStickyHeaders.height; visible.size.height -= StorebenchStickyHeaders.height }
+                    if !visible.contains(target) {
                         let y = min(max(document.bounds.minY, target.midY - clip.bounds.height / 2), max(document.bounds.minY, document.bounds.maxY - clip.bounds.height))
                         clip.scroll(to: CGPoint(x: clip.bounds.minX, y: y)); scroll.reflectScrolledClipView(clip)
                     }
@@ -335,6 +338,8 @@ private extension WorkspaceSession {
         var scope: LocalEditorDraft.Scope { .init(accountId: account.id, appId: app.id, editor: "ai-cards", resource: "composer") }
     }
     private func fixture() async throws -> Fixture {
+        // These journeys exercise the brief, directions and per-card messages, which Guided shows; Quick is covered in AICardCreatorTests.
+        AICardDefaults(mode: .guided).save(in: .standard)
         let owned = try TestIsolation.require(), root = owned.appendingPathComponent("media-ui-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root.appendingPathComponent("state-v2"), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try FileManager.default.copyItem(at: owned.appendingPathComponent("native-fixtures/storebench-v2.sqlite"), to: EncryptedDocumentStore.databaseURL(root: root))
@@ -402,9 +407,13 @@ private extension WorkspaceSession {
         guard case .array(let instructions)? = submitted["cardInstructions"] else { throw AIFailure.response }
         #expect(instructions.map { $0["instructions"]?.text } == ["Explain synthetic country pricing.", "Explain synthetic daily reports."])
         #expect(submitted["palette"]?["color"] == .string("#336699"))
+        // The generated cards open in step 2; Save All to Asset Library is step 4's own command.
+        try await reopened.wait { reopened.control("media.recreate-card") != nil }
+        try await reopened.press("guide.step.save")
         try await reopened.wait { reopened.enabled("media.save-library") }; try await reopened.press("media.save-library")
         try await reopened.wait { try await f.session.assetLibraryFiles(accountId: f.account.id, appId: f.app.id).count == 2 }
         try await reopened.wait { try await f.session.mediaCardSets(accountId: f.account.id, appId: f.app.id).first?.set.savedCards != nil }
+        try await reopened.press("guide.step.screenshots")
         try await reopened.wait { reopened.enabled("media.recreate-card") }
         try await reopened.press("media.recreate-card")
         try await reopened.wait { reopened.promptEditor("ai-cards.card-brief-0")?.string == "Explain synthetic daily reports." }
@@ -516,6 +525,8 @@ private extension WorkspaceSession {
         try await ui.wait { ui.enabled("ai-cards.generate") }
         try await ui.press("ai-cards.generate")
         try await ui.wait { try await f.session.mediaCardSets(accountId: f.account.id, appId: f.app.id).count == 1 }
+        try await ui.wait { ui.control("media.recreate-card") != nil }
+        try await ui.press("guide.step.save")
         try await ui.wait { ui.enabled("Save All to Asset Library") }
         try await ui.press("Save All to Asset Library")
         try await ui.wait { try await f.session.assetLibraryFiles(accountId: f.account.id, appId: f.app.id).count == 1 }
@@ -524,6 +535,7 @@ private extension WorkspaceSession {
         #expect(files[0].width == MediaCards.defaultTarget.width && files[0].height == MediaCards.defaultTarget.height && !files[0].hasAlpha)
         try await ui.wait { try await f.session.mediaCardSets(accountId: f.account.id, appId: f.app.id).first?.set.savedCards != nil }
         let first = try #require(try await f.session.mediaCardSets(accountId: f.account.id, appId: f.app.id).first)
+        try await ui.press("guide.step.screenshots")
         try await ui.wait { ui.enabled("media.recreate-card") }
         try await ui.press("media.recreate-card")
         try await ui.wait { ui.nameField()?.stringValue == "Synthetic UI Cards" && ui.enabled("ai-cards.generate") }
@@ -606,11 +618,14 @@ private extension WorkspaceSession {
         let saved = try await f.session.workspaceRevision(imported, accountId: f.account.id, appId: f.app.id)
         let version = try #require(saved.versions.first { $0.id == "version-1" })
         let ui = OwnedMediaWindow(AIListingTranslationView(account: f.account, appId: f.app.id, revisionId: revision, version: version, session: f.session)); defer { ui.close() }
+        // Into is a field beside From; its dialog starts from the version's own languages, cleared here and two chosen.
         try await ui.wait { ui.enabled("ai-languages.targets") }
         try await ui.press("ai-languages.targets")
-        try await ui.wait { ui.enabled("ai-languages.target.sv") }
+        try await ui.wait { ui.enabled("ai-languages.targets.none") }
+        try await ui.press("ai-languages.targets.none"); try await ui.settle()
         try await ui.press("ai-languages.target.sv"); try await ui.settle()
         try await ui.press("ai-languages.target.de-DE"); try await ui.settle()
+        try await ui.press("ai-languages.targets.done"); try await ui.settle()
         try await ui.wait { ui.enabled("ai-languages.populate") }
         try await ui.press("ai-languages.populate")
         try await ui.wait {
@@ -632,8 +647,8 @@ private extension WorkspaceSession {
         let version = try #require(revision.versions.first { $0.id == "version-1" })
         let ui = OwnedMediaWindow(AIListingTranslationView(account: f.account, appId: f.app.id, revisionId: revision.id, version: version, session: f.session)); defer { ui.close() }
         try await ui.wait { ui.enabled("ai-languages.targets") }; try await ui.press("ai-languages.targets")
-        try await ui.wait { ui.enabled("ai-languages.target.sv") }
-        try await ui.press("ai-languages.target.sv"); try await ui.press("ai-languages.target.de-DE")
+        try await ui.wait { ui.enabled("ai-languages.targets.none") }; try await ui.press("ai-languages.targets.none")
+        try await ui.press("ai-languages.target.sv"); try await ui.press("ai-languages.target.de-DE"); try await ui.press("ai-languages.targets.done")
         try await ui.wait { ui.enabled("ai-languages.populate") }; try await ui.press("ai-languages.populate")
         try await ui.wait { ui.containsText("No languages were translated. 2 failed.") }
         #expect(!ui.containsText("Translation finished"))
@@ -650,8 +665,8 @@ private extension WorkspaceSession {
         let version = try #require(revision.versions.first { $0.id == "version-1" })
         let ui = OwnedMediaWindow(AIListingTranslationView(account: f.account, appId: f.app.id, revisionId: revision.id, version: version, session: f.session)); defer { ui.close() }
         try await ui.wait { ui.enabled("ai-languages.targets") }; try await ui.press("ai-languages.targets")
-        try await ui.wait { ui.enabled("ai-languages.target.sv") }
-        try await ui.press("ai-languages.target.sv"); try await ui.press("ai-languages.target.de-DE")
+        try await ui.wait { ui.enabled("ai-languages.targets.none") }; try await ui.press("ai-languages.targets.none")
+        try await ui.press("ai-languages.target.sv"); try await ui.press("ai-languages.target.de-DE"); try await ui.press("ai-languages.targets.done")
         try await ui.wait { ui.enabled("ai-languages.populate") }; try await ui.press("ai-languages.populate")
         try await ui.wait { ui.containsText("1 failed; retry those languages") }
         let swedish = try await f.session.aiTranslationTarget(accountId: f.account.id, appId: f.app.id, revisionId: revision.id, versionId: version.id, locale: "sv")

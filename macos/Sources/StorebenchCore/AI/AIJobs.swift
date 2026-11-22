@@ -132,6 +132,6 @@ extension WorkspaceSession {
     public func translateWithAI(accountId: String, appId: String, provider: AIProvider, texts: [String], source: String, target: String, fields: [String]? = nil, model: String? = nil) async throws -> [String] {
         let request = try AIRequest.translation(texts, source: source, target: target, fields: fields)
         let result = try await runAIJob(accountId: accountId, appId: appId, provider: provider, request: request, model: model)
-        return try AIRequest.translations(result, count: texts.count)
+        return try AIRequest.translations(result, count: texts.count, fields: request.translationFields)
     }
 }

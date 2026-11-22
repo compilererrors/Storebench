@@ -13,6 +13,10 @@ struct ReleaseBuildStep: View {
     let done: () -> Void
     /// Says where the version is created when Apple does not have it yet; nil names Release's step 3.
     var createFirst: String? = nil
+    /// Opens the version step and starts its Sync to Apple, so a version Apple does not have yet is one command away.
+    var syncVersion: (() -> Void)? = nil
+    /// True once the version is removed from review to send a newer build: the step looks for builds uploaded after the one the version has.
+    var replacing = false
     @State private var builds: [TestFlightBuild]?
     @State private var attachedId: String?
     /// False while only the first page of the version's builds is read; the rest follow it.
@@ -28,6 +32,8 @@ struct ReleaseBuildStep: View {
     @State private var reader: ReleaseBuildReader?
     @State private var readCount = 0
     @State private var draft: LocalEditorDraftEditor?
+    /// Apple's upload records for the app, read while the step waits for a build, so an upload shows before its build is listed.
+    @State private var uploads: [BuildDelivery] = []
     @Environment(\.pageScroll) private var pageScroll
     @Environment(\.navigationPresentation) private var presentation
     /// Shared with the background preparation, which reads builds without a version.
@@ -39,6 +45,14 @@ struct ReleaseBuildStep: View {
     private var selected: TestFlightBuild? { matching.first { $0.id == selectedBuildId } }
     private var versionName: String { "\(Releases.platformName(plan.platform)) \(plan.targetVersion)" }
     private var draftValue: JSONText { .string(selectedBuildId ?? "") }
+    private var newer: [TestFlightBuild] { ReleaseWizard.newerBuilds(matching, attachedId: attachedId) }
+    /// Whether the step still waits for a newer build: none was uploaded after the version's build, or the newest one is still processing.
+    private var waitingForNewer: Bool { replacing && attachedId != nil && newer.first?.processingState != "VALID" }
+    /// The newest upload Apple received for the version that is not listed as a build yet.
+    private var pendingUpload: BuildDelivery? {
+        let after = replacing ? matching.first { $0.id == attachedId }?.uploadedDate : nil
+        return ReleaseWizard.pendingUploads(uploads, platform: plan.platform, version: plan.targetVersion, builds: matching, after: after).first
+    }
     var body: some View {
         Card(title: "Build for \(plan.targetVersion)", subtitle: "Upload the build with Xcode or Transporter. It appears here once Apple has processed it, usually within 30 minutes. Then add it to the version.",
              actions: AnyView(StorebenchReadButton("Refresh Builds") { await load(fresh: true) })) {
@@ -46,32 +60,36 @@ struct ReleaseBuildStep: View {
                 StorebenchReadAge(readAt: readAt, reading: !confirmed)
                 if matching.isEmpty && !complete {
                     StorebenchLoadingStatus(message: "Reading more builds for version \(plan.targetVersion)…", surface: false)
+                } else if matching.isEmpty, let upload = pendingUpload {
+                    uploadLine(upload)
                 } else if matching.isEmpty {
                     Text("No processed build for version \(plan.targetVersion) yet. Upload it, wait for processing, then refresh.")
                         .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
                 } else {
-                    StorebenchPicker("Build to submit", selection: Binding(get: { selectedBuildId ?? "" }, set: { selectedBuildId = $0.isEmpty ? nil : $0; review = nil; status = "" })) {
-                        selectionOptions([("", "Choose a build")] + matching.map { ($0.id, "Build \($0.version) · \($0.usesNonExemptEncryption == nil ? "Missing Compliance" : $0.processingState.capitalized)\($0.id == attachedId ? " · Added to \(versionName)" : "")") }) { SelectionOption($0.1, value: $0.0) }
+                    StorebenchPicker("Build to Submit", selection: Binding(get: { selectedBuildId ?? "" }, set: { selectedBuildId = $0.isEmpty ? nil : $0; review = nil; status = "" })) {
+                        selectionOptions([("", "Choose a build")] + matching.map { ($0.id, Self.option($0, attached: $0.id == attachedId ? versionName : nil)) }) { SelectionOption($0.1, value: $0.0) }
                     }.storebenchFormColumn()
                     attachment
+                    if replacing { replacement }
                 }
                 // A first page names only the newest builds; an older one is not reported missing before the rest is read.
                 StorebenchTextSlot(text: complete || matching.isEmpty ? "" : "The newest builds are shown. Older builds for version \(plan.targetVersion) are still being read.",
                                    height: 20, font: .sbCaption, color: StorebenchTheme.muted, live: true)
                 StorebenchFeedback(text: status, height: 40, error: !status.isEmpty)
                 if let draft {
-                    // Once its review is prepared, Send to Apple in the review below is the one next action.
+                    // Once its review is prepared, the review's Save below is the one next action.
                     // As in App Store Connect, a build is added once its export compliance is answered.
                     // Add Build stays in place; its hover text names what is still missing.
-                    let blocker: String? = !confirmed ? "Wait for the current builds to finish loading" : versionId == nil ? createFirst ?? "Save the version to App Store Connect in step 3 first"
+                    let blocker: String? = !confirmed ? "Wait for the current builds to finish loading" : versionId == nil ? createFirst ?? "Sync the version to Apple in its version step first"
                         : selected == nil ? "Choose a processed build first" : selected?.id == attachedId ? "This build is already added to \(versionName)"
+                        : selected?.processingState != "VALID" ? "Wait until Apple finishes processing build \(selected?.version ?? "")"
                         : selected?.usesNonExemptEncryption == nil ? "Answer Export Compliance for this build first" : review != nil ? "Approve or discard the prepared review below" : nil
                     LocalDraftActions(editor: draft, value: draftValue, restore: { selectedBuildId = $0.text.flatMap { $0.isEmpty ? nil : $0 }; review = nil },
                                       blocked: preparing || publishing, sync: { await addBuild() }, syncBlocked: blocker != nil,
-                                      title: "Build Selection", hint: blocker ?? "Add Build saves your selection and opens its approval review. The version is submitted in Add for Review.", syncTitle: "Add Build")
+                                      title: "Build Selection", hint: blocker ?? "Sync to Apple saves your selection and opens a review that adds this build to the version. The version is submitted in Add for Review.")
                 }
             } placeholder: {
-                StorebenchPicker("Build to submit", selection: .constant("")) { SelectionOption("Choose a build", value: "") }.storebenchFormColumn()
+                StorebenchPicker("Build to Submit", selection: .constant("")) { SelectionOption("Choose a build", value: "") }.storebenchFormColumn()
                 StorebenchActionGroup { Button("Refresh Builds") {} }
             }
         }
@@ -79,7 +97,7 @@ struct ReleaseBuildStep: View {
         .storebenchWorking(preparing || publishing)
         .task(id: readScope) {
             if reader?.scope != readScope {
-                builds = nil; attachedId = nil; confirmed = false; complete = true
+                builds = nil; attachedId = nil; confirmed = false; complete = true; uploads = []
                 review = nil; readAt = nil; status = ""; failure = ""
             }
             reader?.retire()
@@ -94,10 +112,13 @@ struct ReleaseBuildStep: View {
             if let saved = await local.load(initial: draftValue), let id = saved.text { selectedBuildId = id.isEmpty ? nil : id }
             await load()
             guard owner.active, !Task.isCancelled else { return }
+            await readUploads()
             await followUploads()
         }
         .onDisappear { reader?.retire() }
         .onChange(of: matching.map(\.id)) { chooseDefault() }
+        // Right after Remove from Review, App Store Connect is read again at once rather than after the first minute.
+        .onChange(of: replacing) { if replacing { Task { await load(latest: true); await readUploads() } } }
         .onChange(of: selectedBuildId) { if review?.state == "prepared" { review = nil } }
         .onChange(of: addRequests) { Task { await addBuild() } }
         .trackUnsavedChanges(draft?.dirty(draftValue) == true, busy: preparing || publishing || draft?.busy == true, onSave: { await draft?.saveCurrent(value: { draftValue }) == true })
@@ -121,12 +142,50 @@ struct ReleaseBuildStep: View {
         }
         ReviewPanel(account: account, app: app, session: session, review: $review, done: {
             if review?.state == "complete" { review = nil; Task { await load(fresh: true) }; done() }
-        }, busyChanged: { publishing = $0 }, syncConfirmation: true, syncTitle: "Add Build", localDraft: draft).id("release-build-review")
+        }, busyChanged: { publishing = $0 }, syncConfirmation: true, localDraft: draft).id("release-build-review")
+    }
+    /// A build as the picker lists it: its number, state, upload day and time, and whether the version has it.
+    static func option(_ build: TestFlightBuild, attached version: String?) -> String {
+        ["Build \(build.version)", build.usesNonExemptEncryption == nil ? "Missing Compliance" : build.processingState.capitalized,
+         AppStoreNames.dateTime(build.uploadedDate).map { "Uploaded \($0)" } ?? "", version.map { "Added to \($0)" } ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+    /// After Remove from Review: whether a newer build has arrived, or that the step keeps looking for one.
+    private var replacement: some View {
+        // One fixed track, so the line changing from looking to found never moves the card.
+        Group { replacementLine }.frame(maxWidth: .infinity, minHeight: 44, maxHeight: 44, alignment: .topLeading)
+    }
+    @ViewBuilder private var replacementLine: some View {
+        if let build = newer.first, build.processingState == "VALID" {
+            StorebenchTextSlot(text: "Build \(build.version) was uploaded \(AppStoreNames.dateTime(build.uploadedDate) ?? "after the current build"). Choose it above, then Sync to Apple adds it to \(versionName).",
+                               height: 40, font: .sbCallout, color: StorebenchTheme.ink, live: true)
+        } else if newer.first == nil, let upload = pendingUpload {
+            uploadLine(upload)
+        } else if let build = newer.first {
+            StorebenchLoadingStatus(message: "Build \(build.version) was uploaded \(AppStoreNames.dateTime(build.uploadedDate) ?? "") and is processing at Apple. Checking again every minute…", surface: false)
+        } else {
+            StorebenchLoadingStatus(message: "Looking for a newer build of \(plan.targetVersion). Checking App Store Connect every minute; an upload appears here once Apple has processed it, usually within 30 minutes…", surface: false)
+        }
+    }
+    /// An upload Apple has received but not listed as a build yet: still being processed, or failed with Apple's first message.
+    @ViewBuilder private func uploadLine(_ upload: BuildDelivery) -> some View {
+        let when = AppStoreNames.dateTime(upload.uploadedDate ?? upload.createdDate).map { " at \($0)" } ?? ""
+        if upload.state == "Failed" {
+            StorebenchFeedback(text: "Apple could not process build \(upload.buildNumber), uploaded\(when)\(upload.details.first.map { ": " + $0.description } ?? "."). Upload a corrected build; it appears here once Apple has processed it.",
+                               height: 40, error: true)
+        } else {
+            StorebenchLoadingStatus(message: "Build \(upload.buildNumber) reached Apple\(when) and is being processed. It is listed here once Apple finishes, usually within 30 minutes. Checking every minute…", surface: false)
+        }
     }
     /// What Apple has for the version's build, and the one next step.
     @ViewBuilder private var attachment: some View {
         if versionId == nil, let createFirst {
             Text(createFirst).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
+            if let syncVersion {
+                StorebenchActionGroup {
+                    Button("Sync Version to Apple") { syncVersion() }.buttonStyle(StorebenchButtonStyle(.primary))
+                        .help("Open step 1 and sync \(versionName) to Apple").storebenchControlID("release.build.sync-version")
+                }
+            }
         } else if versionId == nil {
             StorebenchStepLink(sentence: "\(versionName) is not in App Store Connect yet. Save it there first, then add the build here.", phaseNumber: 3, phaseTitle: "Save to App Store Connect")
         } else if let selected, selected.id == attachedId {
@@ -150,7 +209,7 @@ struct ReleaseBuildStep: View {
     }
     /// The build Apple already has for the version comes first, then the first valid one.
     private func chooseDefault() {
-        let next = ReleaseWizard.chosenBuild(selectedBuildId, matching: matching, attachedId: attachedId, complete: complete)
+        let next = ReleaseWizard.chosenBuild(selectedBuildId, matching: matching, attachedId: attachedId, complete: complete, replacing: replacing)
         if next != selectedBuildId { selectedBuildId = next }
     }
     /// How often the step checks App Store Connect while a build for the version is uploading or processing.
@@ -159,10 +218,17 @@ struct ReleaseBuildStep: View {
     private func followUploads() async {
         while !Task.isCancelled {
             do { try await Task.sleep(for: Self.uploadCheck) } catch { return }
-            let waiting = builds != nil && (matching.isEmpty || matching.contains { $0.processingState == "PROCESSING" })
+            let waiting = builds != nil && (matching.isEmpty || matching.contains { $0.processingState == "PROCESSING" } || waitingForNewer)
             // A background check waits behind the reads the open screen needs.
-            if waiting, !preparing, !publishing, review == nil { await ScreenReads.ahead { await load(latest: true) } }
+            if waiting, !preparing, !publishing, review == nil { await ScreenReads.ahead { await load(latest: true); await readUploads() } }
         }
+    }
+    /// Apple's upload records, read only while the step waits for a build. A failed read keeps the last ones; the build list stays the source of truth.
+    private func readUploads() async {
+        guard let session, let reader, reader.active, builds != nil, matching.isEmpty || waitingForNewer else { return }
+        let account = self.account, appId = app.id
+        guard let read = try? await session.buildDeliveries(appId: appId, client: try await session.client(for: account)), reader.active, self.reader === reader, !Task.isCancelled else { return }
+        uploads = read
     }
     /// Apple can show a sent export compliance answer on the build a few seconds later, so the build is read again until it does.
     private func followCompliance(_ buildId: String) async {

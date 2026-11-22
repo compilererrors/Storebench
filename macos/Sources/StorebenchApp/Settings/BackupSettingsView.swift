@@ -13,7 +13,7 @@ struct BackupSettingsView: View {
 
     var body: some View {
         StorebenchForm {
-            StorebenchFormSection("Automatic backups") {
+            StorebenchFormSection("Automatic Backups") {
                 if editor.ready {
                 VStack(alignment: .leading, spacing: StorebenchTheme.space(3)) {
                     StorebenchSettingToggle("Back up automatically", isOn: $editor.inputs.enabled)
@@ -25,7 +25,7 @@ struct BackupSettingsView: View {
                         StorebenchStepper("\(editor.inputs.retain) backup\(editor.inputs.retain == 1 ? "" : "s")", value: $editor.inputs.retain, in: 1...100)
                     }
                     StorebenchSecureField(editor.saved?.hasPassphrase == true ? "New restore passphrase (optional)" : "Restore passphrase", text: $editor.passphrase)
-                    StorebenchSecureField("Repeat restore passphrase", text: $editor.confirmation)
+                    StorebenchSecureField("Repeat Restore Passphrase", text: $editor.confirmation)
                     Text("The restore passphrase protects each backup and is needed to restore it. Use 12–256 characters and keep it somewhere safe. An empty pair retains the saved passphrase; its contents are never displayed.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
                 }.storebenchWorking(working || model.session == nil)
                 }
@@ -47,7 +47,7 @@ struct BackupSettingsView: View {
                 }
             }
             .settingsSearchAnchor("backups-automatic")
-            StorebenchFormSection("Backup health") {
+            StorebenchFormSection("Backup Health") {
                 StorebenchLabeledContent("Automatic backups", value: statusLabel)
                 StorebenchLabeledContent("Last verified", value: editor.status?.lastVerifiedAt.map { timestamp($0) } ?? (editor.status == nil ? "Unknown" : "No verified backup"))
                 StorebenchLabeledContent("Next backup", value: editor.status?.nextDueAt.map { timestamp($0) } ?? (editor.status == nil ? "Unknown" : editor.saved?.enabled == true ? "When Storebench is unlocked" : "Enable a schedule"))
@@ -65,7 +65,7 @@ struct BackupSettingsView: View {
                     }.storebenchWorking(working)
                 }
             }
-            StorebenchFormSection("Restoring your workspace") {
+            StorebenchFormSection("Restoring Your Workspace") {
                 Text("Backups include encrypted saved data, media and staged build packages. Restore needs the passphrase used when that copy was created. Changing it protects future copies; older copies keep their original passphrase. Apple credentials must be connected again after restoring. Automatic backups run while Storebench is open and unlocked; overdue work resumes when you reopen it.")
                     .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
             }

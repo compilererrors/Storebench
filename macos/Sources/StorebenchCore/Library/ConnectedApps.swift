@@ -72,7 +72,34 @@ public enum ConnectedApps {
             }
             return sources.details + " · Last sync " + LibraryOverview.timestamp(sync.updatedAt)
         }
+        /// The short sync status a closed app row shows: a headline with its tone, and one detail line.
+        public struct SyncGlance: Sendable, Equatable {
+            public let headline, detail: String
+            public let tone: AppStoreNames.Tone
+            public let running: Bool
+        }
+        public func syncGlance(timeZone: TimeZone = .current) -> SyncGlance {
+            if syncUnavailable { return .init(headline: "Status Unavailable", detail: "Expand to refresh this app's status", tone: .problem, running: false) }
+            guard let sync else { return .init(headline: "Not Synced Yet", detail: "Sync this app to download its data", tone: .inactive, running: false) }
+            let sources = SyncSourceSummary(job: sync)
+            if sync.isActive {
+                let phase = sync.items.contains { $0.detail == AppSync.waitingForSlot } ? "Queued" : "Syncing"
+                return .init(headline: phase, detail: "\(sync.counts.checked) of \(sync.counts.total) sources checked", tone: .pending, running: true)
+            }
+            var parts: [String] = []
+            if sources.attention > 0 { parts.append("\(sources.attention) need attention") }
+            if sources.waiting > 0 { parts.append("\(sources.waiting) waiting for reports") }
+            if sources.notChecked > 0 { parts.append("\(sources.notChecked) not checked") }
+            parts.append("Last sync " + (AppStoreNames.dateTime(sync.updatedAt, timeZone: timeZone) ?? LibraryOverview.timestamp(sync.updatedAt)))
+            if sync.statusOnly { return .init(headline: "Setup Checked", detail: parts.joined(separator: " · "), tone: .pending, running: false) }
+            let tone: AppStoreNames.Tone = sources.attention > 0 ? .problem : sources.synced == sources.total ? .complete : .pending
+            return .init(headline: "\(sources.synced) of \(sources.total) Synced", detail: parts.joined(separator: " · "), tone: tone, running: false)
+        }
         public var needsRetry: Bool { sync?.needsRetry == true }
+        /// Whether the row shows work in progress or a status that could not be read, so its view keeps reading it again.
+        public var changing: Bool {
+            aggregateActive || sync?.isActive == true || material?.isActive == true || release?.checking == true || syncUnavailable || materialUnavailable
+        }
         public var canSync: Bool { !syncUnavailable && !aggregateActive }
         public init(account: Account, app: Account.App, savedName: String?, revisionCount: Int?, latestImportedAt: String? = nil, sync: SyncJob? = nil, material: ImportJob? = nil, syncUnavailable: Bool = false, materialUnavailable: Bool = false, aggregateActive: Bool? = nil) throws {
             try self.init(snapshot: AccountSnapshot(account), app: app, savedName: savedName, revisionCount: revisionCount, latestImportedAt: latestImportedAt,
@@ -169,18 +196,19 @@ extension WorkspaceSession {
             }.sorted { $0.importedAt > $1.importedAt }
         }
     }
-    /// Cache only validated summary values, never entire archives or credentials. The database
-    /// stamp detects own writes, other connections and delete/reinsert even at the same revision.
+    /// Cache only validated summary values, never entire archives or credentials. The stamp of the saved revisions
+    /// detects own writes to them, other connections and delete/reinsert even at the same revision. Writes elsewhere,
+    /// such as a running job's progress, leave the summaries in place.
     func connectedAppMetadata(accountId: String, appId: String) throws -> ConnectedApps.Metadata {
         try requireHistoryScope(accountId: accountId, appId: appId); try Task.checkCancellation()
-        let stamp = try storeAccess { try $0.changeStamp() }
+        let stamp = try storeAccess { try $0.namespaceStamp("revisions") }
         if stamp != libraryMetadataStamp { libraryMetadataCache.removeAll(); libraryMetadataStamp = stamp }
         let key = accountId + ":" + appId
         if let cached = libraryMetadataCache.value(for: key) { return cached }
         let rows = try connectedAppHistory(accountId: accountId, appId: appId)
         let value = ConnectedApps.Metadata(name: rows.first?.value["app"]?["name"]?.text, count: rows.count, importedAt: rows.first?.importedAt)
         try requireHistoryScope(accountId: accountId, appId: appId); try Task.checkCancellation()
-        guard try storeAccess({ try $0.changeStamp() }) == stamp else { throw ConnectedApps.Failure.changed }
+        guard try storeAccess({ try $0.namespaceStamp("revisions") }) == stamp else { throw ConnectedApps.Failure.changed }
         libraryMetadataCache.insert(value, for: key, cost: value.cost)
         return value
     }

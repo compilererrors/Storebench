@@ -138,15 +138,26 @@ extension WorkspaceSession {
     public func archivedHistory(accountId: String, appId: String) throws -> [ArchivedRevision] {
         try requireHistoryScope(accountId: accountId, appId: appId)
         let prefix = "\(accountId):\(appId):"
-        // Revisions parsed before and unchanged since are reused from memory, as single revision reads do.
-        return try storeAccess { store in try store.documents(namespace: "revisions", prefix: prefix).compactMap { document in
-            let id = String(document.key.dropFirst(prefix.count))
-            let key = JSONText.array([.string("archived"), .string(document.key), .number(Double(document.revision))]).stringify()
-            if let cached = archivedRevisions.value(for: key), cached.payload == document.payload { return cached.value }
-            guard let value = try? ArchivedRevision(JSONText.parse(document.payload), accountId: accountId, appId: appId, id: id, documentRevision: document.revision) else { return nil }
-            archivedRevisions.insert((document.payload, value), for: key, cost: document.payload.count * 3)
-            return value
-        }.sorted { $0.importedAt > $1.importedAt } }
+        return try storeAccess { store in
+            // While no revision was written or removed, the list is put together from the parsed revisions still kept in memory.
+            let stamp = try store.namespaceStamp("revisions")
+            if let keys = archivedLists.keys(prefix, stamp: stamp) {
+                var kept: [ArchivedRevision] = []
+                for key in keys { guard let cached = archivedRevisions.value(for: key) else { break }; kept.append(cached.value) }
+                if kept.count == keys.count { return kept }
+            }
+            // Revisions parsed before and unchanged since are reused from memory, as single revision reads do.
+            let read = try store.documents(namespace: "revisions", prefix: prefix).compactMap { document -> (key: String, value: ArchivedRevision)? in
+                let id = String(document.key.dropFirst(prefix.count))
+                let key = JSONText.array([.string("archived"), .string(document.key), .number(Double(document.revision))]).stringify()
+                if let cached = archivedRevisions.value(for: key), cached.payload == document.payload { return (key, cached.value) }
+                guard let value = try? ArchivedRevision(JSONText.parse(document.payload), accountId: accountId, appId: appId, id: id, documentRevision: document.revision) else { return nil }
+                archivedRevisions.insert((document.payload, value), for: key, cost: document.payload.count * 3)
+                return (key, value)
+            }.sorted { $0.value.importedAt > $1.value.importedAt }
+            archivedLists.keep(read.map(\.key), for: prefix, stamp: stamp)
+            return read.map(\.value)
+        }
     }
     public func compareArchivedRevisions(accountId: String, appId: String, beforeId: String, afterId: String) throws -> [RevisionComparison.Change] {
         try requireHistoryScope(accountId: accountId, appId: appId)
@@ -155,12 +166,12 @@ extension WorkspaceSession {
             return try RevisionComparison.compare(before: before.value, after: after.value)
         }
     }
-    public func archivedScreenshot(accountId: String, appId: String, revisionId: String, hash: String) throws -> Data {
+    public func archivedScreenshot(accountId: String, appId: String, revisionId: String, hash: String) async throws -> Data {
         try requireHistoryScope(accountId: accountId, appId: appId)
         guard hash.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else { throw RevisionHistoryFailure.invalid }
         let source = try storeAccess { try archivedRevision(accountId: accountId, appId: appId, id: revisionId, store: $0) }
         guard try RevisionComparison.entries(source.value).values.values.contains(where: { $0.images?.contains(hash) == true }) else { throw RevisionHistoryFailure.missing }
-        return try media.read(hash)
+        return try await mediaBytes(hash)
     }
     /// Same permanent import gate, release-plan lock, draft lock and atomic deletion as every other revision write.
     @discardableResult public func deleteArchivedRevision(accountId: String, appId: String, revisionId: String, expectedRevision: Int) throws -> Bool {
@@ -187,7 +198,7 @@ extension WorkspaceSession {
                         guard source.revision == expectedRevision else { throw RevisionHistoryFailure.stale }
                         _ = try ArchivedRevision(JSONText.parse(source.payload), accountId: accountId, appId: appId, id: revisionId, documentRevision: source.revision)
                         deleted = true
-                        return [.delete(namespace: "drafts", key: key), .delete(namespace: "revisions", key: key)]
+                        return [.delete(namespace: "drafts", key: key), .delete(namespace: "revisions", key: key), .delete(namespace: DraftHistory.entries, key: key)]
                     }
                     return deleted
                 }

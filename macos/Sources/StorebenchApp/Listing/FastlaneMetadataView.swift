@@ -14,7 +14,7 @@ struct FastlaneMetadataCard: View {
     @State private var message = ""
 
     var body: some View {
-        Card(title: "Fastlane metadata", subtitle: "Import or export a version's language text as a Fastlane ZIP. Preview every change before saving drafts locally.", help: "imports") {
+        Card(title: "Fastlane Metadata", subtitle: "Import or export a version's language text as a Fastlane ZIP. Preview every change before saving drafts locally.", help: "imports") {
             if session != nil && !versions.isEmpty {
                 StorebenchFormGrid {
                     StorebenchPicker("Version", selection: $versionId) { selectionOptions(versions) { SelectionOption("\($0.number) · \($0.platform)", value: $0.id) } }

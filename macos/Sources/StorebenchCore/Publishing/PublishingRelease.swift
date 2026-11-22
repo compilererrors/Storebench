@@ -27,6 +27,26 @@ extension WorkspaceSession {
         }
     }
 
+    /// While a new version is prepared, a language has the live App Information record and the one being prepared, and the editor
+    /// changes both together. One draft is sent per language: the one of the record Apple lets you edit. Differing drafts of
+    /// two other records are refused, since it is unclear which one to send.
+    static func appInfoDrafts(_ edits: [JSONText], records: [JSONText], editable: String, drafts: JSONText) throws -> [JSONText] {
+        let parents = Dictionary(records.flatMap { record in
+            items(record["localizations"]).compactMap { locale in locale["id"]?.text.map { ($0, record["id"]?.text ?? "") } }
+        }, uniquingKeysWith: { first, _ in first })
+        func draft(_ locale: JSONText) -> [String: String] { Dictionary(fieldPairs(drafts[locale["id"]?.text ?? ""]), uniquingKeysWith: { _, last in last }) }
+        func code(_ locale: JSONText) -> String { locale["fields"]?["locale"]?.text ?? "" }
+        func isEditable(_ locale: JSONText) -> Bool { parents[locale["id"]?.text ?? ""] == editable }
+        var chosen: [JSONText] = []
+        for locale in edits {
+            guard let index = chosen.firstIndex(where: { code($0) == code(locale) }) else { chosen.append(locale); continue }
+            if isEditable(chosen[index]) { continue }
+            if isEditable(locale) { chosen[index] = locale; continue }
+            guard draft(chosen[index]) == draft(locale) else { throw PublishFailure.invalid("Several app information drafts exist for \(code(locale)). Keep one source before publishing.") }
+        }
+        return chosen
+    }
+
     static func fieldPairs(_ value: JSONText?) -> [(String, String)] {
         guard case .object(let pairs)? = value else { return [] }
         return pairs.compactMap { pair in
@@ -40,6 +60,39 @@ extension WorkspaceSession {
         planner.add(.api, method: "PATCH", path: [.string(current.type), .string(current.id)], label: "Update \(current.type == "appInfoLocalizations" ? "app information" : "version text") · \(code)",
                     detail: changed.map(\.0).joined(separator: ", "), before: describe(changed.map { ($0.0, Apple.text(current.attributes?[$0.0]) ?? "") }), after: describe(changed),
                     body: .object([("data", .object([("type", .string(current.type)), ("id", .string(current.id)), ("attributes", .object(publishedTextAttributes(changed)))]))]))
+    }
+
+    /// The draft values that are edits: different from the import's text, or kept over this exact Apple text by choice.
+    /// A draft value that only repeats the import says nothing about what the person wants, so it is never sent as a change.
+    /// Neither is a value taken from App Store Connect with Use App Store Connect: it is Apple's text as it was then, not an edit.
+    static func editedText(_ drafted: [(String, String)], imported: [(String, String)], kept: JSONText?, taken: JSONText? = nil, apple: AppStoreConnectClient.Resource?) -> [(String, String)] {
+        drafted.filter { field, value in
+            if let apple, kept?[field]?.text == JSONText.string(Apple.text(apple.attributes?[field]) ?? "").rawSHA256 { return true }
+            if taken?[field]?.text == JSONText.string(value).rawSHA256 { return false }
+            return !TextSemantics.sameStoreText(value, imported.first { $0.0 == field }?.1 ?? "")
+        }
+    }
+
+    /// The text of fields never edited on this Mac, taken from App Store Connect as it is now instead of from the saved import.
+    /// `base` is the same language on the version the draft continues, as Apple has it now, and `target` on the version being changed.
+    /// Without `base`, the saved text fills only what Apple left empty on the target. Keep Mine over the target's exact text keeps the
+    /// saved text. `left` names the fields whose saved text differs from Apple's and is therefore not sent.
+    static func currentText(_ imported: [(String, String)], base: AppStoreConnectClient.Resource?, target: AppStoreConnectClient.Resource?, kept: JSONText?) -> (fields: [(String, String)], left: [String]) {
+        var fields: [(String, String)] = [], left: [String] = []
+        for (field, value) in imported {
+            guard field != "locale" else { fields.append((field, value)); continue }
+            let onTarget = target.map { Apple.text($0.attributes?[field]) ?? "" }
+            if let onTarget, kept?[field]?.text == JSONText.string(onTarget).rawSHA256 { fields.append((field, value)); continue }
+            if let base {
+                let current = Apple.text(base.attributes?[field]) ?? ""
+                if !TextSemantics.sameStoreText(current, value) { left.append(field) }
+                fields.append((field, current))
+            } else if let onTarget, !onTarget.isEmpty {
+                if !TextSemantics.sameStoreText(onTarget, value) { left.append(field) }
+                fields.append((field, onTarget))
+            } else { fields.append((field, value)) }
+        }
+        return (fields, left)
     }
 
     func planRelease(_ planner: Planner, account: Account) async throws -> String {
@@ -119,6 +172,21 @@ extension WorkspaceSession {
         guard remoteLocales.allSatisfy({ $0.type == "appStoreVersionLocalizations" && Apple.within($0, "appStoreVersion", "appStoreVersions", remote.id) }), Set(remoteLocales.map(\.id)).count == remoteLocales.count,
               Set(remoteLocales.compactMap { $0.attributes?["locale"]?.string }).count == remoteLocales.count else { throw PublishFailure.invalid("Apple returned version languages outside the selected version.") }
         let texts = draft["texts"]
+        // A version draft holds Apple's text as it was when its import was read, also when it is a copy made on this Mac for a new
+        // version. Text never edited on this Mac is therefore taken from App Store Connect as it is now, never from that older copy:
+        // the same version's text is left as it is, a new version gets the current text of the version it continues, and where that
+        // version is not known the saved text only fills what Apple left empty. Only text edited here, or kept over Apple's by choice,
+        // is this Mac's to send. `appleBase` is nil where that rule does not apply: a source chosen in Publish.
+        var appleBase: [AppStoreConnectClient.Resource]?
+        if usesPlan {
+            if !copyAll { appleBase = remoteLocales }
+            else if versions.contains(where: { $0.id == localId }) {
+                let base = try await planner.list("/v1/appStoreVersions/\(localId)/appStoreVersionLocalizations?limit=200")
+                guard base.allSatisfy({ $0.type == "appStoreVersionLocalizations" && Apple.within($0, "appStoreVersion", "appStoreVersions", localId) }), Set(base.map(\.id)).count == base.count else { throw PublishFailure.invalid("Apple returned version languages outside the selected version.") }
+                appleBase = base
+            } else { appleBase = [] }
+        }
+        var leftAsApple: [String] = []
         // Apple has no What's New for an app's first version on a platform, so it is never sent there.
         let platform = remote.attributes?["platform"]?.string ?? ""
         let firstVersion = !versions.contains { $0.id != remote.id && $0.attributes?["platform"]?.string == platform }
@@ -135,11 +203,19 @@ extension WorkspaceSession {
             var text: [(String, String)]?
             // A full Save compares every local field with Apple, as step 3's check does, so a value only on this Mac is always sent;
             // Quick Release sends only what was edited.
+            let imported = Self.fieldPairs(locale["fields"]), kept = draft["keptAppleText"]?[id]
+            // What was typed here: a draft value that only repeats the import is not an edit.
+            let edited = appleBase == nil ? drafted : drafted.map { Self.editedText($0, imported: imported, kept: kept, taken: draft["takenAppleText"]?[id], apple: current) }
             if copyAll || current == nil || !quick {
-                var merged = Self.fieldPairs(locale["fields"])
-                for (field, value) in drafted ?? [] { if let index = merged.firstIndex(where: { $0.0 == field }) { merged[index].1 = value } else { merged.append((field, value)) } }
+                var merged = imported
+                if let appleBase {
+                    let fresh = Self.currentText(imported, base: appleBase.first { $0.attributes?["locale"]?.string == code }, target: current, kept: kept)
+                    merged = fresh.fields
+                    leftAsApple += fresh.left.map { (TextDrafts.labels[$0] ?? $0) + " · " + code }
+                }
+                for (field, value) in edited ?? [] { if let index = merged.firstIndex(where: { $0.0 == field }) { merged[index].1 = value } else { merged.append((field, value)) } }
                 text = merged
-            } else { text = drafted }
+            } else { text = edited }
             let remoteLocale: JSONText
             if uploadOnly {
                 // Asset Library belongs to the app, so files upload before their language exists on the version.
@@ -191,22 +267,34 @@ extension WorkspaceSession {
             let remoteInfo = try await planner.list("/v1/appInfos/\(info.id)/appInfoLocalizations?limit=200")
             guard remoteInfo.allSatisfy({ $0.type == "appInfoLocalizations" && Apple.within($0, "appInfo", "appInfos", info.id) }), Set(remoteInfo.map(\.id)).count == remoteInfo.count,
                   Set(remoteInfo.compactMap { $0.attributes?["locale"]?.string }).count == remoteInfo.count else { throw PublishFailure.invalid("Apple returned app information languages outside the selected app information.") }
-            var seen = Set<String>()
-            for locale in infoEdits {
-                let code = locale["fields"]?["locale"]?.text ?? ""
-                guard seen.insert(code).inserted else { throw PublishFailure.invalid("Several app information drafts exist for \(code). Keep one source before publishing.") }
-                let current = remoteInfo.first { $0.attributes?["locale"]?.string == code }
-                var merged = current == nil || !quick ? Self.fieldPairs(locale["fields"]) : []
-                for (field, value) in Self.fieldPairs(texts?[locale["id"]?.text ?? ""]) { if let index = merged.firstIndex(where: { $0.0 == field }) { merged[index].1 = value } else { merged.append((field, value)) } }
+            let chosen = try Self.appInfoDrafts(infoEdits, records: Self.items(working["appInfos"]), editable: info.id, drafts: texts ?? .object([]))
+            for locale in chosen {
+                let language = locale["fields"]?["locale"]?.text ?? ""
+                let current = remoteInfo.first { $0.attributes?["locale"]?.string == language }
+                // App information belongs to the app, not to one version, so its unedited text is Apple's own current text.
+                let imported = Self.fieldPairs(locale["fields"]), kept = draft["keptAppleText"]?[locale["id"]?.text ?? ""]
+                var merged = current == nil || !quick ? imported : []
+                var drafted = Self.fieldPairs(texts?[locale["id"]?.text ?? ""])
+                if appleBase != nil, let current {
+                    let fresh = Self.currentText(merged, base: current, target: current, kept: kept)
+                    merged = fresh.fields
+                    leftAsApple += fresh.left.map { (TextDrafts.labels[$0] ?? $0) + " · " + language }
+                    drafted = Self.editedText(drafted, imported: imported, kept: kept, taken: draft["takenAppleText"]?[locale["id"]?.text ?? ""], apple: current)
+                }
+                for (field, value) in drafted { if let index = merged.firstIndex(where: { $0.0 == field }) { merged[index].1 = value } else { merged.append((field, value)) } }
                 let fields = try Self.publishedText(merged, appInfo: true)
-                if let current { Self.addTextChange(planner, current: current, fields: quick ? QuickRelease.sent(fields, appInfo: true) : fields, code: code) }
+                if let current { Self.addTextChange(planner, current: current, fields: quick ? QuickRelease.sent(fields, appInfo: true) : fields, code: language) }
                 else {
-                    guard fields.contains(where: { $0.0 == "name" }) else { throw PublishFailure.invalid("Add the app name for \(code) in Localizations before publishing.") }
-                    planner.add(.api, method: "POST", path: [.string("appInfoLocalizations")], label: "Add app information · \(code)", detail: "Name, subtitle and privacy information.", after: Self.describe(fields),
-                                body: .object([("data", .object([("type", .string("appInfoLocalizations")), ("attributes", .object([("locale", .string(code))] + Self.publishedTextAttributes(fields, creating: true))),
+                    guard fields.contains(where: { $0.0 == "name" }) else { throw PublishFailure.invalid("Add the app name for \(language) in Localizations before publishing.") }
+                    planner.add(.api, method: "POST", path: [.string("appInfoLocalizations")], label: "Add app information · \(language)", detail: "Name, subtitle and privacy information.", after: Self.describe(fields),
+                                body: .object([("data", .object([("type", .string("appInfoLocalizations")), ("attributes", .object([("locale", .string(language))] + Self.publishedTextAttributes(fields, creating: true))),
                                                                   ("relationships", .object([("appInfo", Apple.relationship("appInfos", .string(info.id)))]))]))]))
                 }
             }
+        }
+        if !leftAsApple.isEmpty {
+            let named = leftAsApple.prefix(8).joined(separator: ", ") + (leftAsApple.count > 8 ? " and \(leftAsApple.count - 8) more" : "")
+            planner.notes.append("Left as App Store Connect has it now, because it was changed there after this Mac read the listing and was not edited here: \(named). To send this Mac's copy instead, choose Keep Mine for that field.")
         }
         if quick {
             guard !planner.steps.isEmpty else { throw PublishFailure.noChanges }

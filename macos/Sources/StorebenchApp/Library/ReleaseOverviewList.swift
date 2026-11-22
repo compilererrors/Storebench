@@ -8,13 +8,21 @@ struct ReleaseOverviewList: View {
     let unavailable: Bool
     let icon: (ConnectedApps.Row) -> AnyView
     let open: (LibraryOverview.Release) -> Void
+    /// Reads the App Store Connect status of cards the user expands, so an open card shows its current state.
+    var check: ([LibraryOverview.Release]) -> Void = { _ in }
     @State private var editor: ReleaseCardsEditor?
+    init(releases: [LibraryOverview.Release], session: WorkspaceSession?, unavailable: Bool, icon: @escaping (ConnectedApps.Row) -> AnyView,
+         check: @escaping ([LibraryOverview.Release]) -> Void = { _ in }, open: @escaping (LibraryOverview.Release) -> Void) {
+        self.releases = releases; self.session = session; self.unavailable = unavailable; self.icon = icon; self.open = open; self.check = check
+        // The cards the user saw last time show in the first frame; they are read again in the background.
+        _editor = State(initialValue: session.map(ReleaseCardsEditor.shared))
+    }
     @State private var suggestion = false
     @State private var optionsFocus = StorebenchScrollFocus()
     @Environment(\.pageFocusInteraction) private var interaction
     private var keys: [String] { releases.map { key($0) } }
     var body: some View {
-        Card(title: "Continue Preparing", subtitle: "Open a release to continue where you left off. Expand a card to see its requirements.",
+        Card(title: "Continue Preparing", subtitle: "Open a release to continue where you left off. Show Status shows Apple's state and what it still needs.",
              help: "versions", actions: AnyView(options)) {
             if let editor, let preferences = editor.preferences {
                 if releases.count <= 3 {
@@ -46,8 +54,9 @@ struct ReleaseOverviewList: View {
                 editor?.change(.answer(answer, Date()))
             }).frame(width: 0, height: 0))
         .task(id: "\(session.map { String(describing: ObjectIdentifier($0)) } ?? "")/\(keys.joined(separator: "/"))") {
-            if let session, editor?.session !== session { editor = ReleaseCardsEditor(session: session); suggestion = false }
-            await StorebenchPolling.repeating(every: .seconds(2), while: { !Task.isCancelled }) { await reload() }
+            if let session, editor?.session !== session { editor = ReleaseCardsEditor.shared(for: session); suggestion = false }
+            await StorebenchPolling.repeating(every: .seconds(2), stamp: { try? await session?.savedStateToken() }, working: { editor?.preferences == nil || editor?.status.isEmpty == false },
+                                              while: { !Task.isCancelled }) { await reload() }
         }
         .onChange(of: editor?.preferences) {
             if editor?.preferences?.canSuggest(at: Date()) != true || keys.contains(where: { editor?.preferences?.expanded($0) != false }) { suggestion = false }
@@ -55,8 +64,8 @@ struct ReleaseOverviewList: View {
         .onChange(of: keys) { suggestion = false }
     }
     private var options: some View {
-        StorebenchIconMenu(title: "Release Card Options", icon: "sort") {
-            Button("Expand All") { interaction?(); optionsFocus.reveal(.preserve); expand(keys, true) }
+        StorebenchIconMenu(title: "Release Card Options", icon: "more") {
+            Button("Expand All") { interaction?(); optionsFocus.reveal(.preserve); expand(keys, true); check(releases) }
                 .storebenchWorking(editor?.preferences == nil || keys.allSatisfy { editor?.preferences?.expanded($0) == true })
             Button("Minimize All") { interaction?(); optionsFocus.reveal(.preserve); expand(keys, false) }
                 .storebenchWorking(editor?.preferences == nil || keys.allSatisfy { editor?.preferences?.expanded($0) == false })
@@ -77,7 +86,7 @@ struct ReleaseOverviewList: View {
     }
     private func card(_ release: LibraryOverview.Release, editor: ReleaseCardsEditor, preferences: ReleaseCardPreferences) -> some View {
         ReleaseOverviewDisclosureCard(title: release.title, overview: release.app.release, icon: icon(release.app),
-            expanded: Binding(get: { editor.preferences?.expanded(key(release)) ?? preferences.expanded(key(release)) }, set: { expand([key(release)], $0) }),
+            expanded: Binding(get: { editor.preferences?.expanded(key(release)) ?? preferences.expanded(key(release)) }, set: { expand([key(release)], $0); if $0 { check([release]) } }),
             unavailable: unavailable, identifier: "continue.release." + release.id, open: { open(release) })
     }
 }
@@ -89,26 +98,27 @@ struct ReleaseOverviewDisclosureCard: View {
     var identifier = "release.card"
     let open: () -> Void
     var body: some View {
-        StorebenchDisclosureCard(expanded: $expanded) {
+        StorebenchDisclosureCard(expanded: $expanded, identifier: identifier, actionTitle: overview?.action ?? "Open Release", disclosureTitle: "Status",
+                                 unavailable: unavailable, open: open) {
             HStack(spacing: StorebenchTheme.gap) {
                 icon.frame(width: 42, height: 42).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     StorebenchAdaptiveText(text: title, font: .sbHeadline)
                     StorebenchTextSlot(text: overview.map { $0.status + " · " + $0.detail } ?? "Status Unavailable", height: 34, font: .sbCaption, color: StorebenchTheme.muted, live: true)
                 }.frame(maxWidth: .infinity, alignment: .leading)
-            }.accessibilityLabel(title).storebenchControlID(identifier + ".disclosure")
-        } action: {
-            Button(action: open) { StorebenchLabel(overview?.action ?? "Open Release", icon: "right", size: 14) }
-                .buttonStyle(StorebenchButtonStyle(.quiet)).storebenchWorking(unavailable)
-                .storebenchControlID(identifier + ".open")
+            }.accessibilityLabel(title)
         } content: {
-            VStack(alignment: .leading, spacing: 4) {
-                if overview?.submitted != true {
-                    ForEach(0..<3, id: \.self) { index in
-                        let item = overview?.preview.indices.contains(index) == true ? overview!.preview[index] : nil
-                        StorebenchTextSlot(text: item.map { "• " + $0.title } ?? "", height: 30, font: .sbCaption,
-                            color: item?.kind == "blocked" ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted)
-                            .help(item?.detail ?? "").storebenchControlID(identifier + ".item.\(index)")
+            VStack(alignment: .leading, spacing: StorebenchTheme.space(3)) {
+                // Up to three requirements, one line each with its state; the full list is in Release.
+                if overview?.submitted != true, let items = overview?.preview.prefix(3), !items.isEmpty {
+                    VStack(alignment: .leading, spacing: StorebenchTheme.space(2)) {
+                        ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                            HStack(alignment: .firstTextBaseline, spacing: StorebenchTheme.space(2)) {
+                                StorebenchIcon(name: item.kind == "blocked" ? "warning" : "info", size: 12)
+                                    .foregroundStyle(item.kind == "blocked" ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted).accessibilityHidden(true)
+                                Text(item.title).font(.sbCallout).foregroundStyle(StorebenchTheme.ink).lineLimit(1).truncationMode(.tail)
+                            }.help(item.detail.isEmpty ? item.title : item.title + ". " + item.detail).storebenchControlID(identifier + ".item.\(index)")
+                        }
                     }
                 }
                 StorebenchTextSlot(text: feedback, height: 34, font: .sbCaption, color: StorebenchTheme.muted, live: true)

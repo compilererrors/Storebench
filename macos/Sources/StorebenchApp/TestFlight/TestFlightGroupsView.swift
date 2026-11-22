@@ -11,6 +11,7 @@ struct TestFlightGroupsView: View {
     @Environment(\.editorProtection) private var protection
     @State private var draft: LocalEditorDraftEditor?
     @State private var working = false
+    @State private var readAt: Date?
     @State private var preparing = false
     @State private var publishing = false
     @State private var memberState = "loading"
@@ -63,6 +64,7 @@ struct TestFlightGroupsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             Card(title: title, subtitle: subtitle, help: "testflight") {
+                StorebenchReadAge(readAt: groups.isEmpty ? nil : readAt, reading: working)
                 StorebenchCollection(items: shown, title: { $0.name }, subtitle: summary, empty: status.isEmpty ? "No groups yet. Create one below." : status) { group in
                     StorebenchFormFooter {
                         if selected != group.id { Button("View Group") { Task { await select(group) } }.fixedSize() }
@@ -70,7 +72,7 @@ struct TestFlightGroupsView: View {
                 }
                 Text("Create Group").font(.sbHeadline)
                 StorebenchFormGrid {
-                    StorebenchTextField("Group name", text: $newName)
+                    StorebenchTextField("Group Name", text: $newName)
                     if internalOnly == nil { StorebenchChoicePicker("Type", selection: $newInternal, options: [(true, "Internal Testing"), (false, "External Testing")]) }
                 }
                 .storebenchWorking(draft?.loaded != true)
@@ -88,7 +90,7 @@ struct TestFlightGroupsView: View {
         .task {
             await ScreenReads.reading(fresh: false) {
                 if let internalOnly, newName.isEmpty { newInternal = internalOnly }
-                if groups.isEmpty, let read = await history?.rememberedDecodedRead(readKey, as: Read.self), !Task.isCancelled, groups.isEmpty { groups = read.groups; builds = read.builds; testers = read.testers }
+                if groups.isEmpty, let read = await history?.rememberedDecodedRead(readKey, as: Read.self), !Task.isCancelled, groups.isEmpty { groups = read.groups; builds = read.builds; testers = read.testers; readAt = history?.rememberedReadAt(readKey) }
                 guard !Task.isCancelled else { return }
                 await load()
                 // Back reopens the group that was open, with its members read again.
@@ -119,7 +121,7 @@ struct TestFlightGroupsView: View {
             if let draft { LocalDraftActions(editor: draft, value: draftValue, restore: restoreDraft, blocked: busy) }
             Text("Settings").font(.sbHeadline)
             StorebenchInputActions {
-                StorebenchTextField("Group name", text: $rename)
+                StorebenchTextField("Group Name", text: $rename)
             } actions: {
                 if !rename.trimmingCharacters(in: .whitespaces).isEmpty && rename != group.name { Button("Sync Name") { Task { await prepare { $0.testflightAction = "rename-group"; $0.groupId = group.id; $0.groupName = rename } } }.fixedSize() }
             }
@@ -136,7 +138,7 @@ struct TestFlightGroupsView: View {
                 }
                 if let link = group.publicLink, group.publicLinkEnabled == true { Text(link).font(.sbCallout).textSelection(.enabled) }
                 StorebenchInputActions {
-                    StorebenchTextField("Tester limit", text: $limit, hint: "Leave empty for no limit.", placeholder: "No limit")
+                    StorebenchTextField("Tester Limit", text: $limit, hint: "Leave empty for no limit.", placeholder: "No limit")
                 } actions: {
                     if (limit.isEmpty || Int(limit) != nil) && limit != limitBaseline { Button("Sync Tester Limit") { Task { await setting(group, "public-link-limit", .number(Double(Int(limit) ?? 0))) } }.fixedSize() }
                 }
@@ -153,7 +155,7 @@ struct TestFlightGroupsView: View {
                     }
                 }
                 StorebenchInputActions {
-                    StorebenchPicker("Add build", selection: $buildChoice) { SelectionOption("Choose a build", value: ""); selectionOptions(builds.filter { $0.processed && $0.betaReviewState != "REJECTED" && $0.externalState != "BETA_REJECTED" && (group.internalGroup == true ? ["INTERNAL_ONLY", "APP_STORE_ELIGIBLE"].contains($0.audience) : group.internalGroup == false && $0.audience == "APP_STORE_ELIGIBLE") && !members.builds.contains($0.id) }) { SelectionOption($0.title, value: $0.id) } }
+                    StorebenchPicker("Add Build", selection: $buildChoice) { SelectionOption("Choose a build", value: ""); selectionOptions(builds.filter { $0.processed && $0.betaReviewState != "REJECTED" && $0.externalState != "BETA_REJECTED" && (group.internalGroup == true ? ["INTERNAL_ONLY", "APP_STORE_ELIGIBLE"].contains($0.audience) : group.internalGroup == false && $0.audience == "APP_STORE_ELIGIBLE") && !members.builds.contains($0.id) }) { SelectionOption($0.title, value: $0.id) } }
                 } actions: {
                     if !buildChoice.isEmpty { Button("Sync Build") { Task { await prepare(buildId: buildChoice) { $0.testflightAction = "add-build"; $0.groupId = group.id } } }.fixedSize() }
                 }
@@ -165,14 +167,14 @@ struct TestFlightGroupsView: View {
                     }
                 }
                 StorebenchInputActions {
-                    StorebenchTextField("Tester email", text: $email, placeholder: "tester@example.com")
+                    StorebenchTextField("Tester Email", text: $email, placeholder: "tester@example.com")
                 } actions: {
                     if email.contains("@") { Button("Sync Invitation") { Task { await prepare { $0.testflightAction = "invite-tester"; $0.groupId = group.id; $0.testerEmail = email.trimmingCharacters(in: .whitespaces) } } }.fixedSize() }
                 }
                 let others = testers.filter { tester in !members.testers.contains { $0.id == tester.id } }
                 if !others.isEmpty {
                     StorebenchInputActions {
-                        StorebenchPicker("Existing tester", selection: $testerChoice) { SelectionOption("Choose a tester", value: ""); selectionOptions(others) { SelectionOption($0.email, value: $0.id) } }
+                        StorebenchPicker("Existing Tester", selection: $testerChoice) { SelectionOption("Choose a tester", value: ""); selectionOptions(others) { SelectionOption($0.email, value: $0.id) } }
                     } actions: {
                         if !testerChoice.isEmpty { Button("Sync Tester") { Task { await prepare { $0.testflightAction = "add-tester"; $0.groupId = group.id; $0.testerId = testerChoice } } }.fixedSize() }
                     }
@@ -184,11 +186,11 @@ struct TestFlightGroupsView: View {
                 Group {
                     Text("Builds").font(.sbHeadline)
                     Text("Placeholder for assigned builds").foregroundStyle(StorebenchTheme.muted)
-                    StorebenchPicker("Add build", selection: .constant("")) { SelectionOption("Choose a build", value: "") }.storebenchFormColumn()
+                    StorebenchPicker("Add Build", selection: .constant("")) { SelectionOption("Choose a build", value: "") }.storebenchFormColumn()
                     StorebenchDivider()
                     Text("Testers").font(.sbHeadline)
                     StorebenchCollectionPlaceholder(rows: 1)
-                    StorebenchTextField("Tester email", text: .constant(""), placeholder: "tester@example.com")
+                    StorebenchTextField("Tester Email", text: .constant(""), placeholder: "tester@example.com")
                 }.storebenchPlaceholder()
             }
             StorebenchDivider()
@@ -237,7 +239,7 @@ struct TestFlightGroupsView: View {
         working = true; defer { working = false }
         do {
             let nextGroups = try await session.testFlightGroups(account: account, appId: app.id)
-            groups = nextGroups; choicesRead = false
+            groups = nextGroups; choicesRead = false; readAt = Date()
             history?.rememberRead(Read(groups: nextGroups, builds: builds, testers: testers), readKey)
             if let selected, !groups.contains(where: { $0.id == selected }) { self.selected = nil; members = nil }
             status = ""

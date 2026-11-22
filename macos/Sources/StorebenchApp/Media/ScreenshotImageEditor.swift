@@ -27,7 +27,7 @@ struct ScreenshotImageEditor: View {
         return ScreenshotEdits(width: target.width, height: target.height)
     }
     var body: some View {
-        StorebenchDialog(title: customTargets == nil ? "Edit Screenshot" : "Edit Library Image", wide: true, height: 780, busy: working, close: close) {
+        StorebenchDialog(title: customTargets == nil ? "Edit Screenshot" : "Edit Library Image", kind: .media, busy: working, close: close) {
             StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 300) {
                 VStack(alignment: .leading, spacing: 12) {
                     StorebenchTextSlot(text: item.originalName, height: 34, font: .sbCallout)

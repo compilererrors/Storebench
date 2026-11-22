@@ -32,7 +32,7 @@ struct LibraryView: View {
     @State private var startingAllSync = false
     @State private var navigationHistory = NavigationHistory(LibraryLocation())
     @State private var navigationPresentation = NavigationPresentation()
-    /// Reviews on the open page waiting for Send to Apple, named in the bar at the bottom of the window.
+    /// Reviews on the open page waiting for approval, named in the bar at the bottom of the window.
     @State private var readyReviews = ReadyReviews()
     /// The reads saved by an earlier launch are handed to the window before the first screen opens, so it shows them at once.
     @State private var savedReadsSession: ObjectIdentifier?
@@ -88,6 +88,10 @@ struct LibraryView: View {
             Task { try? await session.recordAppOpened(accountId: account.id, appId: app.id, release: true, counts: false) }
         }
         .onDisappear { cancelOpening() }
+        .onAppear {
+            readyReviews.currentLocation = { location }
+            readyReviews.open = { destination in openLocation(destination) }
+        }
         .onChange(of: location) { old, new in
             guard new == location else { return }
             navigationPresentation.capture?()
@@ -107,6 +111,11 @@ struct LibraryView: View {
         }
         .shortcutAction(.back, enabled: navigationHistory.canGoBack, priority: 0, identity: location.identity) { navigateHistory(.back) }
         .shortcutAction(.forward, enabled: navigationHistory.canGoForward, priority: 0, identity: location.identity) { navigateHistory(.forward) }
+        // The mouse's side buttons and a swipe between pages go Back and Forward too.
+        .background(StorebenchHistoryGestures { command in
+            if command == .back, navigationHistory.canGoBack { navigateHistory(.back) }
+            else if command == .forward, navigationHistory.canGoForward { navigateHistory(.forward) }
+        }.frame(width: 0, height: 0).accessibilityHidden(true))
     }
 
     private var shortcutDestinations: [ShortcutCommand] {
@@ -158,7 +167,7 @@ struct LibraryView: View {
     private var breadcrumb: String {
         if connecting { return "Connect Apple Account" }
         if let (_, app) = selected { return appSection == .overview ? app.name : appSection.title }
-        if let section = LibraryChooser.selected(selection) { return section.rawValue }
+        if let section = LibraryChooser.selected(selection) { return section.title }
         if selection == "library:apps" { return "Apps" }
         if selection == "library:sales" { return "Sales and Trends" }
         if selection == LibraryOverview.Section.history.selection { return "History" }
@@ -218,6 +227,22 @@ struct LibraryView: View {
               let request = navigationHistory.request(direction), request.destination == destination else { return false }
         navigationPresentation.capture?()
         return navigationHistory.commit(request)
+    }
+
+    /// Opens a page this window showed before, such as the one whose sync stopped, as choosing it in the sidebar would:
+    /// unsaved edits on the open page are asked about first.
+    private func openLocation(_ destination: LibraryLocation) {
+        cancelOpening()
+        guard destination != location, let session else { return }
+        let known = destination.selection?.hasPrefix("library:") == true
+            || accounts.contains { account in account.apps.contains { "\(account.id)/\($0.id)" == destination.selection } }
+        guard known else { libraryMessage = "This app is no longer available. Refresh Apps before opening it."; return }
+        leave {
+            guard model.session === session, (try? session.validateAccess()) != nil else { return }
+            selection = destination.selection; appSection = destination.section; editorContext = destination.context
+            portfolioRange = destination.salesRange; analyticsKind = destination.analyticsKind; appRecovery = nil; connecting = destination.connecting; libraryMessage = ""
+            if destination.section == .release { releaseStep = destination.releaseStep }
+        }
     }
 
     private func selectSection(_ value: AppNavigation.Section) {

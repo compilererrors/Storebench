@@ -608,10 +608,11 @@ import Testing
             try await ui.wait { !fixture.owner.dirty && ui.hasText("Language draft saved on this Mac.") }
             #expect(fixture.presentation.saves == 1 && fixture.owner.editor?.saved(field) == long && fixture.owner.editor?.saved(url) == "")
             #expect(fixture.presentation.requests.isEmpty && !fixture.owner.publishingReady)
-            try await ui.wait { ui.marker("language.save.en-GB")?.available == true }
-            try await ui.press("language.save.en-GB")
-            try await ui.wait { ui.hasText("Language draft is already saved on this Mac.") }
+            // With everything saved, Save Draft rests until the next edit, so it never looks like there is more to save.
+            try await ui.wait { ui.marker("language.save.en-GB")?.available == false }
             #expect(fixture.presentation.saves == 1)
+            try fixture.owner.change(field, to: long + " Again")
+            try await ui.wait { ui.marker("language.save.en-GB")?.available == true }
         } catch { ui.close(); await fixture.close(); throw error }
         ui.close(); await fixture.close()
     }

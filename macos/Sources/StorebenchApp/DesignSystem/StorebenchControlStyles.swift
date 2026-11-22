@@ -60,8 +60,8 @@ struct StorebenchMenuFace: View {
         }.padding(.horizontal, StorebenchTheme.space(3)).frame(minWidth: 0, maxWidth: .infinity)
             .frame(height: StorebenchTheme.controlHeight)
             .foregroundStyle(active ? StorebenchTheme.ink : StorebenchTheme.subtle)
-            .background(StorebenchTheme.color(active ? emphasized ? "color-surface-sunken" : command ? "color-surface-subtle" : "color-surface" : "color-surface-sunken"), in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
-            .overlay(StorebenchControlOutline(border: StorebenchTheme.color(emphasized ? "color-border-accent" : "color-border-control"), focusedOverride: focused))
+            .background(active && emphasized ? StorebenchTheme.hoverColor(true) : StorebenchTheme.color(active ? command ? "color-surface-subtle" : "color-surface" : "color-surface-sunken"), in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
+            .overlay(StorebenchControlOutline(border: StorebenchTheme.color(HoverFeedback.border(hovering: emphasized)), focusedOverride: focused))
             .contentShape(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
     }
 }
@@ -83,7 +83,7 @@ struct StorebenchNavigationSelect<Options: View>: View {
     var body: some View {
         StorebenchFormField(label: title, hideHint: true) {
             Menu { options().nativeMenuContent() } label: { StorebenchMenuFace(title: selected, emphasized: hovered) }
-                .menuStyle(.button).menuIndicator(.hidden).buttonStyle(StorebenchPressStyle()).onHover { hovered = $0 }
+                .menuStyle(.button).menuIndicator(.hidden).buttonStyle(StorebenchPressStyle()).storebenchHover { hovered = $0 }
                 .frame(height: StorebenchTheme.controlHeight)
                 .foregroundStyle(StorebenchTheme.ink).help(selected).accessibilityLabel("Switch " + title.lowercased()).accessibilityValue(selected)
         }
@@ -107,23 +107,33 @@ struct StorebenchButtonStyle: PrimitiveButtonStyle {
                 .buttonStyle(StorebenchQuietButtonStyle(variant: configuration.role == .destructive ? .danger : variant, size: size, stretch: stretch))
                 .environment(\.isEnabled, enabled)
         } else {
-            StorebenchCommandWidth(minimum: naturalActions ? 0 : StorebenchTheme.actionWidth,
-                                   maximum: naturalActions && !stretch && !actionFill ? .infinity : stretch ? StorebenchTheme.actionMaxWidth : StorebenchTheme.actionWidth,
-                                   fill: stretch || actionFill) {
-                if variant == .primary && configuration.role != .destructive {
-                    nativeButton(configuration).buttonStyle(.borderedProminent)
-                } else {
-                    nativeButton(configuration).buttonStyle(.bordered)
-                }
-            }.frame(minHeight: StorebenchTheme.controlHeight)
+            StorebenchHoverReader { hovering in
+                StorebenchCommandWidth(minimum: naturalActions ? 0 : StorebenchTheme.actionWidth,
+                                       maximum: naturalActions && !stretch && !actionFill ? .infinity : stretch ? StorebenchTheme.actionMaxWidth : StorebenchTheme.actionWidth,
+                                       fill: stretch || actionFill) {
+                    if variant == .primary && configuration.role != .destructive {
+                        nativeButton(configuration, hovering: hovering).buttonStyle(.borderedProminent)
+                    } else {
+                        nativeButton(configuration, hovering: hovering).buttonStyle(.bordered)
+                    }
+                }.frame(minHeight: StorebenchTheme.controlHeight)
+            }
         }
     }
-    private func nativeButton(_ configuration: Configuration) -> some View {
-        StorebenchCommandButton(role: configuration.role, action: configuration.trigger) {
+    /// A macOS push button with the shared hover: a darker fill for a primary command, the accent border for the others.
+    private func nativeButton(_ configuration: Configuration, hovering: Bool) -> some View {
+        let kind: ControlColors.Variant = variant == .danger || configuration.role == .destructive ? .danger : variant == .primary ? .primary : .secondary
+        let look = HoverFeedback.command(kind, hovering: hovering && enabled)
+        return StorebenchCommandButton(role: configuration.role, action: configuration.trigger) {
             configuration.label.font(.sbCallout.weight(.medium)).multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity, minHeight: StorebenchTheme.controlHeight - 8)
         }.controlSize(.regular)
-            .tint(variant == .danger || configuration.role == .destructive ? StorebenchTheme.color("color-danger") : StorebenchTheme.accent)
+            .tint(StorebenchTheme.color(look.tint))
+            .overlay {
+                RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius)
+                    .strokeBorder(look.border.map(StorebenchTheme.color) ?? .clear, lineWidth: 1.5)
+                    .allowsHitTesting(false).accessibilityHidden(true)
+            }
     }
 }
 
@@ -144,12 +154,12 @@ private struct StorebenchQuietButtonStyle: ButtonStyle {
     let variant: ControlColors.Variant
     let size: StorebenchButtonStyle.Size
     let stretch: Bool
-    @State private var hovering = false
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .modifier(StorebenchControlSurface(variant: variant, size: size, stretch: stretch, emphasized: hovering || configuration.isPressed))
-            .contentShape(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
-            .onHover { hovering = $0 }
+        StorebenchHoverReader { hovering in
+            configuration.label
+                .modifier(StorebenchControlSurface(variant: variant, size: size, stretch: stretch, emphasized: hovering || configuration.isPressed))
+                .contentShape(RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
+        }
     }
 }
 
@@ -199,18 +209,31 @@ struct StorebenchControlOutline: View {
     }
 }
 
+/// The one look of an input: text fields, selections and choices share its height, background, border, hover and focus ring.
+struct StorebenchFieldSurface: ViewModifier {
+    /// The control's own focus when it is an AppKit control; nil uses SwiftUI's focus.
+    var focused: Bool? = nil
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.actionBusy) private var actionBusy
+    func body(content: Content) -> some View {
+        let active = enabled || actionBusy
+        content.frame(height: StorebenchTheme.controlHeight)
+            .background(active ? StorebenchTheme.surface : StorebenchTheme.color("color-surface-sunken"), in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
+            .overlay(StorebenchControlOutline(border: StorebenchTheme.color(HoverFeedback.border(hovering: hovering && active)), focusedOverride: focused))
+            .storebenchHover { hovering = $0 }
+    }
+}
+
 /// A busy form keeps its normal colours: the operation locks the field without making it look unavailable.
 struct StorebenchTextFieldStyle: TextFieldStyle {
-    @State private var hovering = false
     @Environment(\.isEnabled) private var enabled
     @Environment(\.actionBusy) private var actionBusy
     func _body(configuration: TextField<Self._Label>) -> some View {
         let active = enabled || actionBusy
         return configuration.font(.system(size: StorebenchTheme.measure("inputFont"))).textFieldStyle(.plain).padding(.horizontal, 11)
-            .frame(height: StorebenchTheme.controlHeight).background(active ? StorebenchTheme.surface : StorebenchTheme.color("color-surface-sunken"), in: RoundedRectangle(cornerRadius: StorebenchTheme.controlRadius))
             .foregroundStyle(active ? StorebenchTheme.ink : StorebenchTheme.subtle)
-            .overlay(StorebenchControlOutline(border: StorebenchTheme.color(hovering ? "color-border-accent" : "color-border-control")))
-            .onHover { hovering = $0 }
+            .modifier(StorebenchFieldSurface())
     }
 }
 

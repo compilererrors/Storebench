@@ -185,4 +185,27 @@ import Testing
         }
         #expect(AppleReadCost.current == nil)
     }
+
+    @Test func oneAccountUsesEverySlotAloneButLeavesRoomWhenAnotherAccountWaits() async throws {
+        var limits = AppleReadAdmission.Limits(); limits.active = 3; limits.accountActive = 2
+        let queue = AppleReadAdmission(limits: limits), requests = Requests()
+        func run(_ name: String, _ account: String) -> Task<Void, Error> { Task { try await queue.run(.visible, key: nil, account: account) { await requests.hold(name) } } }
+        // Alone, one account takes all three slots.
+        let first = ["a1", "a2", "a3"].map { run($0, "account-a") }
+        try await until { await requests.isOpen("a3") }
+        let waitingA = run("a4", "account-a")
+        try await until { await queue.snapshot.waiting[.visible] == 1 }
+        let other = run("b1", "account-b")
+        try await until { await queue.snapshot.waiting[.visible] == 2 }
+        // When a slot frees, the waiting account goes first, although the first account's request waited longer.
+        await requests.finish("a1"); try await first[0].value
+        try await until { await requests.isOpen("b1") }
+        #expect(await !requests.isOpen("a4"))
+        await requests.finish("b1"); try await other.value
+        try await until { await requests.isOpen("a4") }
+        for name in ["a2", "a3", "a4"] { await requests.finish(name) }
+        try await first[1].value; try await first[2].value; try await waitingA.value
+        let idle = await queue.snapshot
+        #expect(idle.active.isEmpty && idle.waiting.isEmpty)
+    }
 }

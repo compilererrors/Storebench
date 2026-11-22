@@ -3,7 +3,7 @@ import Foundation
 /// Global library projections are local reads; scoped editors and existing jobs retain their own services.
 public enum LibraryOverview {
     public enum Section: String, CaseIterable, Sendable {
-        case overview = "Overview", apps = "Connected apps", sales = "Sales across apps", history = "History"
+        case overview = "Overview", apps = "Connected Apps", sales = "Sales Across Apps", history = "History"
         public var selection: String { "library:" + String(describing: self) }
         public static func selected(_ value: String?) -> Section? { value == nil ? .overview : allCases.first { $0.selection == value } }
     }

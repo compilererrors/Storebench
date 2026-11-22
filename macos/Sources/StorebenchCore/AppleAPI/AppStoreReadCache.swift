@@ -4,7 +4,9 @@ import Foundation
 /// Publishing clients never use this cache; local revisions and media keep their existing encrypted stores.
 /// The size and lifetime follow the Performance setting; responses stay in memory only.
 public actor AppStoreReadCache {
-    private struct Entry { let bytes: Data, stored: ContinuousClock.Instant }
+    private struct Entry { let bytes: Data, stored: ContinuousClock.Instant; var decoded: (any Sendable)? = nil }
+    /// A decoded response takes more memory than its bytes, as with decoded revisions.
+    static let decodedFactor = 3
     private var entries: BoundedMemoryCache<String, Entry>
     private var pending: [String: Work] = [:]
     /// Requests a refresh replaced. Their readers still get their answer; it is never kept.
@@ -22,6 +24,18 @@ public actor AppStoreReadCache {
     public func trim() { entries.removeAll() }
     /// Bytes of kept responses, for the Performance setting.
     public var retainedBytes: Int { entries.cost }
+    /// The decoded form of the kept response for `key`, when `bytes` is still that response.
+    func decoded(_ key: String, for bytes: Data) -> (any Sendable)? {
+        guard let entry = entries.peek(key), entry.decoded != nil, entry.bytes == bytes else { return nil }
+        return entry.decoded
+    }
+    /// Keeps a response's decoded form beside its bytes, so later readers of the same response do not decode it again.
+    /// A response replaced or evicted since is left alone.
+    func keepDecoded(_ value: any Sendable, _ key: String, for bytes: Data) {
+        guard var entry = entries.peek(key), entry.decoded == nil, entry.bytes == bytes else { return }
+        entry.decoded = value
+        entries.update(entry, for: key, cost: bytes.count * (1 + Self.decodedFactor))
+    }
     private func dropExpired() { let now = ContinuousClock.now; entries.removeAll { now - $0.stored >= lifetime } }
 
     /// While set, reads skip responses kept or requests started before this instant and replace them, so a screen's Refresh reads
@@ -73,9 +87,15 @@ public actor AppStoreReadCache {
         } else {
             // Beyond 16 shared reads a reader sends its own request; it still waits in the app's one request queue.
             if pending.count >= 16 {
+                let started = ContinuousClock.now
                 let bytes = try await load()
                 guard starting == generation else { throw CancellationError() }
-                try Task.checkCancellation(); return bytes
+                try Task.checkCancellation()
+                // The answer is kept from when it was asked for, so later readers reuse it and a Refresh that began meanwhile reads again.
+                if entries.peek(key).map({ $0.stored < started }) ?? true {
+                    dropExpired(); entries.insert(.init(bytes: bytes, stored: started), for: key, cost: bytes.count)
+                }
+                return bytes
             }
             let id = UUID(); workId = id
             pending[key] = Work(id: id, started: .now, priority: priority)

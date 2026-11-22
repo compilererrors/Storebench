@@ -10,7 +10,7 @@ struct ReleaseRecentSaves: View {
     @State private var saves: [PublishReview]?
 
     var body: some View {
-        Card(title: "Recent saves", subtitle: "Saves to App Store Connect from this Mac, newest first. Open one to see how far it got and why it stopped.") {
+        Card(title: "Recent Saves", subtitle: "Saves to App Store Connect from this Mac, newest first. Open one to see how far it got and why it stopped.") {
             if let saves {
                 if saves.isEmpty { Text("Nothing has been saved to App Store Connect from this step yet.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
                 ForEach(saves, id: \.id) { item in
@@ -27,7 +27,10 @@ struct ReleaseRecentSaves: View {
             }
         }
         // A running Save advances in the background, so the list is read again while it shows.
-        .task(id: app.id) { await StorebenchPolling.repeating(every: .seconds(3), while: { true }) { await load() } }
+        .task(id: app.id) {
+            await StorebenchPolling.repeating(every: .seconds(3), stamp: { try? await session?.savedStateToken() }, working: { saves.map { $0.contains { $0.state == "running" } } != false },
+                                              while: { true }) { await load() }
+        }
         .pageRefreshParticipant("recent-saves/" + account.id + "/" + app.id, state: { .init() }, refresh: { await load() })
     }
 

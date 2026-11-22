@@ -98,17 +98,17 @@ extension WorkspaceSession {
     }
 
     /// Reads a card font file. Only fonts used by this app's saved card sets can be read.
-    public func mediaCardFont(accountId: String, appId: String, hash: String) throws -> Data {
+    public func mediaCardFont(accountId: String, appId: String, hash: String) async throws -> Data {
         let used = try mediaCardSets(accountId: accountId, appId: appId).flatMap { $0.set.cards.compactMap(\.style.fontFile?.hash) }
         guard hash.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil, used.contains(hash) else { throw MediaCardFailure.missing }
-        return try media.read(hash)
+        return try await mediaBytes(hash)
     }
 
     /// Reads a card screenshot. Only screenshots used by this app's saved card sets can be read.
-    public func mediaCardScreenshot(accountId: String, appId: String, hash: String) throws -> Data {
+    public func mediaCardScreenshot(accountId: String, appId: String, hash: String) async throws -> Data {
         let used = try mediaCardSets(accountId: accountId, appId: appId).flatMap { $0.set.cards.compactMap(\.screenshot?.hash) }
         guard hash.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil, used.contains(hash) else { throw MediaCardFailure.missing }
-        return try media.read(hash)
+        return try await mediaBytes(hash)
     }
 }
 

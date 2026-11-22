@@ -89,6 +89,28 @@ import Testing
         #expect(versions.count == 1); #expect(versions.first?.state == "READY_FOR_DISTRIBUTION")
         #expect(try await documents(session) == before); #expect(apple.lock.withLock { apple.writes.isEmpty })
     }
+    /// After a sync to the record being prepared, the live record differs from it. The check compares the editable record,
+    /// which Sync to Apple writes, so it never stays unverified because the live record still has the old text.
+    @Test func appInformationIsComparedWithTheRecordBeingPrepared() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let account = try #require(try await session.accounts().first), plan = try await plan(session, account: account), apple = apple(), host = "readiness-editable-info.appstoreconnect.test"
+        StubProtocol.handle(host) { request in
+            if request.url?.path == "/v1/apps/1000000001/appInfos" {
+                return apple.page([
+                    ["type": "appInfos", "id": "info-1", "attributes": ["state": "PREPARE_FOR_SUBMISSION", "appStoreState": "PREPARE_FOR_SUBMISSION"], "relationships": ["app": ["data": ["type": "apps", "id": "1000000001"]]]],
+                    ["type": "appInfos", "id": "info-live", "attributes": ["state": "READY_FOR_DISTRIBUTION"], "relationships": ["app": ["data": ["type": "apps", "id": "1000000001"]]]]
+                ])
+            }
+            if request.url?.path == "/v1/appInfos/info-live/appInfoLocalizations" {
+                return apple.page([["type": "appInfoLocalizations", "id": "info-live-locale", "attributes": ["locale": "en-US", "name": "Sample App", "subtitle": "Older synthetic subtitle"],
+                    "relationships": ["appInfo": ["data": ["type": "appInfos", "id": "info-live"]]]]])
+            }
+            return response(request, apple: apple)
+        }
+        let value = try await session.releaseReadiness(account: account, appId: appId, revisionId: revisionId, planToken: plan.token, client: try PublishingTests().client(account, host: host))
+        #expect(try state(value, "apple-info:en-US") != .unknown)
+        #expect(!StubProtocol.requests(host).contains { $0.url?.path == "/v1/appInfos/info-live/appInfoLocalizations" }, "The live record is not compared")
+    }
     @Test func completeOwnedReadsKeepEverySavedDocumentAndAppleWriteHistoryUnchanged() async throws {
         let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
         let account = try #require(try await session.accounts().first), plan = try await plan(session, account: account), apple = apple(), host = "readiness-complete.appstoreconnect.test"

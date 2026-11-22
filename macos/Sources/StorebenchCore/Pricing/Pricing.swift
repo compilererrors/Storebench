@@ -77,6 +77,22 @@ public enum PricingMath {
         return Decimal(string: text, locale: posix)
     }
     public static func text(_ value: Decimal) -> String { NSDecimalNumber(decimal: value).stringValue }
+    /// A calculated amount as people read it: rounded to the currency's usual decimals, such as 2.30 USD or 349 JPY.
+    public static func shown(_ amount: String, currency: String) -> String {
+        guard var value = decimal(amount) else { return amount }
+        let digits = currencyDigits(currency)
+        var rounded = Decimal(); NSDecimalRound(&rounded, &value, digits, .plain)
+        let format = NumberFormatter()
+        format.locale = Locale(identifier: "en_US_POSIX"); format.numberStyle = .decimal; format.usesGroupingSeparator = false
+        format.minimumFractionDigits = digits; format.maximumFractionDigits = digits
+        return format.string(from: NSDecimalNumber(decimal: rounded)) ?? text(rounded)
+    }
+    static func currencyDigits(_ currency: String) -> Int {
+        guard currency.range(of: "^[A-Z]{3}$", options: .regularExpression) != nil else { return 2 }
+        let format = NumberFormatter()
+        format.locale = Locale(identifier: "en_US_POSIX"); format.numberStyle = .currency; format.currencyCode = currency
+        return min(3, max(0, format.maximumFractionDigits))
+    }
 
     /// A positive guide price with up to four decimals.
     public static func desired(_ value: String) throws -> Decimal {

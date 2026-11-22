@@ -14,11 +14,11 @@ struct SecuritySettings: View {
 
     var body: some View {
         StorebenchForm {
-            StorebenchFormSection("Encrypted local storage", help: "storage") {
+            StorebenchFormSection("Encrypted Local Storage", help: "storage") {
                 Text(model.writer.usesPasswordFile ? "Your database key, Apple API keys, Apple ID sign-ins, reporting tokens and backup passphrases are encrypted with your Storebench password. Storebench does not access Keychain." : lock == .password ? "Storebench asks for its password each time it starts. Credentials are stored in your Mac Keychain." : "The encryption key and credentials are kept in your Mac Keychain.").foregroundStyle(StorebenchTheme.muted)
-                if lock == .password { StorebenchSecureField("Current password", text: $current) }
+                if lock == .password { StorebenchSecureField("Current Password", text: $current) }
                 StorebenchSecureField(lock == .password ? "New password" : "Storebench password", text: $password)
-                StorebenchSecureField("Repeat new password", text: $repeated)
+                StorebenchSecureField("Repeat New Password", text: $repeated)
                 Text("Passwords need at least 12 characters and cannot be recovered. Changing the lock signs out open sessions.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
                 StorebenchFeedback(text: status, height: 40)
                 if working || (12...256).contains(password.utf16.count) && password == repeated || lock == .password && model.writer.usesKeychain && !current.isEmpty {
@@ -47,7 +47,7 @@ struct SecuritySettings: View {
                 }
                 .settingsSearchAnchor("security-authentication")
                 if model.storageMode == .keychain {
-                StorebenchFormSection("Mac authentication") {
+                StorebenchFormSection("Mac Authentication") {
                     Text("Require Mac authentication before Storebench opens Keychain-backed storage. Touch ID uses your Mac login password as a fallback. macOS Keychain permission is separate.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
                     StorebenchFormFooter {
                         Button(model.requiresDeviceAuthentication ? "Turn Off…" : "Turn On…") {
@@ -55,7 +55,7 @@ struct SecuritySettings: View {
                         }.help(model.requiresDeviceAuthentication ? "Turn Off Mac Authentication…" : "Require Touch ID or Mac Password…").accessibilityLabel(model.requiresDeviceAuthentication ? "Turn Off Mac Authentication…" : "Require Touch ID or Mac Password…")
                     }
                 }
-                StorebenchFormSection("Password storage") {
+                StorebenchFormSection("Password Storage") {
                     Text("Copy saved data and credentials to password-protected storage. Storebench stops using Keychain after the copy.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
                     StorebenchFormFooter {
                         Button("Use Password…") {

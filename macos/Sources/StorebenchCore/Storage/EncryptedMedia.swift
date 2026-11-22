@@ -63,18 +63,11 @@ public final class EncryptedMediaStore: @unchecked Sendable {
         var salt = Data(count: 16), prefix = Data(count: 8)
         guard salt.withUnsafeMutableBytes({ SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!) }) == errSecSuccess,
               prefix.withUnsafeMutableBytes({ SecRandomCopyBytes(kSecRandomDefault, 8, $0.baseAddress!) }) == errSecSuccess else { throw Failure.invalid }
-        let secret = try keys(salt), hash = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
-        var body = Data(), index: UInt32 = 0, offset = bytes.startIndex
-        while offset < bytes.endIndex {
-            let end = min(offset + Self.chunkLength, bytes.endIndex), plain = bytes[offset..<end]
-            let sealed = try AES.GCM.seal(plain, using: secret.encryption, nonce: Self.nonce(prefix, index), authenticating: Self.associated(index, plain.count))
-            body += sealed.ciphertext; body += sealed.tag
-            index += 1; offset = end
-        }
+        let secret = try keys(salt), digest = Data(SHA256.hash(data: bytes)), hash = digest.map { String(format: "%02x", $0) }.joined()
         var header = Self.magic + salt + prefix
         var metadata = Data()
         withUnsafeBytes(of: UInt64(bytes.count).bigEndian) { metadata.append(contentsOf: $0) }
-        metadata += Data(SHA256.hash(data: bytes))
+        metadata += digest
         let sealedHeader = try AES.GCM.seal(metadata, using: secret.authentication, nonce: Self.nonce(prefix, 0xffff_ffff), authenticating: header)
         header += sealedHeader.ciphertext; header += sealedHeader.tag
 
@@ -82,17 +75,51 @@ public final class EncryptedMediaStore: @unchecked Sendable {
         defer { unlink(temporary.path) }
         let descriptor = open(temporary.path, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW | O_CLOEXEC, 0o600)
         guard descriptor >= 0 else { throw Failure.invalid }
-        let file = header + body
-        let written = file.withUnsafeBytes { Darwin.write(descriptor, $0.baseAddress, $0.count) }
-        let synced = fsync(descriptor); close(descriptor)
-        guard written == file.count, synced == 0 else { throw Failure.invalid }
+        var closed = false
+        defer { if !closed { close(descriptor) } }
+        // Each chunk is encrypted and written in turn, so only one encrypted chunk is held beside the bytes being saved.
+        try Self.append(header, to: descriptor)
+        var index: UInt32 = 0, offset = bytes.startIndex
+        while offset < bytes.endIndex {
+            let end = min(offset + Self.chunkLength, bytes.endIndex), plain = bytes[offset..<end]
+            let sealed = try AES.GCM.seal(plain, using: secret.encryption, nonce: Self.nonce(prefix, index), authenticating: Self.associated(index, plain.count))
+            try Self.append(sealed.ciphertext, to: descriptor); try Self.append(sealed.tag, to: descriptor)
+            index += 1; offset = end
+        }
+        guard Self.synced(descriptor) else { throw Failure.invalid }
+        close(descriptor); closed = true
         let destination = try fileURL(hash)
         if link(temporary.path, destination.path) != 0 {
             guard errno == EEXIST else { throw Failure.invalid }
             // A content-addressed target must already decrypt to the same bytes.
             guard try read(hash) == bytes else { throw Failure.invalid }
-        }
+        } else { Self.syncDirectory(directory) }
         return (hash, bytes.count)
+    }
+
+    /// Writes all of `data` at the descriptor's position.
+    static func append(_ data: Data, to descriptor: Int32) throws {
+        try data.withUnsafeBytes { buffer in
+            var done = 0
+            while done < buffer.count {
+                let written = Darwin.write(descriptor, buffer.baseAddress!.advanced(by: done), buffer.count - done)
+                if written < 0, errno == EINTR { continue }
+                guard written > 0 else { throw Failure.invalid }
+                done += written
+            }
+        }
+    }
+
+    /// Asks the disk to keep this file's bytes ahead of everything written after them, which an ordinary sync on macOS does not
+    /// promise. A volume without that barrier gets the ordinary sync.
+    static func synced(_ descriptor: Int32) -> Bool { fcntl(descriptor, F_BARRIERFSYNC) == 0 || fsync(descriptor) == 0 }
+
+    /// Saves the folder's new entry, so a file just linked is still found by its name after a power loss.
+    /// The file itself is already complete, so a failure here is not a failed write.
+    static func syncDirectory(_ directory: URL) {
+        let descriptor = open(directory.path, O_RDONLY | O_CLOEXEC)
+        guard descriptor >= 0 else { return }
+        _ = fsync(descriptor); close(descriptor)
     }
 
     struct Header { let length: Int; let hash: String; let prefix: Data; let encryption: SymmetricKey }
@@ -225,13 +252,13 @@ extension EncryptedMediaStore {
         let sealedHeader = try AES.GCM.seal(metadata, using: secret.authentication, nonce: Self.nonce(prefix, 0xffff_ffff), authenticating: header)
         header += sealedHeader.ciphertext; header += sealedHeader.tag
         try put(header, at: 0)
-        guard fsync(descriptor) == 0 else { throw Failure.invalid }
+        guard Self.synced(descriptor) else { throw Failure.invalid }
         close(descriptor); closed = true
         let destination = try fileURL(hash)
         if link(temporary.path, destination.path) != 0 {
             guard errno == EEXIST, try self.metadata(hash) == total else { throw Failure.invalid }
             try stream(hash) { _ in }
-        }
+        } else { Self.syncDirectory(directory) }
         return (hash, total)
     }
 }

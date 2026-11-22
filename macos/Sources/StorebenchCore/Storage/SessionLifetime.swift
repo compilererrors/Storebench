@@ -15,7 +15,19 @@ public enum SessionFailure: Error, Equatable {
 /// elapsed time never cancels a lease or proves that its owner finished.
 final class SessionLifetime: @unchecked Sendable {
     enum Phase: Sendable { case open, closing, closed }
-    enum Kind: Sendable { case report, publishing, transfer, connection, ai }
+    enum Kind: Sendable {
+        case report, publishing, transfer, connection, ai
+        /// What the work is, for the line shown while the session waits for it to finish.
+        var waitingFor: String {
+            switch self {
+            case .publishing: "Sending approved changes to App Store Connect"
+            case .transfer: "Saving or exporting files"
+            case .report: "Stopping downloads from App Store Connect"
+            case .connection: "Checking an Apple account connection"
+            case .ai: "Stopping AI requests"
+            }
+        }
+    }
     final class Lease: @unchecked Sendable {
         let id = UUID()
         let owner: SessionLifetime
@@ -30,6 +42,11 @@ final class SessionLifetime: @unchecked Sendable {
     private var terminalFailure: SessionFailure?
     var status: Phase { lock.withLock { phase } }
     var activeCount: Int { lock.withLock { leases.count } }
+    /// The kinds of admitted work still running, each once, in a fixed order.
+    var activeKinds: [Kind] {
+        let running = lock.withLock { Set(leases.values) }
+        return [Kind.publishing, .transfer, .report, .connection, .ai].filter(running.contains)
+    }
     var closeFailure: SessionFailure? { lock.withLock { terminalFailure } }
 
     func require(_ lease: Lease? = SessionContext.lease) throws {

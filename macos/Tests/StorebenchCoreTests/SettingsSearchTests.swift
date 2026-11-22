@@ -5,6 +5,7 @@ import Testing
 struct SettingsSearchTests {
     init() throws { _ = try TestIsolation.require() }
     @Test func settingsCanBeFoundByTheirLabelsAndEverydayTermsAcrossPanes() throws {
+        #expect(SettingsSearch.results(for: "screenshot cards").first?.id == "ai-cards")
         #expect(SettingsSearch.results(for: "minimize release").first?.id == "general-release-cards")
         #expect(SettingsSearch.results(for: "MINIMERA").first?.id == "general-release-cards")
         #expect(SettingsSearch.results(for: "memory budget").first?.id == "general-performance")

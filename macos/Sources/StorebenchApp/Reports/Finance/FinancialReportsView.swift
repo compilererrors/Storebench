@@ -81,15 +81,15 @@ import UniformTypeIdentifiers
     }
 
     private var downloadCard: some View {
-        Card(title: "Download financial reports", subtitle: "Apple's fiscal periods differ from calendar months. Downloaded reports are reviewed before saving locally.", help: "finance") {
+        Card(title: "Download Financial Reports", subtitle: "Apple's fiscal periods differ from calendar months. Downloaded reports are reviewed before saving locally.", help: "finance") {
             if review == nil {
-            StorebenchCardSection(title: "Fiscal period and scope") {
+            StorebenchCardSection(title: "Fiscal Period and Scope") {
                 StorebenchFormGrid {
             StorebenchStepper("Apple fiscal year: \(fiscalYear)", value: $fiscalYear, in: 2001...(Calendar(identifier: .gregorian).component(.year, from: Date()) + 1))
-            StorebenchPicker("Ending fiscal period", selection: $fiscalPeriod) { selectionOptions(1...12) { SelectionOption("Period \($0)", value: $0) } }
+            StorebenchPicker("Ending Fiscal Period", selection: $fiscalPeriod) { selectionOptions(1...12) { SelectionOption("Period \($0)", value: $0) } }
                 .reportFocus("finance-download-period", available: !unavailable && review == nil, focused: $periodFocused)
             PeriodDaysField(title: "Download fiscal periods", value: periods.daysBinding(.financePeriods, session: session), maximum: 24, presets: [1, 3, 6, 12, 24], fiscal: true)
-            StorebenchPicker("Report region", selection: $region) { selectionOptions(FinancialReports.downloadRegions) { SelectionOption(FinancialReports.regionName($0), value: $0) } }
+            StorebenchPicker("Report Region", selection: $region) { selectionOptions(FinancialReports.downloadRegions) { SelectionOption(FinancialReports.regionName($0), value: $0) } }
                 }.storebenchWorking(unavailable)
             }
             if !reportingReady { Text("Set up the Reporter connection above to download reports, or use a report file.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true) }
@@ -145,7 +145,7 @@ import UniformTypeIdentifiers
     }
 
     private var importCard: some View {
-        Card(title: "Import financial reports", subtitle: "Complete Apple files or Storebench JSON; no vendor number or key is needed for file import.", help: "imports") {
+        Card(title: "Import Financial Reports", subtitle: "Complete Apple files or Storebench JSON; no vendor number or key is needed for file import.", help: "imports") {
             StorebenchActionGroup { fileActions }
             if chosen.isEmpty { Text("No files selected").font(.sbCallout).frame(height: 44) }
             ForEach(Array(chosen.enumerated()), id: \.offset) { index, url in
@@ -181,7 +181,7 @@ import UniformTypeIdentifiers
     private func reviewCard(_ value: Review) -> some View {
         let changes = value.changes, pages = max(1, (changes.count + pageSize - 1) / pageSize)
         let visible = Array(changes.dropFirst((min(reviewPage, pages) - 1) * pageSize).prefix(pageSize))
-        return Card(title: "Review financial reports", subtitle: "Compare each fiscal period and report scope before saving. Other periods and datasets are kept.") {
+        return Card(title: "Review Financial Reports", subtitle: "Compare each fiscal period and report scope before saving. Other periods and datasets are kept.") {
             StorebenchResultsPerPage(size: $pageSize).onChange(of: pageSize) { reviewPage = 1 }
             ForEach(visible) { change in
                 VStack(alignment: .leading, spacing: 6) {
@@ -209,7 +209,7 @@ import UniformTypeIdentifiers
     }
 
     private func managementCard(_ value: FinancialFileState) -> some View {
-        Card(title: "Saved financial periods", subtitle: "Export original source rows or the complete JSON history. Removal affects only local financial reports.") {
+        Card(title: "Saved Financial Periods", subtitle: "Export original source rows or the complete JSON history. Removal affects only local financial reports.") {
             DisclosureGroup("Manage saved reports (\(value.reports.count))") {
                 StorebenchActionGroup { Button("Export History JSON") { export(nil, format: .historyJson) }.help("Export Complete History · JSON").accessibilityLabel("Export Complete History · JSON").storebenchWorking(unavailable) }
                 StorebenchCollection(items: Array(value.reports.reversed()).map { StorebenchCollectionEntry(id: $0.key, value: $0) }, title: { entry in let record = entry.value; return record.beginDate + " – " + record.endDate + " · " + FinancialReports.regionName(record.region) }, empty: "No saved financial periods yet. Download financial reports to save a period.") { entry in

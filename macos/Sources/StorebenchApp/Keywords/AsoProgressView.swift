@@ -63,10 +63,10 @@ struct AsoProgressView: View {
     var body: some View {
         ScrollViewReader { reader in
             VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
-                Card(title: "Version comparison", subtitle: "Only released versions are included. Dates mark when Storebench observed the released listing, not its creation or exact release. Each listing change compared with the \(days) days before it. Full windows compare totals; gaps compare the average per reported day. Missing reports are not zero.", help: "aso-progress") {
+                Card(title: "Version Comparison", subtitle: "Only released versions are included. Dates mark when Storebench observed the released listing, not its creation or exact release. Each listing change compared with the \(days) days before it. Full windows compare totals; gaps compare the average per reported day. Missing reports are not zero.", help: "aso-progress") {
                     StorebenchFormGrid(maximumColumns: 3) {
                         StorebenchPicker("Language", selection: $locale) { SelectionOption("All languages", value: ""); selectionOptions(locales) { SelectionOption(StoreLocales.name($0), value: $0) } }
-                        StorebenchPicker("Listing fields", selection: $fieldFilter) { selectionOptions(AsoProgress.FieldFilter.allCases) { SelectionOption($0.title, value: $0) } }
+                        StorebenchPicker("Listing Fields", selection: $fieldFilter) { selectionOptions(AsoProgress.FieldFilter.allCases) { SelectionOption($0.title, value: $0) } }
                         PeriodDaysField(title: "Compare days before and after", value: choices.daysBinding(.asoCompare, session: session))
                     }
                     PeriodRangeField(choice: choices.rangeBinding(.asoProgressRange, session: session), latest: latest)
@@ -184,7 +184,7 @@ struct AsoProgressView: View {
     }
     /// Your own dated notes, such as a campaign or a price change, shown on the chart and beside comparisons they fall inside.
     private var notesCard: some View {
-        Card(title: "Your chart notes", subtitle: "Mark what else happened, such as a campaign, a feature or a price change. Notes show on the chart and beside comparisons whose window they fall inside. They stay on this Mac.") {
+        Card(title: "Your Chart Notes", subtitle: "Mark what else happened, such as a campaign, a feature or a price change. Notes show on the chart and beside comparisons whose window they fall inside. They stay on this Mac.") {
             StorebenchFormGrid {
                 StorebenchDateField("Date", selection: $noteDate, displayedComponents: .date)
                 StorebenchTextField("Note", text: $noteText, hint: "Up to \(ChartNotes.textLimit) characters, such as Spring campaign started.")

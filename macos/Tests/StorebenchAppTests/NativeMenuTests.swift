@@ -129,8 +129,9 @@ import Testing
         let choices = Choices(), window = self.window(PickerExample(choices: choices)); defer { window.orderOut(nil); window.close() }
         try await settle(window)
         let root = try #require(window.contentView), popup = try #require(descendants(root).compactMap { $0 as? NSPopUpButton }.first)
-        #expect(!popup.isTransparent && popup.isBordered && popup.focusRingType == .default && !popup.pullsDown)
-        #expect(window.makeFirstResponder(popup) && window.firstResponder === popup, "The native popup retains its system focus ring and keyboard focus target")
+        // The native pop-up keeps its menu and keyboard focus inside the shared field, which draws the border and focus ring.
+        #expect(!popup.isTransparent && !popup.isBordered && popup.focusRingType == .none && !popup.pullsDown)
+        #expect(window.makeFirstResponder(popup) && window.firstResponder === popup, "The native popup remains the keyboard focus target")
         #expect(popup.titleOfSelectedItem == "Synthetic First" && popup.toolTip?.contains("Synthetic First") == true)
         let long = String(repeating: "Synthetic model detail ", count: 12)
         choices.options = [SelectionOption(long, value: "first")]

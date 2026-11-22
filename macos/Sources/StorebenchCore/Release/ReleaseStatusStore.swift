@@ -14,6 +14,16 @@ extension ReleaseReadiness.Step {
         let territories = json["territories"].flatMap { $0 == .null ? nil : $0 }
         if let territories { guard case .object = territories else { throw ReleaseReadiness.Failure.invalid } }
         self.init(id: id, label: label, detail: detail, href: href, action: action, state: state, territories: territories, guideHref: try text("guideHref", required: false))
+        // Which fields differ and why, saved beside the step so a restored status shows the same rows before Apple is read again.
+        // A status saved before issues were kept has none; malformed issues make the whole status unusable, like any other field.
+        if let saved = json["issues"], saved != .null {
+            guard case .array(let rows) = saved, rows.count <= 2_000 else { throw ReleaseReadiness.Failure.invalid }
+            issues = try rows.map { row in
+                guard let field = row["field"]?.text, let message = row["message"]?.text, let section = row["section"]?.text,
+                      field.utf16.count <= 256, message.utf16.count <= 8_192, section.utf16.count <= 256 else { throw ReleaseReadiness.Failure.invalid }
+                return ReleaseMaterial.Issue(field: field, message: message, section: section)
+            }
+        }
     }
 }
 
@@ -22,7 +32,10 @@ extension ReleaseReadinessSnapshot {
     func json(checkedAt: Date) -> JSONText {
         .object([("schemaVersion", .number(Double(Self.schemaVersion))), ("accountId", .string(scope.accountId)), ("appId", .string(scope.appId)), ("planToken", .string(plan.token)),
                  ("checkedAt", .string(Releases.iso.string(from: checkedAt))), ("materialSignature", .string(materialSignature)),
-                 ("targetVersionId", targetVersionId.map(JSONText.string) ?? .null), ("targetState", targetState.map(JSONText.string) ?? .null), ("steps", .array(steps.map(\.json))),
+                 ("targetVersionId", targetVersionId.map(JSONText.string) ?? .null), ("targetState", targetState.map(JSONText.string) ?? .null), ("steps", .array(steps.map { step in
+                    guard case .object(let fields) = step.json, !step.issues.isEmpty else { return step.json }
+                    return .object(fields + [("issues", .array(step.issues.map(\.json)))])
+                 })),
                  ("parts", .number(Double(parts.rawValue))), ("observations", observations)])
     }
     /// A saved status for exactly this account, app and saved plan; anything else, or anything malformed, is no status.

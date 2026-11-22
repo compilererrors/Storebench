@@ -33,9 +33,14 @@ public final class EncryptedDocumentStore {
             let hex = key.map { String(format: "%02x", $0) }.joined()
             try execute("PRAGMA key = \"x'\(hex)'\"")
             try execute("PRAGMA cipher_memory_security = ON; PRAGMA temp_store = MEMORY; PRAGMA trusted_schema = OFF; PRAGMA foreign_keys = ON")
-            try execute(self.writable ? "PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000" : "PRAGMA query_only = ON")
+            // A checkpoint moves committed pages into the database file. It waits for the disk to really hold them, which an ordinary
+            // sync on macOS does not promise, so a power loss cannot leave the file itself half written. Commits keep the ordinary sync.
+            try execute(self.writable ? "PRAGMA synchronous = FULL; PRAGMA checkpoint_fullfsync = ON; PRAGMA busy_timeout = 5000" : "PRAGMA query_only = ON; PRAGMA busy_timeout = 5000")
             guard try scalar("PRAGMA cipher_status") == "1" else { throw Failure.encryptionInactive }
             guard (try? scalar("SELECT count(*) FROM sqlite_master")) != nil else { throw Failure.wrongKey }
+            // Decrypted pages stay in memory between reads, and the write-ahead log is cut back after a large write.
+            try execute("PRAGMA cache_size = -8192")
+            if self.writable { _ = try scalar("PRAGMA journal_size_limit = 67108864") }
             if create {
                 guard let version = try scalar("PRAGMA user_version"), version == "0" || version == "1" else { throw Failure.query("Unsupported database schema version.") }
                 try execute("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL")
@@ -80,6 +85,42 @@ public final class EncryptedDocumentStore {
         guard let external = try scalar("PRAGMA data_version"), let local = try scalar("SELECT total_changes()").flatMap(Int.init) else { throw Failure.cannotOpen }
         return external + ":" + String(local - unstampedChanges)
     }
+    /// How much of the database file holds no data, in bytes, and the file's whole size.
+    func unusedRoom() throws -> (unused: Int, total: Int) {
+        guard let free = try scalar("PRAGMA freelist_count").flatMap(Int.init), let pages = try scalar("PRAGMA page_count").flatMap(Int.init),
+              let size = try scalar("PRAGMA page_size").flatMap(Int.init) else { throw Failure.cannotOpen }
+        return (free * size, pages * size)
+    }
+    /// Rewrites the database without its unused pages. The file is replaced only when the whole rewrite succeeded.
+    func compact() throws {
+        guard writable else { throw Failure.query("The store is read-only.") }
+        try execute("VACUUM")
+    }
+    /// Changes when another connection commits to this database; this connection's own writes leave it unchanged.
+    func externalStamp() throws -> String {
+        guard let external = try scalar("PRAGMA data_version") else { throw Failure.cannotOpen }
+        return external
+    }
+    /// How many times this connection wrote or removed a document in each namespace, counted when the write is asked for.
+    private var namespaceWrites: [String: Int] = [:]
+    /// Changes when a document in `namespace` may have been written or removed: by this connection in that namespace, or by any
+    /// other connection anywhere in the database. While it stays the same, every document in the namespace is exactly as it was,
+    /// also after a delete and a new insert under the same key.
+    func namespaceStamp(_ namespace: String) throws -> String {
+        try externalStamp() + ":" + String(namespaceWrites[namespace, default: 0])
+    }
+    /// A document's revision without reading its payload, or nil when the key is free.
+    public func revision(namespace: String, key: String) throws -> Int? {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT revision FROM documents WHERE namespace = ? AND document_key = ?", -1, &statement, nil) == SQLITE_OK else { throw Failure.query(String(cString: sqlite3_errmsg(db))) }
+        defer { sqlite3_finalize(statement) }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        sqlite3_bind_text(statement, 1, namespace, -1, transient); sqlite3_bind_text(statement, 2, key, -1, transient)
+        let step = sqlite3_step(statement)
+        if step == SQLITE_DONE { return nil }
+        guard step == SQLITE_ROW else { throw Failure.query(String(cString: sqlite3_errmsg(db))) }
+        return Int(sqlite3_column_int64(statement, 0))
+    }
     /// Rows this connection changed in writes that no cached screen data depends on, such as saved screen reads.
     private var unstampedChanges = 0
     /// Runs writes that cached library and pricing data do not depend on, so they leave `changeStamp` unchanged.
@@ -111,16 +152,21 @@ public final class EncryptedDocumentStore {
     }
 
     /// Documents whose key starts with `prefix`, such as every saved revision of one app.
+    /// The key range lets the index find them without visiting the namespace's other keys: no stored key has the byte 0xFF,
+    /// which UTF-8 never uses, so every key with the prefix sorts before the prefix followed by that byte.
     public func documents(namespace: String, prefix: String) throws -> [Document] {
-        try rows("SELECT document_key, revision, payload FROM documents WHERE namespace = ? AND substr(document_key, 1, length(?)) = ? ORDER BY document_key", [namespace, prefix, prefix])
+        try rows("SELECT document_key, revision, payload FROM documents WHERE namespace = ? AND document_key >= ? AND document_key < ? AND substr(document_key, 1, length(?)) = ? ORDER BY document_key",
+                 [.text(namespace), .text(prefix), .textBytes(Array(prefix.utf8) + [0xFF]), .text(prefix), .text(prefix)])
     }
 
     /// Inserts a document only when its key is free, as content-addressed bucket writes require.
     public func insertIfAbsent(namespace: String, key: String, json: Data) throws {
+        namespaceWrites[namespace, default: 0] += 1
         try run("INSERT OR IGNORE INTO documents (namespace, document_key, revision, payload) VALUES (?, ?, 1, ?)", [.text(namespace), .text(key), .blob(json)])
     }
 
     public func delete(namespace: String, key: String) throws {
+        namespaceWrites[namespace, default: 0] += 1
         try run("DELETE FROM documents WHERE namespace = ? AND document_key = ?", [.text(namespace), .text(key)])
     }
 
@@ -133,11 +179,11 @@ public final class EncryptedDocumentStore {
             for write in try change({ try self.document(namespace: $0, key: $1) }) {
                 switch write {
                 case .put(let namespace, let key, let json):
-                    if try document(namespace: namespace, key: key) != nil {
-                        try run("UPDATE documents SET revision = revision + 1, payload = ? WHERE namespace = ? AND document_key = ?", [.blob(json), .text(namespace), .text(key)])
-                    } else {
-                        try run("INSERT INTO documents (namespace, document_key, revision, payload) VALUES (?, ?, 1, ?)", [.text(namespace), .text(key), .blob(json)])
-                    }
+                    namespaceWrites[namespace, default: 0] += 1
+                    // One statement inserts the document at revision 1 or replaces its payload and adds one to its revision,
+                    // without reading the payload it replaces.
+                    try run("INSERT INTO documents (namespace, document_key, revision, payload) VALUES (?, ?, 1, ?) ON CONFLICT (namespace, document_key) DO UPDATE SET revision = revision + 1, payload = excluded.payload",
+                            [.text(namespace), .text(key), .blob(json)])
                 case .delete(let namespace, let key): try delete(namespace: namespace, key: key)
                 }
             }
@@ -145,7 +191,11 @@ public final class EncryptedDocumentStore {
         } catch { try? execute("ROLLBACK"); throw error }
     }
 
-    enum Value { case text(String), blob(Data) }
+    enum Value {
+        case text(String), blob(Data)
+        /// Text given as bytes, for a bound that is not itself valid UTF-8.
+        case textBytes([UInt8])
+    }
 
     private func run(_ sql: String, _ arguments: [Value]) throws {
         guard writable else { throw Failure.query("The store is read-only.") }
@@ -157,6 +207,7 @@ public final class EncryptedDocumentStore {
             switch argument {
             case .text(let value): sqlite3_bind_text(statement, Int32(index + 1), value, -1, transient)
             case .blob(let value): _ = value.withUnsafeBytes { sqlite3_bind_blob(statement, Int32(index + 1), $0.baseAddress, Int32(value.count), transient) }
+            case .textBytes(let value): _ = value.withUnsafeBytes { sqlite3_bind_text(statement, Int32(index + 1), $0.baseAddress?.assumingMemoryBound(to: CChar.self), Int32(value.count), transient) }
             }
         }
         guard sqlite3_step(statement) == SQLITE_DONE else { throw Failure.query(String(cString: sqlite3_errmsg(db))) }
@@ -176,12 +227,19 @@ public final class EncryptedDocumentStore {
         return String(cString: text)
     }
 
-    private func rows(_ sql: String, _ arguments: [String]) throws -> [Document] {
+    private func rows(_ sql: String, _ arguments: [String]) throws -> [Document] { try rows(sql, arguments.map(Value.text)) }
+    private func rows(_ sql: String, _ arguments: [Value]) throws -> [Document] {
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else { throw Failure.query(String(cString: sqlite3_errmsg(db))) }
         defer { sqlite3_finalize(statement) }
         let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-        for (index, argument) in arguments.enumerated() { sqlite3_bind_text(statement, Int32(index + 1), argument, -1, transient) }
+        for (index, argument) in arguments.enumerated() {
+            switch argument {
+            case .text(let value): sqlite3_bind_text(statement, Int32(index + 1), value, -1, transient)
+            case .blob(let value): _ = value.withUnsafeBytes { sqlite3_bind_blob(statement, Int32(index + 1), $0.baseAddress, Int32(value.count), transient) }
+            case .textBytes(let value): _ = value.withUnsafeBytes { sqlite3_bind_text(statement, Int32(index + 1), $0.baseAddress?.assumingMemoryBound(to: CChar.self), Int32(value.count), transient) }
+            }
+        }
         var result: [Document] = []
         while true {
             let step = sqlite3_step(statement)

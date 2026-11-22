@@ -10,6 +10,8 @@ struct CreateMediaView: View {
     var selectAIScreenshots: @MainActor (Int) async throws -> [SelectedFiles.File] = MediaFileSelection.screenshots
     var availableTranslationTargets: @MainActor (String, [String]) async -> [String] = ListingTranslation.translatableTargets
     @State private var creationMode: String?
+    /// The open step of Create Media; nil opens the first step the open card set still needs.
+    @State private var step: String?
     @State private var aiComposerId = UUID()
     @State private var aiInitialSource: JSONText?
     @State private var saved: [WorkspaceSession.SavedMediaCardSet] = []
@@ -35,7 +37,10 @@ struct CreateMediaView: View {
     @State private var preview: ScreenshotPreview?
     @State private var previewIssue = ""
     @State private var dragStart: MediaCard?
-    @State private var translateTo = ""
+    /// The languages the open card set is translated into, one after another, and each one's result.
+    @State private var translateInto = Set<String>()
+    @State private var translationQueue: [String] = []
+    @State private var translationResults: [(locale: String, text: String, failed: Bool)] = []
     @State private var translationService = ""
     @State private var translationModel = ""
     @State private var aiConnections: [AIConnection] = []
@@ -56,7 +61,7 @@ struct CreateMediaView: View {
     var body: some View {
         ScrollViewReader { scroll in
         VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
-            Card(title: "Create Media", subtitle: "Choose how to start your App Store cards.") {
+            Card(title: "Create Media", subtitle: "Choose how to start your App Store cards. The steps below take a card set from its display size to Release.", help: "media") {
                 StorebenchActionGroup {
                     Button("Create Cards") { chooseMode("manual") }
                     Button("Create AI Cards") { chooseMode("ai") }
@@ -64,23 +69,13 @@ struct CreateMediaView: View {
                         .help("Let AI propose editable cards from screenshots and a short brief")
                 }
             }
-            if creationMode == "ai" {
-                let composerId = aiComposerId
-                AICardsCreator(account: account, app: app, session: session, selectScreenshots: selectAIScreenshots, initialSource: aiInitialSource) { value in
-                    saved.removeAll { $0.set.id == value.set.id }; saved.insert(value, at: 0)
-                    guard creationMode == "ai", aiComposerId == composerId else { return }
-                    show(value); creationMode = "manual"
-                }.id("ai-composer")
-            }
-            if creationMode == "manual" {
-            if !loading { stepsCard }
-            setsCard
-            if let set = opened, let current, let index {
-                cardsCard(set)
-                editorCard(set, card: current, index: index).id("card-editor")
-                saveCard(set)
-                translateCard(set)
-            }
+            if loading { setsCard }
+            else {
+                StorebenchStepPage(title: "Create Media steps", steps: CreateMediaFlow.steps(opened).map {
+                    .init(id: $0.id.rawValue, number: $0.number, title: $0.title, purpose: $0.detail, complete: $0.done, current: $0.current, needed: $0.needed)
+                }, selected: $step, guide: .createMedia, commands: stepCommands) { id in
+                    stepContent(CreateMediaFlow.StepId(rawValue: id) ?? .cardSet)
+                }
             }
         }
         .onChange(of: creationMode) { scroll.scrollTo(creationMode == "ai" ? "ai-composer" : "card-editor", anchor: .top) }
@@ -89,9 +84,13 @@ struct CreateMediaView: View {
             let source = textLanguage, found = await availableTranslationTargets(source, StoreLocales.codes)
             guard !Task.isCancelled, source == textLanguage else { return }
             translationTargets = found
-            if translationService.isEmpty, !found.contains(translateTo) { translateTo = found.first ?? "" }
+            if translationService.isEmpty { translateInto = translateInto.intersection(found) }
         }
-        .listingTranslation(translation) { request, translate in await translateSet(request, translate) } finished: { translation = nil }
+        .listingTranslation(translation) { request, translate in
+            // Apple Translation's session runs on the main actor; the card translation calls it from there.
+            nonisolated(unsafe) let run = translate
+            await translateCopy(into: request.target) { texts, _ in try await run(texts) }
+        } finished: { translation = nil; translateNext() }
         .task(id: history?.set) {
             // Each change is saved on this Mac shortly after editing pauses.
             guard dirty, !stale else { return }
@@ -108,36 +107,105 @@ struct CreateMediaView: View {
         }
     }
 
+    /// Both ways of starting a card set are part of step 1, Display Size and Cards.
     private func chooseMode(_ mode: String, source: JSONText? = nil) {
-        guard creationMode != mode else { return }
-        let choose: @MainActor @Sendable () -> Void = { creationMode = mode; if mode == "ai" { aiInitialSource = source; aiComposerId = UUID() } }
+        guard creationMode != mode else { step = CreateMediaFlow.StepId.cardSet.rawValue; return }
+        let choose: @MainActor @Sendable () -> Void = {
+            creationMode = mode; step = CreateMediaFlow.StepId.cardSet.rawValue
+            if mode == "ai" { aiInitialSource = source; aiComposerId = UUID() }
+        }
         if let protection { protection.requestLeaving(choose) }
         else { Task { if dirty { guard await save() else { return } }; choose() } }
     }
 
     // MARK: Steps
 
-    /// Where the open card set stands: each step with a check once done, and the next one in plain words.
-    private var stepsCard: some View {
-        let steps = CreateMediaFlow.steps(opened)
-        return Card(title: "Create Media steps", subtitle: "\(steps.filter(\.done).count) of \(steps.count - 1) complete. Work from the top; each step shows what it still needs.", help: "media") {
-            ForEach(steps) { step in
-                StorebenchSetupStep(number: step.number, title: step.title, detail: step.needed.first ?? step.detail, done: step.done) {
-                    if step.id == .release, let openReleaseStep {
-                        StorebenchActionGroup {
-                            Button("Open Release Step 2") { openReleaseStep(ReleaseWizard.phase(containing: "local:") ?? "listing") }.buttonStyle(StorebenchButtonStyle(step.current ? .primary : .secondary))
-                                .help("Open Release step 2, Text and Screenshots, where screenshots are chosen from Asset Library")
-                        }
-                    }
-                }
+    /// The open step's cards. Steps after the first work on the open card set; each one shows only what that step changes.
+    @ViewBuilder private func stepContent(_ id: CreateMediaFlow.StepId) -> some View {
+        switch id {
+        case .cardSet:
+            if creationMode == "ai" { composer }
+            else {
+                setsCard
+                if let set = opened { cardsCard(set) }
             }
+        case .screenshots, .text:
+            if let set = opened, let current, let index {
+                cardsCard(set)
+                editorCard(set, card: current, index: index, focus: id).id("card-editor")
+            } else { firstStepCard }
+        case .save:
+            if let set = opened {
+                saveCard(set)
+                translateCard(set)
+            } else { firstStepCard }
+        case .release: releaseCard
         }
+    }
+
+    private var composer: some View {
+        let composerId = aiComposerId
+        return AICardsCreator(account: account, app: app, session: session, selectScreenshots: selectAIScreenshots, initialSource: aiInitialSource) { value in
+            saved.removeAll { $0.set.id == value.set.id }; saved.insert(value, at: 0)
+            guard creationMode == "ai", aiComposerId == composerId else { return }
+            // The new cards open in step 2 to be checked before they are saved.
+            show(value); creationMode = "manual"; step = CreateMediaFlow.StepId.screenshots.rawValue
+        }.id("ai-composer")
+    }
+
+    private var firstStepCard: some View {
+        Card(title: "Create a Card Set First", subtitle: "Create a card set in step 1, Display Size and Cards. This step then works on its cards.") { statusArea }
+    }
+
+    /// The last step happens in Release: the saved cards are chosen there and uploaded only after the review is approved.
+    private var releaseCard: some View {
+        let library = opened.map { $0.savedCards == nil ? "Not saved yet" : $0.savedCards == $0.cards ? "Saved" : "Changed since saved" } ?? "No card set"
+        return Card(title: "Add the Cards in Release", subtitle: "Release step 2, Text and Screenshots, chooses screenshots from Asset Library for each language and display size. Sync to Apple there opens the review, and nothing is uploaded before you approve it.") {
+            StorebenchFact(label: "Asset Library", value: library, done: library == "Saved")
+            Text(openReleaseStep == nil ? "Open this app to continue in Release." : "Open Release Step 2 saves changed cards to Asset Library first, then opens Release step 2.")
+                .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
+            statusArea
+        }
+    }
+
+    /// Save Draft on the steps that edit the card set, and the step's own command: Save All to Asset Library, or Open Release Step 2.
+    /// None of them contacts Apple.
+    private func stepCommands(_ id: String) -> [StorebenchStepCommand] {
+        guard let id = CreateMediaFlow.StepId(rawValue: id) else { return [] }
+        let missing = opened == nil ? "Create a card set in step 1 first." : nil
+        let reload = stale ? "A newer save of this card set exists. Choose Reload Card Set first." : nil
+        let saved = opened.map { $0.savedCards == $0.cards } ?? false
+        var commands: [StorebenchStepCommand] = []
+        if id != .release, opened != nil {
+            commands.append(.init(title: "Save Draft", running: "Saving…", busy: saving, unavailable: reload ?? (busy ? "Wait for the current task to finish." : dirty ? nil : "Every change is saved on this Mac."),
+                                  primary: false, help: "Save this card set on this Mac. Nothing is sent to Apple.", controlID: "media.save-draft") { Task { _ = await save() } })
+        }
+        if id == .save {
+            commands.append(.init(title: "Save All to Asset Library", running: "Saving…", busy: working || saving, unavailable: missing ?? reload, primary: !saved,
+                                  help: "Save every card as a PNG in Asset Library on this Mac. Nothing is uploaded yet.", controlID: "media.save-library") { Task { await saveToLibrary(all: true) } })
+        }
+        if id == .release, let openReleaseStep {
+            commands.append(.init(title: "Open Release Step 2", running: "Saving…", busy: working || saving, unavailable: missing ?? reload,
+                                  help: "Open Release step 2, Text and Screenshots, where screenshots are chosen from Asset Library", controlID: "media.open-release") {
+                Task {
+                    if !saved { guard await saveToLibrary(all: true) else { return } }
+                    openReleaseStep(ReleaseWizard.phase(containing: "local:") ?? "listing")
+                }
+            })
+        }
+        return commands
+    }
+
+    /// What the last command did, and Reload Card Set when another window saved the set; shown on every step.
+    @ViewBuilder private var statusArea: some View {
+        StorebenchFeedback(text: status, height: 48, error: statusError)
+        if stale { StorebenchActionGroup { Button("Reload Card Set") { Task { await reload() } } } }
     }
 
     // MARK: Card sets
 
     private var setsCard: some View {
-        Card(title: "Create Media", subtitle: "Make App Store screenshot cards from your app's screenshots: a background, a screenshot and short text. Card sets are saved on this Mac as you edit. Nothing is uploaded to Apple.", help: "media") {
+        Card(title: "Card Set", subtitle: "Make App Store screenshot cards from your app's screenshots: a background, a screenshot and short text. Card sets are saved on this Mac as you edit. Nothing is uploaded to Apple.", help: "media") {
             if loading { StorebenchLoadingStatus(message: "Opening card sets…", surface: false) }
             else {
                 if !saved.isEmpty, !creating {
@@ -159,8 +227,7 @@ struct CreateMediaView: View {
                     }.storebenchWorking(busy)
                 } else { newSetForm }
             }
-            StorebenchFeedback(text: status, height: 48, error: statusError)
-            if stale { StorebenchActionGroup { Button("Reload Card Set") { Task { await reload() } } } }
+            statusArea
         }
     }
 
@@ -221,7 +288,7 @@ struct CreateMediaView: View {
 
     // MARK: Editing one card
 
-    private func editorCard(_ set: MediaCardSet, card: MediaCard, index: Int) -> some View {
+    private func editorCard(_ set: MediaCardSet, card: MediaCard, index: Int, focus: CreateMediaFlow.StepId) -> some View {
         // The settings scroll on their own beside the preview, so the card stays in view while it changes.
         let height = min(760, max(480, viewportHeight - 220))
         return Card(title: "Card \(index + 1)", subtitle: "Changes appear in the preview and are saved on this Mac. Undo and Redo cover every change in this set. Scroll the settings to keep the preview in view.") {
@@ -238,8 +305,9 @@ struct CreateMediaView: View {
                     StorebenchTextSlot(text: previewIssue, height: 48, font: .sbCallout, color: StorebenchTheme.color("color-danger"), live: true)
                     StorebenchTextSlot(text: "Drag the screenshot to move the crop after zooming in. Arrow keys move it, + and − zoom, Delete removes the card.", height: 48, font: .sbCaption, color: StorebenchTheme.muted)
                 }
-                ScrollView(.vertical) { controls(card).padding(.trailing, StorebenchTheme.space(3)) }.frame(height: height)
+                ScrollView(.vertical) { controls(card, focus: focus).padding(.trailing, StorebenchTheme.space(3)) }.frame(height: height)
             }
+            statusArea
         }
     }
 
@@ -292,12 +360,17 @@ struct CreateMediaView: View {
         }
     }
 
-    private func controls(_ card: MediaCard) -> some View {
+    /// The settings of the open step: the card type and screenshot in step 2, the text and background in step 3.
+    private func controls(_ card: MediaCard, focus: CreateMediaFlow.StepId) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            StorebenchChoicePicker("Card Type", selection: field(\.layout, "layout"), options: MediaCard.Layout.allCases.map { ($0, $0.label) })
-            if card.layout.usesScreenshot { screenshotControls(card) }
-            textControls(card)
-            backgroundControls(card)
+            if focus == .screenshots {
+                StorebenchChoicePicker("Card Type", selection: field(\.layout, "layout"), options: MediaCard.Layout.allCases.map { ($0, $0.label) })
+                if card.layout.usesScreenshot { screenshotControls(card) }
+                else { Text("A Text Only card has no screenshot. Its text and background are set in step 3, Text and Background.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true) }
+            } else {
+                textControls(card)
+                backgroundControls(card)
+            }
             StorebenchActionGroup {
                 Button("Apply Style to All Cards") { if let id = current?.id { operate("style") { $0.applyStyle(from: id) }; status = "This card's colors, text style and screenshot frame now apply to every card in the set."; statusError = false } }
                     .help("Copy this card's background, text style and screenshot frame to every card. Text and screenshots stay.")
@@ -306,7 +379,7 @@ struct CreateMediaView: View {
     }
 
     private func screenshotControls(_ card: MediaCard) -> some View {
-        DisclosureGroup("Screenshot") {
+        StorebenchCardSection(title: "Screenshot") {
             VStack(alignment: .leading, spacing: 10) {
                 StorebenchTextSlot(text: card.screenshot.map { "\($0.name) · \($0.width) × \($0.height) px" } ?? "No screenshot chosen.", height: 34, font: .sbCallout, color: card.screenshot == nil ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted)
                 StorebenchActionGroup {
@@ -329,12 +402,12 @@ struct CreateMediaView: View {
                     StorebenchColorField("Border Color", selection: color(\.borderColor, "borderColor"))
                     StorebenchToggle("Shadow", isOn: style(\.shadow, "shadow"))
                 }
-            }.padding(.top, 8)
+            }
         }
     }
 
     private func textControls(_ card: MediaCard) -> some View {
-        DisclosureGroup("Text and Text Colors") {
+        StorebenchCardSection(title: "Text and Text Colors") {
             VStack(alignment: .leading, spacing: 10) {
                 StorebenchTextField("Title · \(card.title.utf16.count)/\(MediaCards.titleLimit)", text: text(\.title, MediaCards.titleLimit, lines: false), placeholder: "Plan your week in seconds")
                 StorebenchTextField("Subtitle · \(card.subtitle.utf16.count)/\(MediaCards.subtitleLimit)", text: text(\.subtitle, MediaCards.subtitleLimit, lines: false))
@@ -351,7 +424,7 @@ struct CreateMediaView: View {
                     StorebenchColorField("Subtitle Color", selection: color(\.subtitleColor, "subtitleColor"))
                     StorebenchColorField("Body Color", selection: color(\.bodyColor, "bodyColor"))
                 }
-            }.padding(.top, 8)
+            }
         }
     }
 
@@ -384,7 +457,7 @@ struct CreateMediaView: View {
     }
 
     private func backgroundControls(_ card: MediaCard) -> some View {
-        DisclosureGroup("Background and Colors") {
+        StorebenchCardSection(title: "Background and Colors") {
             VStack(alignment: .leading, spacing: 10) {
                 StorebenchChoicePicker("Fill", selection: style(\.fill, "fill"), options: MediaCardStyle.Fill.allCases.map { ($0, $0.label) })
                 StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 140) {
@@ -403,7 +476,7 @@ struct CreateMediaView: View {
                 }
                 if card.style.fill == .gradient { StorebenchSliderField(title: "Gradient angle (°)", value: style(\.angle, "angle"), range: 0...360, step: 1) }
                 StorebenchSliderField(title: "Margin (%)", value: style(\.margin, "margin"), range: 0...15, step: 0.5)
-            }.padding(.top, 8)
+            }
         }
     }
 
@@ -411,25 +484,12 @@ struct CreateMediaView: View {
 
     private func saveCard(_ set: MediaCardSet) -> some View {
         Card(title: "Use the Cards", subtitle: "Each card is an opaque \(set.width) × \(set.height) px PNG, the size Apple accepts for \(StoreLocales.displayTypeName(set.displayType)). Saving to Asset Library keeps them on this Mac. Then add them in Release step 2, Text and Screenshots, which uploads them after you approve.") {
-            Text(set.cards.count == 1 ? "Save All creates 1 PNG file." : "Save All creates \(set.cards.count) PNG files, one per card, in card order.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
+            Text(set.cards.count == 1 ? "Save All to Asset Library creates 1 PNG file." : "Save All to Asset Library creates \(set.cards.count) PNG files, one per card, in card order.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
             StorebenchActionGroup {
-                StorebenchBusyButton(title: "Save Draft", loadingTitle: "Saving…", busy: saving, variant: .primary) { Task { _ = await save() } }
-                    .storebenchWorking(!dirty || stale)
-                Button("Save All to Asset Library") { Task { await saveToLibrary(all: true) } }.buttonStyle(StorebenchButtonStyle(.primary))
-                    .storebenchControlID("media.save-library")
                 Button("Save This Card") { Task { await saveToLibrary(all: false) } }.help("Save the selected card to Asset Library")
                 Button("Export PNG") { Task { await exportPNG() } }.help("Save the selected card as a PNG file on this Mac")
             }.storebenchWorking(busy)
-            if let openReleaseStep {
-                StorebenchActionGroup {
-                    Button("Open Apple Sync") {
-                        Task {
-                            if await saveToLibrary(all: true) { openReleaseStep("listing") }
-                        }
-                    }.help("Save the cards to Asset Library, then choose their language and version in Release before Sync to Apple")
-                        .storebenchWorking(busy || saving || stale)
-                }
-            }
+            statusArea
         }
     }
 
@@ -438,60 +498,79 @@ struct CreateMediaView: View {
     /// The language the open set's text is written in. Sets made before a language was chosen are treated as English (U.S.).
     private var textLanguage: String { opened?.language ?? "en-US" }
 
+    private var translationOptions: [String] { translationService.isEmpty ? translationTargets : StoreLocales.codes.filter { $0 != textLanguage } }
     private func translateCard(_ set: MediaCardSet) -> some View {
-        Card(title: "Other Languages", subtitle: "Make a translated copy using Apple Translation or your chosen AI service. The copy keeps the same background, layout and screenshots. Replace screenshots that show another language.", help: "media") {
-            StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 260) {
-                StorebenchPicker("Card Text Language", selection: Binding(get: { textLanguage }, set: { value in change("language", set: { $0.language = value }) })) {
+        Card(title: "Other Languages", subtitle: "Translate this card set into other languages with Apple Translation or your chosen AI service. Each copy keeps the background, layout and screenshots, and its cards are saved to Asset Library.", help: "media") {
+            StorebenchFormGrid {
+                StorebenchPicker("From", selection: Binding(get: { textLanguage }, set: { value in change("language", set: { $0.language = value }) })) {
                     selectionOptions(StoreLocales.codes) { SelectionOption(StoreLocales.name($0), value: $0) }
                 }
-                StorebenchPicker("Translate To", selection: $translateTo) {
-                    selectionOptions(translationService.isEmpty ? translationTargets : StoreLocales.codes.filter { $0 != textLanguage }) { SelectionOption(StoreLocales.name($0), value: $0) }
-                }
-            }
+                StorebenchMultiSelect(title: "Into", dialogTitle: "Choose Languages", dialogSubtitle: "The languages to translate \(MediaCards.trimmed(set.name)) into.",
+                                      selection: $translateInto, options: translationOptions, name: StoreLocales.name,
+                                      presets: [.init(title: "Top Markets", help: "The ten largest App Store languages", values: Set(TranslationTargets.topMarkets.filter(translationOptions.contains))),
+                                                .init(title: "All", help: "Every language this service can translate into", values: Set(translationOptions))],
+                                      summary: TranslationTargets.summary(translateInto), controlID: "media.translate-into")
+            }.environment(\.fieldHintHeight, 0)
             AIServicePicker(session: session, selection: $translationService, modelID: $translationModel, includesTranslation: true, loaded: { aiConnections = $0 })
-                .onChange(of: translationService) {
-                    let options = translationService.isEmpty ? translationTargets : StoreLocales.codes.filter { $0 != textLanguage }
-                    if !options.contains(translateTo) { translateTo = options.first ?? "" }
-                }
+                .onChange(of: translationService) { translateInto = translateInto.intersection(translationOptions) }
             Text(translationService.isEmpty && translationTargets.isEmpty ? "This Mac cannot translate \(StoreLocales.name(textLanguage)). Translation needs macOS 15 or later and a language Apple’s translation supports."
                  : translationService.isEmpty ? "macOS asks before downloading a missing translation language. The original card set is kept."
-                 : "AI translates the card text. The original card set is kept; review the translated copy before using it.")
+                 : "AI translates the card text. The original card set is kept; translating again into a language updates that copy.")
                 .font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
+            if !translationResults.isEmpty {
+                VStack(alignment: .leading, spacing: StorebenchTheme.space(1)) {
+                    ForEach(translationResults, id: \.locale) { result in
+                        Text(StoreLocales.name(result.locale) + ": " + result.text).font(.sbCallout)
+                            .foregroundStyle(result.failed ? StorebenchTheme.color("color-danger") : StorebenchTheme.ink).fixedSize(horizontal: false, vertical: true)
+                    }
+                }.storebenchControlID("media.translate-results")
+            }
             StorebenchActionGroup {
-                Button(translation == nil ? "Translate Card Set" : "Translating…") {
-                    guard !translateTo.isEmpty else { return }
+                Button(translationQueue.isEmpty && translation == nil ? "Translate Card Set" : "Translating…") {
                     Task {
                         if dirty, !(await save()) { return }
-                        let request = ListingTranslationRequest(source: textLanguage, target: translateTo)
-                        let selectedModel = translationModel.isEmpty ? nil : translationModel
-                        if let provider = AIProvider(rawValue: translationService), let session {
-                            await translateSet(request) { texts in
-                                try await session.translateWithAI(accountId: account.id, appId: app.id, provider: provider, texts: texts, source: request.source, target: request.target, fields: MediaCardTranslation.translationFields(set), model: selectedModel)
-                            }
-                        } else { translation = request }
+                        translationResults = []; translationQueue = translationOptions.filter(translateInto.contains); translateNext()
                     }
-                }.help("Create a translated copy of this card set").storebenchWorking(translateTo.isEmpty || MediaCardTranslation.segments(set).isEmpty || translation != nil || (translationService == AIProvider.apple.rawValue && !AppleLocalAI.available) || (!translationService.isEmpty && translationService != AIProvider.apple.rawValue && !aiConnections.contains { $0.provider.rawValue == translationService }))
+                }.help(translateInto.isEmpty ? "Choose at least one language in Into" : "Translate into \(translateInto.count) \(translateInto.count == 1 ? "language" : "languages")")
+                    .storebenchControlID("media.translate")
+                    .storebenchWorking(translateInto.isEmpty || MediaCardTranslation.segments(set).isEmpty || translation != nil || !translationQueue.isEmpty
+                                       || (translationService == AIProvider.apple.rawValue && !AppleLocalAI.available)
+                                       || (!translationService.isEmpty && translationService != AIProvider.apple.rawValue && !aiConnections.contains { $0.provider.rawValue == translationService }))
             }.storebenchWorking(busy || stale)
         }
     }
 
-    /// Creates the translated set as a new saved set and opens it. The open set is left unchanged.
-    private func translateSet(_ request: ListingTranslationRequest, _ translate: TextTranslator) async {
-        guard let session, let source = opened, request.source == textLanguage, !busy, !stale else { return }
+    /// Translates into the next chosen language: with an AI service directly, with Apple Translation through its session.
+    private func translateNext() {
+        guard let next = translationQueue.first else { return }
+        translationQueue.removeFirst()
+        if let provider = AIProvider(rawValue: translationService), let session {
+            let source = textLanguage, selectedModel = translationModel.isEmpty ? nil : translationModel, accountId = account.id, appId = app.id
+            Task {
+                await translateCopy(into: next) { texts, fields in
+                    try await session.translateWithAI(accountId: accountId, appId: appId, provider: provider, texts: texts, source: source, target: next, fields: fields, model: selectedModel)
+                }
+                translateNext()
+            }
+        } else { translation = ListingTranslationRequest(source: textLanguage, target: next) }
+    }
+
+    /// Saves or updates the open set's copy in `target` with its rendered cards in Asset Library. The open set is unchanged.
+    private func translateCopy(into target: String, _ translate: @escaping @Sendable (_ texts: [String], _ fields: [String]) async throws -> [String]) async {
+        guard let session, let source = opened, !stale else { return }
         working = true; defer { working = false }
         do {
-            let texts = MediaCardTranslation.segments(source)
-            let translated: [String]
-            do { translated = try await translate(texts) } catch let error as AIFailure { throw error } catch { throw MediaCardFailure.translation }
-            let copy = try MediaCardTranslation.translated(source, to: request.target, translations: translated)
-            guard opened == source, savedSet == source else { status = "This card set changed while it was being translated. Translate it again."; statusError = true; return }
-            let next = try await session.saveMediaCardSet(accountId: account.id, appId: app.id, set: copy, expected: 0)
+            let copy = try await session.translateCardSet(accountId: account.id, appId: app.id, sourceId: source.id, target: target, translate: translate)
             saved = try await session.mediaCardSets(accountId: account.id, appId: app.id)
-            show(.init(revision: next, set: copy))
-            status = "\(copy.name) created. Read each card’s text and replace screenshots that show another language, then save the cards to Asset Library."; statusError = false
-        } catch let failure as MediaCardFailure { status = failure.message; statusError = true }
-        catch let failure as AIFailure { status = failure.message; statusError = true }
-        catch { status = "The translated card set could not be saved. This card set is unchanged."; statusError = true }
+            translationResults.append((target, "\(copy.files.count == 1 ? "1 card" : "\(copy.files.count) cards") saved to Asset Library as \(MediaCards.trimmed(copy.set.name)).", false))
+        } catch let failure as MediaCardLanguageFailure { translationResults.append((target, failure.message, true)) }
+        catch let failure as MediaCardFailure { translationResults.append((target, failure.message, true)) }
+        catch { translationResults.append((target, AIFailure.message(error), true)) }
+        if translationQueue.isEmpty, translation == nil || translation?.target == target {
+            let done = translationResults.filter { !$0.failed }.count
+            status = "Translated into \(done) of \(translationResults.count) \(translationResults.count == 1 ? "language" : "languages"). Add the cards in Release step 2, Text and Screenshots."
+            statusError = done < translationResults.count
+        }
     }
 
     // MARK: Bindings

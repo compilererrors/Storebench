@@ -37,10 +37,52 @@ final class Planner: @unchecked Sendable {
         return result
     }
 
+    /// Lists started ahead of their turn. Each is used, and recorded as evidence, only when planning reaches it, so a review
+    /// and its fingerprint are the same as when every read waits for the one before it.
+    private var ahead: [String: Task<[AppStoreConnectClient.Resource], Error>] = [:]
+    /// Starts lists the plan is about to read one after another, so Apple answers them side by side. The shared request queue
+    /// still limits how many run at once.
+    func prefetch(lists paths: [String]) {
+        for path in paths where ahead[path] == nil {
+            let client = client
+            ahead[path] = Task { try await client.list(path) }
+        }
+    }
+    /// Stops lists started ahead that planning never reached.
+    func cancelAhead() { for task in ahead.values { task.cancel() }; ahead.removeAll() }
+
     func list(_ path: String) async throws -> [AppStoreConnectClient.Resource] {
-        let result = try await reading(path) { try await client.list(path) }
+        let result = try await reading(path) {
+            if let started = ahead.removeValue(forKey: path) { return try await started.value }
+            return try await client.list(path)
+        }
         evidence.append(.object([("path", .string(path)), ("result", .array(result.map(Self.resource)))]))
         return result
+    }
+
+    /// Each country's Apple price points up to the amount it needs, read side by side, six countries at a time, and recorded as
+    /// evidence in country order, so the review and its fingerprint do not depend on which answer came first. Apple's pages are
+    /// read until they pass the amount while they rise in price, and to the end otherwise.
+    func pricePoints(_ owner: PriceOwner, needs: [String: Decimal]) async throws -> [PricePoint] {
+        let codes = needs.keys.sorted(), client = client
+        let read = try await reading("price-points") {
+            try await withThrowingTaskGroup(of: (String, [PricePoint]).self) { group in
+                var next = 0, results: [String: [PricePoint]] = [:]
+                func add(_ code: String) {
+                    group.addTask { (code, try await PricePointCatalog.ladder(owner, territory: code, through: needs[code], page: { try await client.page($0, currentCursor: $1) }).points) }
+                }
+                for _ in 0..<min(6, codes.count) { add(codes[next]); next += 1 }
+                for try await (code, points) in group {
+                    results[code] = points
+                    if next < codes.count { add(codes[next]); next += 1 }
+                }
+                return results
+            }
+        }
+        for code in codes {
+            evidence.append(.object([("pricePoints", .string(code)), ("result", .array((read[code] ?? []).map { .array([.string($0.id), .string($0.customerPrice)]) }))]))
+        }
+        return codes.flatMap { read[$0] ?? [] }
     }
 
     func listWithIncluded(_ path: String) async throws -> (data: [AppStoreConnectClient.Resource], included: [AppStoreConnectClient.Resource]) {
@@ -58,8 +100,21 @@ final class Planner: @unchecked Sendable {
     }
 }
 
+/// Versions and App Information records confirmed to belong to the approved app while one approved review is sent.
+/// A record's app never changes, so a later step's check of the same parent needs no second read. Each step still reads the
+/// record it writes, and every state and digest check reads Apple again.
+final class OwnershipProofs: @unchecked Sendable {
+    private let lock = NSLock()
+    private var owned: Set<String> = []
+    func contains(_ type: String, _ id: String, appId: String) -> Bool { lock.withLock { owned.contains("\(appId)\u{0}\(type)\u{0}\(id)") } }
+    func add(_ type: String, _ id: String, appId: String) { lock.withLock { _ = owned.insert("\(appId)\u{0}\(type)\u{0}\(id)") } }
+}
+
 /// Resources already confirmed to belong to the approved app during one write check.
 final class OwnershipCache: @unchecked Sendable {
+    /// What earlier steps of the same approved review confirmed, when this check is part of one.
+    let proofs: OwnershipProofs?
+    init(proofs: OwnershipProofs? = nil) { self.proofs = proofs }
     var items: [String: AppStoreConnectClient.Resource] = [:]
     /// Owners found by listing the app's own resources, for reads where Apple left the owner link out.
     var owners: [String: (type: String, id: String)] = [:]

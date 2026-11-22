@@ -44,7 +44,7 @@ struct AIHistoryDetail: View {
     @State private var job: AIJob?
     @State private var status = ""
     var body: some View {
-        StorebenchDialog(title: "AI Request", wide: true, height: 760, close: close) {
+        StorebenchDialog(title: "AI Request", kind: .content, close: close) {
             StorebenchCardSection(title: entry.title) {
                 StorebenchFormGrid {
                     metadata("App", appName)
@@ -84,6 +84,10 @@ struct AIHistoryDetail: View {
                     DisclosureGroup("Submitted Screenshots") {
                         Text(entry.provider == .apple ? "Apple Intelligence used the recognized text below. It did not receive image pixels." : "These are the reduced images submitted to the selected AI service. Original screenshots in your card sets stay unchanged.")
                             .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
+                        if job.request.images.allSatisfy({ $0.data.isEmpty }) {
+                            Text("The images of this request were removed by Storage Cleanup. The text recognized in each image is kept.")
+                                .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
+                        }
                         StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 240) {
                             ForEach(Array(job.request.images.enumerated()), id: \.offset) { index, source in
                                 StorebenchCardSection(title: "Screenshot \(index + 1)") {

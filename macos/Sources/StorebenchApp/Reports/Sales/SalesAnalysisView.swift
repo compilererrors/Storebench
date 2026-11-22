@@ -71,17 +71,17 @@ struct SalesAnalysisView: View {
             .trackUnsavedChanges(false, busy: saving)
         } else if prepared?.input != input {
             Self.placeholder(filters: filters, actions: actions)
-        } else { Card(title: "Sales summary", subtitle: "Saved sales figures could not be analyzed. Choose another range or read the original reports again.", actions: actions) { filters } }
+        } else { Card(title: "Sales Summary", subtitle: "Saved sales figures could not be analyzed. Choose another range or read the original reports again.", actions: actions) { filters } }
     }
     static let summarySubtitle = "App purchases in the selected saved reports, before refunds. In-app products are shown separately."
     static func placeholder(filters: AnyView?, actions: AnyView?) -> some View {
         VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             StorebenchFeedback(text: "", height: 26)
-            Card(title: "Sales summary", subtitle: summarySubtitle, actions: actions) {
+            Card(title: "Sales Summary", subtitle: summarySubtitle, actions: actions) {
                 filters
                 StorebenchLoadState(state: .loading("Preparing the selected saved reports…")) { EmptyView() } placeholder: {
-                    StorebenchCardSection(title: "Saved purchase totals", description: "Placeholder dates through placeholder dates · reporting days covered. Missing days remain unknown.") {
-                        StorebenchMetricGrid { ForEach(0..<4, id: \.self) { _ in Fact(title: "Saved total", value: "0") } }
+                    StorebenchCardSection(title: "Saved Purchase Totals", description: "Placeholder dates through placeholder dates · reporting days covered. Missing days remain unknown.") {
+                        StorebenchMetricGrid { ForEach(0..<4, id: \.self) { _ in Fact(title: "Saved Total", value: "0") } }
                     }
                 }
             }
@@ -89,7 +89,7 @@ struct SalesAnalysisView: View {
         }
     }
     private func coverage(_ selected: SalesPresentation.Selection) -> some View {
-        Card(title: "Reporting coverage", subtitle: "\(selected.coveredDays) of \(selected.requestedDays) days covered · \(selected.analysis.coverage?.periods.count ?? 0) saved periods · Pacific reporting dates", help: "report-availability") {
+        Card(title: "Reporting Coverage", subtitle: "\(selected.coveredDays) of \(selected.requestedDays) days covered · \(selected.analysis.coverage?.periods.count ?? 0) saved periods · Pacific reporting dates", help: "report-availability") {
             if selected.complete { Text("The requested range has complete saved coverage.").foregroundStyle(StorebenchTheme.muted) }
             else {
                 Text("Missing days remain unknown. \(selected.crossingPeriods) reports cross a range boundary and are excluded.").foregroundStyle(StorebenchTheme.muted)
@@ -103,15 +103,15 @@ struct SalesAnalysisView: View {
         }
     }
     private func summary(_ selected: SalesPresentation.Selection) -> some View {
-        Card(title: "Sales summary", subtitle: Self.summarySubtitle, actions: actions) {
+        Card(title: "Sales Summary", subtitle: Self.summarySubtitle, actions: actions) {
             filters
-            StorebenchCardSection(title: "Saved purchase totals", description: "\(selected.range.beginDate) through \(selected.range.endDate) · \(selected.coveredDays) of \(selected.requestedDays) reporting days covered. Missing days remain unknown.") {
+            StorebenchCardSection(title: "Saved Purchase Totals", description: "\(selected.range.beginDate) through \(selected.range.endDate) · \(selected.coveredDays) of \(selected.requestedDays) reporting days covered. Missing days remain unknown.") {
                 StorebenchMetricGrid { totals(selected.analysis) }
             }
         }
     }
     @ViewBuilder private func totals(_ a: SalesPresentation.Analysis) -> some View {
-        Fact(title: "Paid app purchases", value: String(a.paid)); Fact(title: "Refunded paid units", value: count(a.refunds), info: "Units Apple reports as refunded in the selected Sales reports. A refund can concern an earlier purchase."); Fact(title: "Free app downloads", value: count(a.free)); Fact(title: "Countries with purchases", value: String(a.rows.filter { $0.paid > 0 }.count))
+        Fact(title: "Paid App Purchases", value: count(a.paid)); Fact(title: "Refunded Paid Units", value: count(a.refunds), info: "Units Apple reports as refunded in the selected Sales reports. A refund can concern an earlier purchase."); Fact(title: "Free App Downloads", value: count(a.free)); Fact(title: "Countries with Purchases", value: String(a.rows.filter { $0.paid > 0 }.count))
     }
     private func trend(_ analysis: SalesPresentation.Analysis) -> some View {
         let estimateKey = ReportCharts.salesEstimateKey
@@ -121,7 +121,7 @@ struct SalesAnalysisView: View {
         let estimate = chosen.contains(estimateKey) ? ReportCharts.salesEstimate(analysis.coverage?.periods ?? [], context: context) : nil
         let reported = chosen.flatMap { key in key == estimateKey ? [estimate].compactMap { $0 } : charts.first { $0.measure.rawValue == key }?.series ?? [] }
         let onlyEstimate = estimate != nil && charts.isEmpty
-        return Card(title: "Sales over time", subtitle: "One point per saved report period. Unknown detail values break the line and remain available for inspection.") {
+        return Card(title: "Sales Over Time", subtitle: "One point per saved report period. Unknown detail values break the line and remain available for inspection.") {
             ChartMeasureToggles(options: options, chosen: chosen) { measure = $0 }
             ChartScalePicker(indexed: $indexed)
             Text("Free downloads, refunds and in-app purchases need Apple’s original report rows.").font(.sbCaption).foregroundStyle(StorebenchTheme.muted)
@@ -150,7 +150,7 @@ struct SalesAnalysisView: View {
         }
     }
     private func comparison(_ selected: SalesPresentation.Selection) -> some View {
-        Card(title: "Previous period", subtitle: previous.map { "\($0.range.beginDate) through \($0.range.endDate). Percentages require complete coverage in both ranges." } ?? "A preceding date range is unavailable.") {
+        Card(title: "Previous Period", subtitle: previous.map { "\($0.range.beginDate) through \($0.range.endDate). Percentages require complete coverage in both ranges." } ?? "A preceding date range is unavailable.") {
             if let previous {
                 // Without any saved report in the previous range its figures are unknown, not zero.
                 let saved = previous.coveredDays > 0
@@ -168,8 +168,8 @@ struct SalesAnalysisView: View {
         VStack(alignment: .leading, spacing: 4) { Text(label).font(.sbHeadline); Text("Current: \(current ?? "—") · Previous: \(previous ?? "—")").textSelection(.enabled); Text(complete ? SalesPresentation.change(current, previous: previous) : "Unavailable · incomplete reporting coverage or details").font(.sbCaption).foregroundStyle(StorebenchTheme.muted) }.padding(.vertical, 4)
     }
     private func suggestions(_ analysis: SalesPresentation.Analysis) -> some View {
-        Card(title: "Sales observations", subtitle: "Informational criteria do not establish a cause or trigger price changes or publishing.", help: "sales") {
-            StorebenchMetricGrid(maximumColumns: 3, minimumWidth: 190) { StorebenchTextField("Minimum purchases", text: $minimum); StorebenchTextField("Minimum country purchases", text: $countryMinimum); StorebenchTextField("Minimum share %", text: $share) }
+        Card(title: "Sales Observations", subtitle: "Informational criteria do not establish a cause or trigger price changes or publishing.", help: "sales") {
+            StorebenchMetricGrid(maximumColumns: 3, minimumWidth: 190) { StorebenchTextField("Minimum Purchases", text: $minimum); StorebenchTextField("Minimum Country Purchases", text: $countryMinimum); StorebenchTextField("Minimum Share %", text: $share) }
             if criteria == nil { Text(SalesPresentationFailure.criteria.message).foregroundStyle(StorebenchTheme.muted) }
             else {
                 ForEach(analysis.insights) { item in
@@ -185,7 +185,7 @@ struct SalesAnalysisView: View {
     private func countryCard(_ selected: SalesPresentation.Selection) -> some View {
         let fields = order.components(separatedBy: ":"), rows = SalesPresentation.countries(selected.analysis, context: context, query: query, sort: SalesPresentation.Sort(rawValue: fields[0]), descending: fields.last == "desc")
         let pages = max(1, (rows.count + pageSize - 1) / pageSize), current = min(page, pages)
-        return Card(title: "Country sales", subtitle: "Search and ordering affect this list. The summary and CSV retain all selected countries.") {
+        return Card(title: "Country Sales", subtitle: "Search and ordering affect this list. The summary and CSV retain all selected countries.") {
             StorebenchReportTableControls(query: $query, order: $order, pageSize: $pageSize,
                 options: [("default", "Purchase leaders")] + SalesPresentation.Sort.allCases.map { ($0.rawValue, $0.rawValue.capitalized) }, searchTitle: "Find country sales")
                 .onChange(of: pageSize) { page = 1 }
@@ -197,9 +197,9 @@ struct SalesAnalysisView: View {
                             let conversion = ReportMoney.convert(row.proceeds, context: context), complete = money != nil && conversion.complete && selected.complete && selected.analysis.moneyComplete && selected.analysis.productsComplete
                             StorebenchTableRow(index: index) {
                                 StorebenchTableCell(text: "\(row.name)\n\(row.code)", width: columns[0], title: "Country")
-                                StorebenchTableCell(text: String(row.paid), width: columns[1], title: "Paid purchases")
+                                StorebenchTableCell(text: count(row.paid), width: columns[1], title: "Paid purchases")
                                 StorebenchTableCell(text: SalesPresentation.shareLabel(row.paid, total: selected.analysis.paid), width: columns[2], title: "Share")
-                                StorebenchTableCell(text: selected.analysis.refunds == nil ? "—" : String(row.refunds), width: columns[3], title: "Refunded units")
+                                StorebenchTableCell(text: selected.analysis.refunds == nil ? "—" : count(row.refunds), width: columns[3], title: "Refunded units")
                                 StorebenchTableCell(text: SalesPresentation.proceedsText(row.proceeds, complete: selected.moneyComplete), width: columns[4], title: "Reported proceeds", summary: row.proceeds.isEmpty ? "—" : nil)
                                 StorebenchTableCell(text: SalesPresentation.estimateText(conversion, context: context, complete: complete, available: money != nil), width: columns[5], title: "Reference estimate")
                             }
@@ -213,7 +213,7 @@ struct SalesAnalysisView: View {
             StorebenchFeedback(text: exportStatus, height: 34)
         }
     }
-    private func count(_ value: Int?) -> String { value.map(String.init) ?? "—" }
+    private func count(_ value: Int?) -> String { value.map { $0.formatted(.number.locale(Locale(identifier: "en_US"))) } ?? "—" }
     private func export(_ selection: SalesPresentation.Selection) {
         guard !saving, let money else { return }; saving = true; defer { saving = false }
         let panel = NSSavePanel(); panel.allowedContentTypes = [.commaSeparatedText]; panel.nameFieldStringValue = "sales-analysis.csv"

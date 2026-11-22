@@ -17,7 +17,7 @@ public struct ControlColors: Equatable, Sendable {
             background = emphasized ? "color-surface-accent-strong" : settings ? "color-surface-subtle" : "color-surface-accent"
             border = settings ? "color-border-control" : "color-border-accent"
         case .quiet:
-            foreground = "color-text-secondary"; background = emphasized ? "color-surface-accent" : "color-surface-subtle"; border = "color-border-control"
+            foreground = "color-text-secondary"; background = emphasized ? HoverFeedback.fill(on: .surface, hovering: true) ?? "color-surface-accent" : "color-surface-subtle"; border = "color-border-control"
         case .danger:
             foreground = "color-danger"; background = "color-danger-surface"; border = "color-danger-border"
         case .field:

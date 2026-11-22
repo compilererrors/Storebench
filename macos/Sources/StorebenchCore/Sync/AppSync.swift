@@ -2,8 +2,8 @@ import Foundation
 
 /// The sync order. Each source uses its own download, lock and validation; nothing is sent to App Store Connect.
 public enum AppSync {
-    public static let sources = [("material", "Apple versions & material"), ("pricing", "Prices"), ("sales", "Sales & proceeds"), ("downloads", "Analytics · downloads"),
-                                 ("engagement", "Analytics · discovery & engagement"), ("finance", "Financial reports"), ("reviews", "Customer reviews")]
+    public static let sources = [("material", "Versions and Material"), ("pricing", "Prices"), ("sales", "Sales and Proceeds"), ("downloads", "Analytics · Downloads"),
+                                 ("engagement", "Analytics · Discovery and Engagement"), ("finance", "Financial Reports"), ("reviews", "Ratings and Reviews")]
     public static let executionOrder = ["pricing", "sales", "downloads", "engagement", "material", "finance", "reviews"]
     public static func pending() -> [SyncItem] { sources.map { SyncItem(key: $0.0, state: .pending, detail: "Not checked in this sync yet.") } }
 

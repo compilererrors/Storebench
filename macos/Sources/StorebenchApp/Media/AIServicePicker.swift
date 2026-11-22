@@ -41,9 +41,10 @@ struct AIServicePicker: View {
                     StorebenchLabeledContent("AI Model") { Text("On-Device Model · Managed by macOS").font(.sbCallout).frame(minHeight: StorebenchTheme.controlHeight, alignment: .leading) }
                 }
             }
-            Text(usage)
-                .font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
-            StorebenchTextSlot(text: reading ? "Reading available models…" : status, height: 36, font: .sbCaption, color: StorebenchTheme.muted, live: true)
+            // Only a model that must accept screenshots has a hint, so other pickers leave no empty line under them.
+            .environment(\.fieldHintHeight, requiresImages ? nil : 0)
+            // What the service costs and runs on, replaced by the model read while it runs or fails: one caption track.
+            StorebenchTextSlot(text: reading ? "Reading available models…" : status.isEmpty ? usage : status, height: 32, font: .sbCaption, color: StorebenchTheme.muted, live: true)
         }.task(id: selection) { await load() }
         .onReceive(NotificationCenter.default.publisher(for: .storebenchAIConnectionsChanged)) { _ in Task { await load() } }
     }

@@ -58,14 +58,14 @@ struct AsoDiffView: View {
                     fields(left, right)
                     activity(left, right)
                 } else {
-                    Card(title: "Compare two saved versions", subtitle: "Choose a saved App Store version state on each side. Fields are compared directly between the two selections.") {
+                    Card(title: "Compare Two Saved Versions", subtitle: "Choose a saved App Store version state on each side. Fields are compared directly between the two selections.") {
                         Text(status.isEmpty ? "No saved versions yet. Sync app material to save App Store versions." : status).foregroundStyle(StorebenchTheme.muted)
                     }
                 }
             }
             if tab != "outcome" {
             if !drafts.isEmpty {
-                Card(title: "Unpublished draft changes", subtitle: "Edits saved on this Mac. They have no App Store change date and are separate from the comparison above.") {
+                Card(title: "Unpublished Draft Changes", subtitle: "Edits saved on this Mac. They have no App Store change date and are separate from the comparison above.") {
                     ForEach(Array(drafts.enumerated()), id: \.offset) { _, change in
                         VStack(alignment: .leading, spacing: 2) {
                             Text("\(change.section) · \(change.field)").font(.sbHeadline)
@@ -156,7 +156,7 @@ struct AsoDiffView: View {
         let leftDate = String(left.at.prefix(10)), rightDate = String(right.at.prefix(10))
         let apart = abs((PeriodDates.number(leftDate) ?? 0) - (PeriodDates.number(rightDate) ?? 0)) >= days
         let rows = AsoComparison.activity(leftDate: leftDate, rightDate: rightDate, days: days, analytics: analytics, sales: outcomeSales)
-        return Card(title: "Reported activity", subtitle: "Totals for \(days) days after each date, excluding that day. Dates mark observations of released listings. Their exact publication dates remain unknown; these are observations, not ASO effects.") {
+        return Card(title: "Reported Activity", subtitle: "Totals for \(days) days after each date, excluding that day. Dates mark observations of released listings. Their exact publication dates remain unknown; these are observations, not ASO effects.") {
             StorebenchChoicePicker("Days after each version", selection: $days, options: [(1, "1 day"), (3, "3 days"), (7, "7 days"), (14, "14 days")]).fixedSize()
             if leftDate == rightDate { Text("Both states share a date, so their activity uses the same days.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
             else if !apart { Text("These activity windows overlap. Choose fewer days or versions farther apart to compare totals.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }

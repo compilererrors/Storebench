@@ -68,7 +68,7 @@ struct TestFlightBuildsView: View {
             }
             ReviewPanel(account: account, app: app, session: session, review: $review, done: { Task { await load() } }, busyChanged: { publishing = $0 }, syncConfirmation: true, localDraft: review?.request.testflightAction == "save-build-notes" ? draft : nil, draftPaths: [["notes", review?.request.locale ?? locale], ["locale"]]).storebenchWorking(!confirmed || loading)
             // The builds you test come first; uploading a new package and Apple's delivery records follow.
-            Card(title: "Uploaded builds", subtitle: "Processed builds delivered through Storebench, Xcode or Transporter. Apple controls beta review and approval.", help: "testflight", actions: AnyView(
+            Card(title: "Uploaded Builds", subtitle: "Processed builds delivered through Storebench, Xcode or Transporter. Apple controls beta review and approval.", help: "testflight", actions: AnyView(
                 Button(loading ? "Reading Builds…" : "Refresh Builds") { if !busy, !accessBusy, !encryptionBusy { Task { await load(fresh: true) } } }.storebenchWorking(busy || accessBusy || encryptionBusy)
             )) {
                 StorebenchReadAge(readAt: state == "ready" ? readAt : nil, reading: loading)
@@ -111,7 +111,7 @@ struct TestFlightBuildsView: View {
 
     private func description(_ build: TestFlightBuild) -> String {
         let processing = AppStoreNames.state(build.processingState)
-        var parts = [processing, "Uploaded " + (AppStoreNames.date(build.uploadedDate) ?? String(build.uploadedDate.prefix(10)))]
+        var parts = [processing, "Uploaded " + (AppStoreNames.dateTime(build.uploadedDate) ?? String(build.uploadedDate.prefix(10)))]
         if !build.expirationDate.isEmpty { parts.append(build.expired == true ? "Expired" : "Expires " + (AppStoreNames.date(build.expirationDate) ?? String(build.expirationDate.prefix(10)))) }
         if build.expired == nil { parts.append("Expiry status unavailable at Apple") }
         if build.audience == "INTERNAL_ONLY" { parts.append("Internal only") }

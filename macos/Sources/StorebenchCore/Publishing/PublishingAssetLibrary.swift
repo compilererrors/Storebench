@@ -30,7 +30,7 @@ extension WorkspaceSession {
         }
         throw AssetLibrary.failure("Apple is still processing this file after 15 minutes. The upload is kept: prepare the review again later, and it waits for Apple instead of uploading the file again.")
     }
-    func libraryReader(_ planner: Planner) -> LibraryReader { LibraryReader(appId: planner.request.appId, get: planner.get, list: planner.list) }
+    func libraryReader(_ planner: Planner) -> LibraryReader { LibraryReader(appId: planner.request.appId, get: planner.get, list: planner.list, ahead: planner.prefetch(lists:)) }
     static func libraryAssetDigest(_ asset: AssetLibrary.Asset) -> String {
         let fields = ["fileName", "fileSize", "category", "referenceName", "previewFrameTimeCode", "state", "specId", "stateDetails"]
         return JSONText.array([.string(asset.id), .string(asset.kind.rawValue), .object(fields.map { ($0, asset.value["attributes"]?[$0] ?? .null) })]).sha256

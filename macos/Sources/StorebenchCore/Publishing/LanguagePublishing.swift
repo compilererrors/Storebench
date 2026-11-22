@@ -16,6 +16,10 @@ public struct LanguageListingReview: Sendable, Identifiable {
 
 extension WorkspaceSession {
     /// Missing planned versions get their own approval; only a no-op setup race retries the material read.
+    /// Prepares the review with the account's own publishing client, which never uses the shared read cache.
+    public func prepareLanguageListingReview(account: Account, request: PublishRequest) async throws -> LanguageListingReview {
+        try await prepareLanguageListingReview(account: account, request: request, client: try client(for: account))
+    }
     public func prepareLanguageListingReview(account: Account, request: PublishRequest, client: AppStoreConnectClient) async throws -> LanguageListingReview {
         let source = try request.validated()
         guard source.scope == .metadata, source.revisionId != nil, source.versionId != nil, source.targetMode != nil else { throw PublishFailure.invalid("Choose the saved language's source, version and target.") }

@@ -41,7 +41,7 @@ struct PricePreviewTable: View {
                     ForEach(Array(current.enumerated()), id: \.element.id) { index, row in
                         StorebenchTableRow(index: index) {
                             StorebenchTableCell(text: WorkspaceSession.countryName(row.territory) + " · " + row.territory, width: widths[0], title: "Country or Region")
-                            StorebenchTableCell(text: row.calculated.map { $0 + " " + row.currency } ?? "—", width: widths[1], title: "Model Price", summary: row.calculated.map { $0 + " " + row.currency })
+                            StorebenchTableCell(text: row.calculated.map { PricingMath.shown($0, currency: row.currency) + " " + row.currency } ?? "—", width: widths[1], title: "Model Price", summary: row.calculated.map { PricingMath.shown($0, currency: row.currency) + " " + row.currency })
                             StorebenchTableCell(text: row.amount.map { $0 + " " + row.currency } ?? "—", width: widths[2], title: "Apple Price")
                             StorebenchTableCell(text: unverified && row.calculated != nil ? "The amount is calculated. Apple's price points must be checked before this price can be saved." : row.problem ?? row.detail, width: widths[3], title: "Price Calculation", summary: row.amount != nil ? "Matched" : row.calculated == nil ? "No Estimate" : matching ? "Checking…" : unverified ? "Not Checked" : "No Match")
                         }.storebenchControlID("pricing.preview-row." + row.territory)

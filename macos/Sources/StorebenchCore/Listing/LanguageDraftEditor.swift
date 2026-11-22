@@ -40,7 +40,30 @@ import Observation
     public func runText(prepare: (@MainActor () async throws -> Void)? = nil) async -> ListingSaveWorkflow.Result {
         guard active, let registration else { return .init(id: UUID(), saves: 0, prepared: false, failure: .cancelled) }
         autosave.cancelPending()
-        return await workflow.run(only: [registration], prepare: prepare)
+        guard let prepare else { return await workflow.run(only: [registration]) }
+        let checked: @MainActor () async throws -> Void = { [weak self] in
+            guard await self?.showsSavedText() == true else { throw DraftFailure.stale }
+            try await prepare()
+        }
+        return await workflow.run(only: [registration], prepare: checked)
+    }
+    /// Whether the text saved on this Mac is still what this editor shows as saved. A review is prepared from the saved text, so a
+    /// draft changed elsewhere since the editor read it marks the language for comparison instead of reaching a review unseen.
+    public func showsSavedText() async -> Bool {
+        guard active, let current = editor, !needsComparison else { return false }
+        do {
+            let sections = try await read(); try validate(sections)
+            guard active else { return false }
+            guard sections.allSatisfy({ TextDrafts.sameFields(current.baseline[$0.selection.id] ?? [:], $0.draft.fields) }) else { throw DraftFailure.stale }
+            return true
+        } catch {
+            guard active else { return false }
+            if let error = error as? DraftFailure, error == .stale {
+                needsComparison = true; latest = nil; autosave.pause()
+                status = "The saved text of this language was changed elsewhere. Compare the latest save before continuing."
+            } else { status = "Saved language text could not be read. Nothing was prepared." }
+            return false
+        }
     }
 
     public init(scope: MediaDraftScope, versionId: String, locale: String, selections: [LanguageDrafts.Selection], workflow shared: ListingSaveWorkflow? = nil,
@@ -72,6 +95,11 @@ import Observation
     }
     public func restoreImport(_ field: LanguageEditorState.Field) throws {
         guard let editor else { throw DraftFailure.invalid }; try change(field, to: editor.original(field))
+    }
+    /// Changes a field as the language editor shows it: an app information field in every App Information record of the language.
+    public func changeShown(_ field: LanguageEditorState.Field, to value: String) throws {
+        guard active, !loading, !readingLatest, !auxiliaryBusy, editor != nil else { throw DraftFailure.invalid }
+        try editor?.changeShown(field, to: value); latest = nil; status = ""
     }
     public func revert() {
         guard active, !busy else { return }; editor?.discard(); latest = nil; autosave.resume(); status = ""

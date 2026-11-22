@@ -29,7 +29,7 @@ struct StorebenchPageHeader: View {
     var help = ""
     var body: some View {
         VStack(alignment: .leading, spacing: StorebenchTheme.space(2)) {
-            if !eyebrow.isEmpty { StorebenchTextSlot(text: eyebrow, height: 18, font: .sbCaption.bold(), color: StorebenchTheme.color("color-accent-medium")) }
+            if !eyebrow.isEmpty { StorebenchTextSlot(text: eyebrow, height: 18, font: .sbCaption.bold(), color: StorebenchTheme.color("color-accent-medium"), selectable: false) }
             if actions != nil || feedback != nil {
                 StorebenchHeader { copy } actions: {
                     VStack(alignment: .trailing, spacing: StorebenchTheme.space(2)) {

@@ -13,11 +13,11 @@ struct KeywordBulkView: View {
     @State private var page = 1
 
     var body: some View {
-        StorebenchDialog(title: "Add multiple keyword ideas", wide: true, inlineActions: true, close: { dismiss() }) {
+        StorebenchDialog(title: "Add multiple keyword ideas", kind: .content, inlineActions: true, close: { dismiss() }) {
             Text("Separate terms with commas or new lines. Each term is paired with every selected research territory for one listing language.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
-            StorebenchTextArea(title: "Keywords or phrases", text: $terms, height: StorebenchTheme.textarea(rows: 5), hint: "Separate terms with commas or new lines. Phrases stay together; blank entries are ignored.")
+            StorebenchTextArea(title: "Keywords or Phrases", text: $terms, height: StorebenchTheme.textarea(rows: 5), hint: "Separate terms with commas or new lines. Phrases stay together; blank entries are ignored.")
             StorebenchFormGrid {
-                StorebenchPicker("Listing language for new ideas", selection: $locale, hint: "Research territories do not create listing languages.") { selectionOptions(StoreLocales.codes) { SelectionOption(StoreLocales.name($0), value: $0) } }
+                StorebenchPicker("Listing Language for New Ideas", selection: $locale, hint: "Research territories do not create listing languages.") { selectionOptions(StoreLocales.codes) { SelectionOption(StoreLocales.name($0), value: $0) } }
                 StorebenchFormField(label: "Research territories", hint: "Choose any territory explicitly for unspecified context.") {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 4) {

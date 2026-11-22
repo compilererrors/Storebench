@@ -102,12 +102,8 @@ extension WorkspaceSession {
         guard index < images.count else { throw TestFlightFeedback.Failure.unavailable }
         try requireFeedbackScope(appId: appId, client: client)
         try client.accessCheck()
-        let configuration = client.session.configuration
-        configuration.httpAdditionalHeaders = nil; configuration.httpCookieStorage = nil; configuration.urlCredentialStorage = nil
-        configuration.httpShouldSetCookies = false; configuration.urlCache = nil
-        configuration.timeoutIntervalForRequest = 15; configuration.timeoutIntervalForResource = 15
         var request = URLRequest(url: images[index].url); request.httpShouldHandleCookies = false; request.cachePolicy = .reloadIgnoringLocalCacheData; request.timeoutInterval = 15
-        let response = try await BoundedResponse.read(request, configuration: configuration, maximumBytes: 10_000_000) { http in
+        let response = try await client.files.read(request, maximumBytes: 10_000_000) { http in
             guard (200..<300).contains(http.statusCode) else { throw AppStoreConnectClient.Failure.status(http.statusCode) }
             let type = http.value(forHTTPHeaderField: "Content-Type")?.components(separatedBy: ";").first.map(TextSemantics.trim)?.lowercased()
             guard type == "image/png" || type == "image/jpeg" else { throw TestFlightFeedback.Failure.image }

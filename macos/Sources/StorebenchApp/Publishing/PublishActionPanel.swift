@@ -21,6 +21,8 @@ struct PublishActionPanel: View {
     var guided: (title: String, purpose: String)? = nil
     var prepareTitle = "Prepare Review"
     var syncTitle: String? = nil
+    /// False when the page has its own Sync to Apple for this change, such as a step's footer; the panel then shows its status and review.
+    var showsPrepare = true
     var showsDestinationChoices = true
     /// Told the review shown here, or nil, once the panel has opened or prepared it and whenever it changes state.
     var reviewChanged: ((PublishReview?) -> Void)? = nil
@@ -36,12 +38,16 @@ struct PublishActionPanel: View {
     var versionChanged: ((PublishingWorkspace.Version) -> Void)? = nil
     @State private var pendingTrigger = false
     @State private var approveRequests = 0
+    /// The sync dialog opens on the press, before its review is ready, and shows the preparation, then the changes, then their progress.
+    @State private var syncDialog = false
     let done: (PublishReview?) -> Void
     @State private var editor: PublishingWorkspace.Editor
     @State private var review: PublishReview?
-    /// Whether the review shown next scrolls to its Send to Apple: after a Save, not when a page opens with one prepared for it.
+    /// Whether the review shown next scrolls to its send command: after a Save, not when a page opens with one prepared for it.
     @State private var revealReview = true
     @State private var working = false
+    /// True while the panel only reads App Store Connect's current choices, so it says Reading rather than Preparing.
+    @State private var readingChoices = false
     @State private var publishing = false
     @State private var status = ""
     @State private var issueCode: String?
@@ -59,12 +65,21 @@ struct PublishActionPanel: View {
     @Environment(\.navigationPresentation) private var presentation
     @Environment(\.releaseFieldFocus) private var fieldFocus
     @Environment(\.pageRefresh) private var pageRefresh
+    @Environment(\.readyReviews) private var readyReviews
+    /// The comparison with App Store Connect now running, so Cancel in its dialog can stop it.
+    @State private var preparation: Task<PublishReview, Error>?
+    @State private var preparationStopped = false
+    /// Names this panel's preparation in the window's bar, the same wherever its page opens again.
+    private var preparationKey: String {
+        "prepare/" + account.id + "/" + app.id + "/" + (initialIntent.map(PublishingWorkspace.reviewContext) ?? actions.map(\.rawValue).joined(separator: "/"))
+    }
+    private var preparationTitle: String { guided?.title ?? editor.action.rawValue }
     private var ownBusy: Bool { working || publishing || review?.state == "running" }
     private var busy: Bool { ownBusy || history?.reading == true }
     private var managedReview: Bool { review.map { PublishingWorkspace.Action(scope: $0.request.scope) == nil } ?? false }
-    init(account: Account, app: Account.App, session: WorkspaceSession?, actions: [PublishingWorkspace.Action] = PublishingWorkspace.Action.allCases, initialRequest: PublishRequest? = nil, initialReview: PublishReview? = nil, initialChoices: PublishingWorkspace.Snapshot? = nil, history: History? = nil, automatic: Bool = false, guided: (title: String, purpose: String)? = nil, prepareTitle: String = "Prepare Review", syncTitle: String? = nil, showsDestinationChoices: Bool = true, reviewChanged: ((PublishReview?) -> Void)? = nil, refreshKey: String? = nil, fix: ((String) -> Void)? = nil, checked: (() -> Void)? = nil, trigger: Int = 0, busyChanged: @escaping (Bool) -> Void = { _ in }, versionChanged: ((PublishingWorkspace.Version) -> Void)? = nil, done: @escaping (PublishReview?) -> Void = { _ in }) {
+    init(account: Account, app: Account.App, session: WorkspaceSession?, actions: [PublishingWorkspace.Action] = PublishingWorkspace.Action.allCases, initialRequest: PublishRequest? = nil, initialReview: PublishReview? = nil, initialChoices: PublishingWorkspace.Snapshot? = nil, history: History? = nil, automatic: Bool = false, guided: (title: String, purpose: String)? = nil, prepareTitle: String = "Prepare Review", syncTitle: String? = nil, showsPrepare: Bool = true, showsDestinationChoices: Bool = true, reviewChanged: ((PublishReview?) -> Void)? = nil, refreshKey: String? = nil, fix: ((String) -> Void)? = nil, checked: (() -> Void)? = nil, trigger: Int = 0, busyChanged: @escaping (Bool) -> Void = { _ in }, versionChanged: ((PublishingWorkspace.Version) -> Void)? = nil, done: @escaping (PublishReview?) -> Void = { _ in }) {
         self.initialIntent = initialRequest ?? initialReview?.request
-        self.account = account; self.app = app; self.session = session; self.actions = actions; self.history = history; self.automatic = automatic; self.guided = guided; self.prepareTitle = prepareTitle; self.syncTitle = syncTitle; self.showsDestinationChoices = showsDestinationChoices; self.reviewChanged = reviewChanged; self.refreshKey = refreshKey; self.fix = fix; self.checked = checked; self.trigger = trigger; self.done = done
+        self.account = account; self.app = app; self.session = session; self.actions = actions; self.history = history; self.automatic = automatic; self.guided = guided; self.prepareTitle = prepareTitle; self.syncTitle = syncTitle; self.showsPrepare = showsPrepare; self.showsDestinationChoices = showsDestinationChoices; self.reviewChanged = reviewChanged; self.refreshKey = refreshKey; self.fix = fix; self.checked = checked; self.trigger = trigger; self.done = done
         self.busyChanged = busyChanged
         self.versionChanged = versionChanged
         var selected = PublishingWorkspace.Editor(accountId: account.id, appId: app.id)
@@ -104,7 +119,7 @@ struct PublishActionPanel: View {
             // A panel for one change is named after it, in App Store Connect's words; a panel offering several changes keeps the general title.
             Card(title: editor.preparation.state == .settled ? editor.preparation.title : upToDate ? "Up to Date" : (guided?.title ?? (actions.count == 1 ? editor.action.rawValue : "Prepare a review")), subtitle: guided?.purpose ?? (actions.count == 1 ? Self.purpose(editor.action) : "Read current Apple choices and saved material, then review exactly what would change. Only explicit approval sends changes."), help: "publish-approval") {
                 if actions.count > 1 && guided == nil {
-                    StorebenchCardSection(title: "Review scope") {
+                    StorebenchCardSection(title: "Review Scope") {
                     StorebenchPicker("Change", selection: Binding(get: { editor.action }, set: { value in
                         guard !busy, protection?.allowLeaving() != false else { return }; editor.chooseAction(value); review = nil
                         if value == .submit, editor.snapshot?.builds == nil { Task { await loadChoices() } }
@@ -119,10 +134,14 @@ struct PublishActionPanel: View {
                 if guided == nil || review == nil || failed || !editor.preparation.canPrepare {
                     StorebenchActionGroup {
                         if guided == nil { StorebenchReadButton("Read Current Choices") { await loadChoices(fresh: true) }.storebenchWorking(busy) }
-                        if session != nil {
+                        if session != nil, showsPrepare {
                             // Always in place: dimmed while there is nothing to prepare, with its spinner while it prepares.
-                            StorebenchBusyButton(title: prepareTitle, loadingTitle: "Preparing…", busy: busy, variant: .primary) { Task { await prepare() } }
-                                .storebenchWorking(!busy && (!editor.preparation.canPrepare || managedReview || review != nil || upToDate))
+                            // A sync review prepared ahead opens at once on the press; nothing is prepared twice.
+                            let opensPrepared = syncTitle != nil && review.map { $0.state == "prepared" && PublishingReviewPresentation.canApprove($0, now: Date()) } == true
+                            StorebenchBusyButton(title: prepareTitle, loadingTitle: readingChoices ? "Reading…" : "Preparing…", busy: busy, variant: .primary) {
+                                if opensPrepared { primaryAction() } else { Task { await prepare() } }
+                            }
+                                .storebenchWorking(!busy && !opensPrepared && (!editor.preparation.canPrepare || managedReview || review != nil || upToDate))
                                 .help(editor.preparation.canPrepare ? "Read and review the exact changes before sending" : editor.preparation.detail)
                                 .storebenchControlID("publish.prepare")
                         }
@@ -131,7 +150,8 @@ struct PublishActionPanel: View {
                     HStack(alignment: .top, spacing: StorebenchTheme.space(2)) {
                         StorebenchIcon(name: "check", size: 14).foregroundStyle(StorebenchTheme.color("color-success"))
                             .opacity(upToDate || editor.preparation.state == .settled ? 1 : 0).accessibilityHidden(true).padding(.top, 2)
-                        StorebenchFeedback(text: !failed && !editor.preparation.canPrepare ? editor.preparation.detail : status, height: failed ? 76 : 60, error: failed)
+                        StorebenchFeedback(text: readingChoices && editor.snapshot == nil ? "Reading the current version from App Store Connect…"
+                                           : !failed && !editor.preparation.canPrepare ? editor.preparation.detail : status, height: failed ? 76 : 60, error: failed)
                     }.storebenchControlID("publish.current-status")
                     if !prepareProblems.isEmpty { StorebenchAttention { AppleProblemsView(problems: prepareProblems, fix: fix) } }
                     RecoveryActions(code: issueCode)
@@ -141,7 +161,7 @@ struct PublishActionPanel: View {
             if guided == nil, editor.preparation.state != .settled { reviewPanel }
             // Resume and Recheck Selections sit in the review's own command row; only the next part of a release is offered here.
             if guided == nil, let review, review.state == "complete", review.request.scope == .release, editor.snapshot?.plan != nil, actions.contains(.metadata) {
-                Card(title: "After this review", subtitle: "The version was created. Its text, screenshots and app previews are reviewed next.") {
+                Card(title: "After This Review", subtitle: "The version was created. Its text, screenshots and app previews are reviewed next.") {
                     StorebenchFormFooter {
                         Button("Review Text & Media") { Task { await preparePlannedMaterial() } }.help("Review Saved Text and Media Next").accessibilityLabel("Review Saved Text and Media Next").storebenchWorking(busy)
                     }
@@ -170,7 +190,7 @@ struct PublishActionPanel: View {
                 .filter({ candidate in candidate.state == "prepared" && PublishingReviewPresentation.canApprove(candidate, now: Date())
                     && (wanted.map { candidate.request == $0 } ?? !automatic) }).max(by: { $0.createdAt < $1.createdAt }) {
                 await openReview(waiting.id, scroll: false)
-                if review?.id == waiting.id { status = "Showing the review still waiting for your approval. Nothing is sent until you choose \(ReviewPanel.sendTitle)." }
+                if review?.id == waiting.id { status = "Showing the review still waiting for your approval. Nothing is sent until you choose \(PublishCommandName.of(waiting).confirmation)." }
             } else if automatic, let running = mine.filter({ $0.state == "running" }).max(by: { $0.createdAt < $1.createdAt }) {
                 // A Save still sending keeps its progress here, wherever the step was opened again; nothing new is prepared beside it.
                 await openReview(running.id, scroll: false)
@@ -185,6 +205,8 @@ struct PublishActionPanel: View {
         }
         .onChange(of: "\(review?.id ?? ""):\(review?.state ?? "")") { reviewChanged?(review) }
         .onChange(of: trigger) {
+            // The page's command opens the dialog at once; it shows the preparation until the review is ready.
+            if syncTitle != nil { syncDialog = true }
             if busy { pendingTrigger = true }
             else { primaryAction() }
         }
@@ -192,7 +214,7 @@ struct PublishActionPanel: View {
         .onChange(of: refreshKey) { _, key in
             // Saved fixes also replace a stopped review with a comparison of the current material. Running approvals keep their owner.
             guard automatic, key == "saved" || key?.hasPrefix("material:") == true || key?.hasPrefix("submission:") == true, !busy, review?.state != "running", pageRefresh?.owner.busy != true else { return }
-            // The person just saved, so the new review's Send to Apple comes into view.
+            // The person just saved, so the new review's send command comes into view.
             Task { await prepare(reveal: true) }
         }
         .onChange(of: review?.id) { if let presentation { presentation.store.saveCollection(review?.id ?? "", key: reviewKey, entry: presentation.entry) } }
@@ -231,18 +253,64 @@ struct PublishActionPanel: View {
         .onChange(of: recoveryIntent?.id, initial: true) { if recoveryIntent?.action.target.analyticsOngoing == true, actions.contains(.analytics), !busy, review == nil { editor.chooseAction(.analytics); editor.analyticsSnapshot = false } }
         .onChange(of: ownBusy, initial: true) { history?.busyChanged(ownBusy); busyChanged(ownBusy) }
         .onDisappear { busyChanged(false) }
+        .onChange(of: review?.state) { if syncDialog, let state = review?.state, !["prepared", "running"].contains(state) { syncDialog = false } }
+        // The bar's command opens this dialog again with the review, or with why none was prepared. Opening it any way ends the bar's entry.
+        .onChange(of: readyReviews?.shown?.request, initial: true) { if syncTitle != nil, readyReviews?.takePending(preparationKey) == true { syncDialog = true } }
+        .onChange(of: syncDialog) { if syncDialog { readyReviews?.remove(preparationKey) } }
+        .onAppear { readyReviews?.arrive(preparationKey) }
+        .onDisappear { readyReviews?.leave(preparationKey) }
+        .sheet(isPresented: Binding(get: { syncDialog && syncTitle != nil }, set: { if !$0 { syncDialog = false } })) { syncDialogContent }
         .onChange(of: history?.opening.wrappedValue) { guard let opening = history?.opening, let id = opening.wrappedValue else { return }; opening.wrappedValue = nil; Task { await openReview(id) } }
     }
     /// Keep a page-level press while its choices are loading; never approve a review automatically after a retry.
     private func primaryAction() {
-        if let review, review.state == "prepared" { approveRequests += 1 }
+        if let review, review.state == "prepared" { if syncTitle != nil { syncDialog = true } else { approveRequests += 1 } }
         else { Task { await prepare(managedReview ? review?.request : nil, reveal: true, fresh: true) } }
+    }
+    /// One dialog from the press to the end: the preparation with its progress, or why nothing was prepared, then the review itself.
+    /// It never closes and opens again between those, so nothing flickers.
+    @ViewBuilder private var syncDialogContent: some View {
+        if let review, ["prepared", "running"].contains(review.state), editor.matchesCopyright(review.request) {
+            ReviewPanel(account: account, app: app, session: session, review: $review, done: { Task { await afterPublishing() } }, busyChanged: { publishing = $0 },
+                        fix: fix, prepareAgain: { Task { await prepare(managedReview ? review.request : nil, reveal: true, fresh: true) } },
+                        actionsBusy: busy, syncConfirmation: true, syncTitle: syncTitle ?? "Sync to Apple", localDraft: copyrightDraft, dialogOnly: { syncDialog = false })
+        } else {
+            // Progress alone, or a short result, needs little room; the dialog grows when the review with its changes is ready.
+            StorebenchDialog(title: syncTitle ?? "Sync to Apple", kind: prepareProblems.isEmpty ? .status : .content, subtitle: preparationTitle) {
+                if busy {
+                    // How long each step takes is not known, so the bar shows activity and the text names the step.
+                    StorebenchProgressStatus(message: readingChoices ? "Step 1 of 2 · Reading the current version from App Store Connect…"
+                                             : "Step 2 of 2 · Comparing your saved changes with App Store Connect. Nothing is sent yet.",
+                                             height: 36, activity: true)
+                } else {
+                    StorebenchFeedback(text: status.isEmpty ? editor.preparation.detail : status, height: 76, error: failed)
+                }
+                if !prepareProblems.isEmpty { StorebenchAttention { AppleProblemsView(problems: prepareProblems, fix: fix) } }
+            } actions: {
+                StorebenchActionGroup(alignment: .trailing) {
+                    Button(busy ? "Cancel" : "Close", role: .cancel) {
+                        if busy { preparationStopped = true; preparation?.cancel() }
+                        syncDialog = false
+                    }
+                        .help(busy ? "Stop preparing and close this dialog. Nothing was sent." : "Close this dialog")
+                        .storebenchControlID("publish.sync.close")
+                    // The review keeps being prepared with its progress at the bottom of the window, where it opens when it is ready.
+                    Button("Run in Background") {
+                        readyReviews?.preparing(id: preparationKey, title: preparationTitle)
+                        syncDialog = false
+                    }
+                        .buttonStyle(StorebenchButtonStyle(.primary)).storebenchWorking(!busy || readyReviews == nil)
+                        .help(busy ? "Close this dialog and keep preparing. The bottom of the window shows when the review is ready; nothing is sent until you approve it." : "Nothing is being prepared")
+                        .storebenchControlID("publish.sync.background")
+                }
+            }
+        }
     }
     @ViewBuilder private var reviewPanel: some View {
         if editor.matchesCopyright(review?.request) {
             ReviewPanel(account: account, app: app, session: session, review: $review, done: { Task { await afterPublishing() } }, busyChanged: { publishing = $0 },
                         embedded: guided != nil, fix: fix, resume: { Task { await prepare(managedReview ? review?.request : nil, reveal: true, fresh: true) } },
-                        recheck: { Task { if let request = review?.request { await prepare(request) } } }, actionsBusy: busy, approveRequests: approveRequests, reveals: revealReview, syncConfirmation: syncTitle != nil, syncTitle: syncTitle ?? "Sync to Apple", localDraft: copyrightDraft)
+                        recheck: { Task { if let request = review?.request { await prepare(request) } } }, actionsBusy: busy, approveRequests: approveRequests, reveals: revealReview, syncConfirmation: syncTitle != nil, syncTitle: syncTitle ?? "Sync to Apple", localDraft: copyrightDraft, presentsDialog: false)
                 .storebenchWorking(working)
         } else {
             Text("The copyright changed after this review was prepared. Prepare a new review to send the current text.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
@@ -253,15 +321,15 @@ struct PublishActionPanel: View {
         case .metadata:
             return AnyView(VStack(alignment: .leading, spacing: 12) {
                 StorebenchFormGrid {
-                StorebenchPicker("Source revision", selection: Binding(get: { editor.revisionId }, set: { editor.chooseSource($0); review = nil })) {
+                StorebenchPicker("Source Revision", selection: Binding(get: { editor.revisionId }, set: { editor.chooseSource($0); review = nil })) {
                     if !(editor.snapshot?.sources?.contains { $0.id == editor.revisionId } ?? false) { SelectionOption("Source unavailable · read or choose current material", value: editor.revisionId) }
                     selectionOptions(editor.snapshot?.sources ?? []) { SelectionOption($0.name, value: $0.id) }
                 }.storebenchWorking(busy)
-                StorebenchPicker("Source version", selection: Binding(get: { editor.sourceVersionId }, set: { editor.chooseSourceVersion($0); review = nil })) {
+                StorebenchPicker("Source Version", selection: Binding(get: { editor.sourceVersionId }, set: { editor.chooseSourceVersion($0); review = nil })) {
                     if !(editor.source?.versions.contains { $0.id == editor.sourceVersionId } ?? false) { SelectionOption("Choose a saved source version", value: editor.sourceVersionId) }
                     selectionOptions(editor.source?.versions ?? []) { SelectionOption($0.name, value: $0.id) }
                 }.storebenchWorking(busy)
-                StorebenchPicker("Apple destination", selection: Binding(get: { editor.targetMode }, set: { editor.chooseTarget($0); review = nil })) {
+                StorebenchPicker("Apple Destination", selection: Binding(get: { editor.targetMode }, set: { editor.chooseTarget($0); review = nil })) {
                     SelectionOption("Existing Apple version matching the source", value: "apple-version")
                     if editor.planSelected { SelectionOption("Version draft · \(editor.snapshot?.plan?.label ?? "")", value: "release-plan") }
                 }.storebenchWorking(busy)
@@ -275,7 +343,7 @@ struct PublishActionPanel: View {
             })
         case .pricing:
             return AnyView(Group {
-                StorebenchPicker("Saved pricing profile", selection: Binding(get: { editor.profileId }, set: { editor.chooseProfile($0); review = nil })) {
+                StorebenchPicker("Saved Pricing Profile", selection: Binding(get: { editor.profileId }, set: { editor.chooseProfile($0); review = nil })) {
                     if !(editor.snapshot?.profiles?.contains { $0.id == editor.profileId } ?? false) { SelectionOption("Read and choose a saved profile", value: editor.profileId) }
                     selectionOptions(editor.snapshot?.profiles ?? []) { SelectionOption($0.name, value: $0.id) }
                 }.storebenchFormColumn().storebenchWorking(busy)
@@ -288,7 +356,7 @@ struct PublishActionPanel: View {
         case .copyright, .submit, .cancel, .releaseVersion:
             return AnyView(Group {
                 if guided == nil || editor.action != .copyright {
-                StorebenchPicker("Apple version", selection: Binding(get: { editor.versionId }, set: { value in
+                StorebenchPicker("Apple Version", selection: Binding(get: { editor.versionId }, set: { value in
                     guard !busy, protection?.allowLeaving() != false else { return }; editor.chooseVersion(value); review = nil
                 })) {
                     if editor.version == nil { SelectionOption("Read or choose a current Apple version", value: editor.versionId) }
@@ -307,7 +375,7 @@ struct PublishActionPanel: View {
                     }
                 }
                 if editor.action == .submit {
-                    StorebenchPicker("Build for this version", selection: Binding(get: { editor.buildId }, set: { editor.chooseBuild($0); review = nil })) {
+                    StorebenchPicker("Build for This Version", selection: Binding(get: { editor.buildId }, set: { editor.chooseBuild($0); review = nil })) {
                         SelectionOption("Use build already attached at Apple", value: "")
                         if !editor.buildId.isEmpty, !editor.builds.contains(where: { $0.id == editor.buildId }) { SelectionOption("Saved build unavailable · choose again", value: editor.buildId) }
                         selectionOptions(editor.builds) { SelectionOption($0.name, value: $0.id) }
@@ -324,7 +392,7 @@ struct PublishActionPanel: View {
     }
     @discardableResult private func loadChoices(fresh: Bool = false) async -> Bool {
         await ScreenReads.reading(fresh: fresh) {
-            guard !working, !publishing, let session else { return false }; working = true; defer { working = false }
+            guard !working, !publishing, let session else { return false }; working = true; readingChoices = true; defer { working = false; readingChoices = false }
             do {
                 let value = try await session.publishingWorkspace(account: account, appId: app.id, includeBuilds: editor.action == .submit, client: try await session.readClient(for: account))
                 try Task.checkCancellation()
@@ -334,7 +402,10 @@ struct PublishActionPanel: View {
                 if editor.preparation.state == .settled {
                     markUpToDate(editor.preparation.detail)
                     if previous != editor.version?.state { checked?() }
-                } else { status = value.issues.isEmpty ? "Current choices read. Your existing inputs and selections are kept." : "Some choices remain unknown. Retry the read before preparing those changes." }
+                } else if value.issues.isEmpty {
+                    // A step whose own command starts the review shows only its purpose; a read that went well needs no message.
+                    status = guided != nil && !showsPrepare ? "" : "Current choices read. Your existing inputs and selections are kept."
+                } else { status = "Some choices remain unknown. Retry the read before preparing those changes." }
                 return value.versions != nil || editor.action == .analytics
             }
             catch is CancellationError { return false }
@@ -359,10 +430,17 @@ struct PublishActionPanel: View {
     }
     @discardableResult private func prepare(_ savedRequest: PublishRequest? = nil, reveal shows: Bool = true, fresh: Bool = false) async -> Bool {
         guard !busy, let session else { return false }
-        if fresh, !(await loadChoices(fresh: true)) { return false }
+        if shows, syncTitle != nil { syncDialog = true }
+        // The window's bar follows a preparation sent to the background, not this view, so how it ended shows on any page.
+        let reviews = readyReviews, key = preparationKey, title = preparationTitle
+        var outcome = ReadyReviews.Prepared.failed
+        defer { reviews?.prepared(id: key, title: title, outcome) }
+        preparationStopped = false
+        if fresh, !(await loadChoices(fresh: true)) { if preparationStopped { outcome = .cancelled }; return false }
+        if preparationStopped { outcome = .cancelled; return false }
         if savedRequest == nil, !editor.preparation.canPrepare {
             failed = false; issueCode = nil; status = editor.preparation.detail; review = nil
-            if editor.preparation.state == .settled { upToDate = true; checked?() }
+            if editor.preparation.state == .settled { upToDate = true; outcome = .nothingToSync; checked?() }
             return editor.preparation.state == .settled
         }
         if copyrightDirty, !(await saveCopyrightDraft()) { failed = true; status = "Copyright could not be saved on this Mac. Your input is kept; compare the latest save before syncing."; return false }
@@ -373,20 +451,28 @@ struct PublishActionPanel: View {
         do { let request = try savedRequest ?? editor.request(); guard request.accountId == account.id, request.appId == app.id else { throw PublishFailure.invalid("Choose a review belonging to this app.") }; // A review prepared ahead, such as Add for Review during the earlier Release steps, shows at once.
             let prepared: PublishReview
             if !fresh, let ahead = await session.reviewPreparedAhead(request) { prepared = ahead }
-            else { prepared = try await session.preparePublishing(account: account, request: request, client: try await session.client(for: account)) }
+            else {
+                let client = try await session.client(for: account)
+                let comparison = Task { try await session.preparePublishing(account: account, request: request, client: client) }
+                preparation = comparison; defer { preparation = nil }
+                prepared = try await comparison.value
+            }
             if prepared.steps.isEmpty {
+                outcome = .nothingToSync
                 markUpToDate("App Store Connect already matches these saved changes. Nothing needs another sync.")
             } else {
-                review = prepared; status = "The review is ready below. Nothing is sent until you choose \(ReviewPanel.sendTitle)."
+                outcome = .ready
+                review = prepared; status = "The review is ready below. Nothing is sent until you choose \(PublishCommandName.of(prepared).confirmation)."
                 if shows && guided == nil { reveal() }
             }
         }
         // The message says what to change here; recovery steps would only point back to this same panel.
-        catch PublishFailure.noChanges where editor.mediaStage == PublishRequest.uploadStage { issueCode = nil; upToDate = true; status = "Done. Every file is already in Asset Library, so nothing needs to be uploaded."; review = nil }
-        catch PublishFailure.noChanges where editor.action == .release && guided != nil { issueCode = nil; upToDate = true; status = "Done. App Store Connect already has this version with this release option."; review = nil }
-        catch PublishFailure.noChanges where editor.mediaStage == PublishRequest.quickStage { issueCode = nil; upToDate = true; status = "Done. App Store Connect already has this text, so there is nothing to save."; review = nil }
-        catch PublishFailure.noChanges where editor.mediaStage == PublishRequest.screenshotsStage { issueCode = nil; upToDate = true; status = "Done. App Previews and Screenshots already match the files and order above."; review = nil }
-        catch PublishFailure.noChanges where editor.action == .metadata || editor.action == .copyright {
+        catch where preparationStopped { outcome = .cancelled; issueCode = nil; failed = false; status = "Stopped. No review was prepared and nothing was sent."; if guided == nil { review = nil } }
+        catch PublishFailure.noChanges where editor.mediaStage == PublishRequest.uploadStage { outcome = .nothingToSync; issueCode = nil; upToDate = true; status = "Done. Every file is already in Asset Library, so nothing needs to be uploaded."; review = nil }
+        catch PublishFailure.noChanges where editor.action == .release && guided != nil { outcome = .nothingToSync; issueCode = nil; upToDate = true; status = "Done. App Store Connect already has this version with this release option."; review = nil }
+        catch PublishFailure.noChanges where editor.mediaStage == PublishRequest.quickStage { outcome = .nothingToSync; issueCode = nil; upToDate = true; status = "Done. App Store Connect already has this text, so there is nothing to save."; review = nil }
+        catch PublishFailure.noChanges where editor.mediaStage == PublishRequest.screenshotsStage { outcome = .nothingToSync; issueCode = nil; upToDate = true; status = "Done. App Previews and Screenshots already match the files and order above."; review = nil }
+        catch PublishFailure.noChanges where editor.action == .metadata || editor.action == .copyright { outcome = .nothingToSync;
             markUpToDate("App Store Connect already matches these saved changes. Nothing needs another sync.")
         }
         catch let failure as PublishFailure {

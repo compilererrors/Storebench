@@ -8,7 +8,8 @@ import Testing
         var checks = 0, reads = 0, preparations = 0, indexes = 0, cancellations = 0, releases = 0
         var due = true, hold = false
         var priorities: [AppleReadPriority] = []
-        func check() -> Bool { checks += 1; return due }
+        var order: [String] = []
+        func check() -> Bool { checks += 1; order.append("catalog"); return due }
         func read() async throws -> AppCatalogRefresh {
             reads += 1; priorities.append(AppleReadPriority.current)
             if hold {
@@ -20,7 +21,7 @@ import Testing
         }
         func prepare() { preparations += 1; priorities.append(AppleReadPriority.current) }
         func prepareIndexes() { indexes += 1; priorities.append(AppleReadPriority.current) }
-        func releaseStates() { releases += 1; priorities.append(AppleReadPriority.current) }
+        func releaseStates() { releases += 1; order.append("release"); priorities.append(AppleReadPriority.current) }
         func setHold(_ hold: Bool) { self.hold = hold }
     }
     private func fixture(_ probe: Probe, delay: Duration? = .milliseconds(20), poll: Duration = .milliseconds(30), preparation: Duration = .seconds(600)) throws -> (WorkspaceController, URL) {
@@ -139,5 +140,12 @@ import Testing
         #expect(model.state == .unlocked([account]))
         #expect(await probe.reads == 1, "Adopting the deferred catalog does not spend another request")
         await model.signOut()
+    }
+
+    @Test func releaseStatusIsCheckedBeforeTheAppListAndSoonAfterOpening() async throws {
+        let probe = Probe(), (model, root) = try fixture(probe, delay: .milliseconds(20), poll: .seconds(3600)); defer { try? FileManager.default.removeItem(at: root) }
+        await model.start(); await model.setUp(password: nil)
+        try await wait { let releases = await probe.releases, checks = await probe.checks; return releases == 1 && checks == 1 }
+        #expect(await probe.order.prefix(2) == ["release", "catalog"])
     }
 }

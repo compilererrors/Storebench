@@ -39,8 +39,8 @@ import UniformTypeIdentifiers
         VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             ReportingSetupView(account: account, app: app, session: session, source: $source, disabled: blocked || working || downloadRunning,
                                onReady: { reportingReady = $0 }, onBusy: { reportingBusy = $0 }, onUseFile: { choose() })
-            Card(title: "Download sales reports", subtitle: "Daily Summary Sales Reports are saved locally. Days Apple has not delivered stay unknown.", help: "sales") {
-                StorebenchCardSection(title: "Completed reporting days") {
+            Card(title: "Download Sales Reports", subtitle: "Daily Summary Sales Reports are saved locally. Days Apple has not delivered stay unknown.", help: "sales") {
+                StorebenchCardSection(title: "Completed Reporting Days") {
                 StorebenchFormGrid {
                 StorebenchDateField("Ending day (Pacific reporting date)", selection: $endingDay, in: ...PeriodDates.date(SalesReports.latestCompletedDay())!, displayedComponents: .date)
                     .reportFocus("sales-download-period", available: !unavailable, focused: $periodFocused)
@@ -53,7 +53,7 @@ import UniformTypeIdentifiers
                 downloadProgress
                 RecoveryActions(code: downloadIssue ?? (jobReadFailed ? "SB-REPORT-JOB" : downloadJob?.code), showMessage: true)
             }.id("sales-reports")
-            Card(title: "Sales report file", subtitle: "Import an Apple Summary Sales Report or Storebench CSV. No Reporter connection or vendor number is needed.") {
+            Card(title: "Sales Report File", subtitle: "Import an Apple Summary Sales Report or Storebench CSV. No Reporter connection or vendor number is needed.") {
                 StorebenchActionGroup { fileActions }
                 ScrollView { Text(chosen?.lastPathComponent ?? "No file selected").font(.sbCallout).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
                     .frame(height: 44).accessibilityLabel("Selected report file")
@@ -70,7 +70,7 @@ import UniformTypeIdentifiers
                     }
                 }
             } else if !records.isEmpty {
-                Card(title: "Saved sales periods", subtitle: "Sales and Pricing use the same saved reports. Removing a period affects only local history.") {
+                Card(title: "Saved Sales Periods", subtitle: "Sales and Pricing use the same saved reports. Removing a period affects only local history.") {
                     DisclosureGroup("Manage saved periods (\(records.count))") {
                         StorebenchActionGroup { Button("Export Summary CSV") { export(nil, format: .summary) }.help("Export All Periods · Summary CSV").accessibilityLabel("Export All Periods · Summary CSV").storebenchWorking(unavailable) }
                         StorebenchCollection(items: Array(records.reversed()).map { StorebenchCollectionEntry(id: $0.periodId, value: $0) }, title: { entry in let record = entry.value; return record.beginDate + " – " + record.endDate }, empty: "No saved sales periods yet. Download sales reports to save a period.") { entry in

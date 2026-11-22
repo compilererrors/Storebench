@@ -26,6 +26,18 @@ public enum JSONValue: Codable, Equatable, Sendable {
         }
     }
     public var string: String? { if case .string(let value) = self { value } else { nil } }
+
+    /// A value Foundation's JSON reader produced. JSON's true and false are told apart from numbers by their type.
+    init(json value: Any) throws {
+        switch value {
+        case is NSNull: self = .null
+        case let value as NSNumber: self = CFGetTypeID(value) == CFBooleanGetTypeID() ? .bool(value.boolValue) : .number(value.doubleValue)
+        case let value as String: self = .string(value)
+        case let values as [Any]: self = .array(try values.map(JSONValue.init(json:)))
+        case let values as [String: Any]: self = .object(try values.mapValues(JSONValue.init(json:)))
+        default: throw AppStoreConnectClient.Failure.unreadableResponse
+        }
+    }
 }
 
 /// The signed request token for App Store Connect: ES256 with the key ID,
@@ -63,8 +75,31 @@ public final class AppStoreConnectClient: NSObject, URLSessionTaskDelegate, Send
         public let attributes: [String: JSONValue]?
         public let relationships: [String: JSONValue]?
     }
-    struct Page: Decodable { let data: OneOrMany; let included: [Resource]?; let links: Links?; struct Links: Decodable { let next: String? } }
-    enum OneOrMany: Decodable {
+    struct Page: Decodable, Sendable {
+        let data: OneOrMany; let included: [Resource]?; let links: Links?; struct Links: Decodable, Sendable { let next: String? }
+
+        /// Reads one answer in a single pass. It accepts and refuses the same answers as decoding `Page` member by member, several times faster.
+        init(response: Data) throws {
+            guard let root = (try? JSONSerialization.jsonObject(with: response)) as? [String: Any], let data = root["data"] else { throw Failure.unreadableResponse }
+            switch data {
+            case is NSNull: self.data = .many([])
+            case let values as [Any]: self.data = .many(try values.map(Resource.init(json:)))
+            default: self.data = .one(try Resource(json: data))
+            }
+            if let value = root["included"], !(value is NSNull) {
+                guard let values = value as? [Any] else { throw Failure.unreadableResponse }
+                included = try values.map(Resource.init(json:))
+            } else { included = nil }
+            if let value = root["links"], !(value is NSNull) {
+                guard let object = value as? [String: Any] else { throw Failure.unreadableResponse }
+                if let next = object["next"], !(next is NSNull) {
+                    guard let text = next as? String else { throw Failure.unreadableResponse }
+                    links = Links(next: text)
+                } else { links = Links(next: nil) }
+            } else { links = nil }
+        }
+    }
+    enum OneOrMany: Decodable, Sendable {
         case one(Resource), many([Resource])
         init(from decoder: Decoder) throws { if try decoder.singleValueContainer().decodeNil() { self = .many([]) } else if let list = try? [Resource](from: decoder) { self = .many(list) } else { self = .one(try Resource(from: decoder)) } }
         var resources: [Resource] { switch self { case .one(let value): [value]; case .many(let values): values } }
@@ -92,12 +127,34 @@ public final class AppStoreConnectClient: NSObject, URLSessionTaskDelegate, Send
     let readCacheScope: String
 
     /// The connections every client without its own configuration shares for the life of the app.
-    private struct Shared: @unchecked Sendable { let session: URLSession, pool: BoundedResponse.Pool }
+    private struct Shared: @unchecked Sendable { let session: URLSession, pool: BoundedResponse.Pool, files: BoundedResponse.Pool }
     private static let shared: Shared = {
         let configuration = configured(.ephemeral)
         configuration.httpCookieStorage = nil; configuration.urlCredentialStorage = nil; configuration.urlCache = nil
-        return Shared(session: URLSession(configuration: Network.guarded(configuration)), pool: BoundedResponse.Pool(configuration: configuration))
+        return Shared(session: URLSession(configuration: Network.guarded(configuration)), pool: BoundedResponse.Pool(configuration: configuration),
+                      files: BoundedResponse.Pool(configuration: fileConfiguration(configuration)))
     }()
+    /// File hosts never get the API token, cookies, saved credentials or a disk cache.
+    private static func fileConfiguration(_ source: URLSessionConfiguration) -> URLSessionConfiguration {
+        let configuration = source.copy() as! URLSessionConfiguration
+        configuration.httpAdditionalHeaders = nil; configuration.httpCookieStorage = nil; configuration.httpShouldSetCookies = false
+        configuration.urlCredentialStorage = nil; configuration.urlCache = nil
+        return configuration
+    }
+    private final class OwnFiles: @unchecked Sendable {
+        private let lock = NSLock()
+        private var pool: BoundedResponse.Pool?
+        func pool(_ source: URLSessionConfiguration) -> BoundedResponse.Pool {
+            lock.withLock {
+                if let pool { return pool }
+                let created = BoundedResponse.Pool(configuration: AppStoreConnectClient.fileConfiguration(source)); pool = created; return created
+            }
+        }
+    }
+    private let ownFiles = OwnFiles()
+    /// Images and report files from Apple's file hosts go through one connection pool, so each download reuses an open connection
+    /// to its host instead of opening its own. Each download keeps its own byte limit and response check, and redirects are refused.
+    var files: BoundedResponse.Pool { ownsSession ? ownFiles.pool(session.configuration) : Self.shared.files }
     /// A connection that goes quiet is given up sooner on the first try of a read, and the read is sent again on a new connection.
     /// Later tries wait the full time, for answers Apple takes long to prepare.
     static func readTimeout(_ attempt: Int) -> TimeInterval { attempt == 0 ? 12 : 30 }
@@ -147,7 +204,7 @@ public final class AppStoreConnectClient: NSObject, URLSessionTaskDelegate, Send
             request.timeoutInterval = Self.readTimeout(attempt)
             let result: BoundedResponse.Result
             let current = request, pool = pool
-            do { result = try await AppleReadAdmission.shared(for: origin.host).run(cost: AppleReadCost.current ?? .bulk) { try await pool.read(current, maximumBytes: maxBytes) } } catch where Self.retriesConnection(error, attempt: attempt) { continue }
+            do { result = try await AppleReadAdmission.shared(for: origin.host).run(cost: AppleReadCost.current ?? .bulk, account: token.account.id) { try await pool.read(current, maximumBytes: maxBytes) } } catch where Self.retriesConnection(error, attempt: attempt) { continue }
             try accessCheck()
             let data = result.data, http = result.response
             if [429, 500, 502, 503, 504].contains(http.statusCode), attempt < 2 {
@@ -236,16 +293,26 @@ public final class AppStoreConnectClient: NSObject, URLSessionTaskDelegate, Send
 
     private func page(_ path: String) async throws -> Page {
         try accessCheck(); try Task.checkCancellation()
-        let data: Data
+        let page: Page
         if let readCache {
             let account = token.account
             let key = JSONText.array([.string(origin.absoluteString), .string(account.id), .string(account.keyId),
                 .string(account.issuerId ?? ""), .string(account.keyType), .string(readCacheScope), .string(path)]).sha256
-            data = try await readCache.read(key, host: origin.host) { try await self.pageBytes(path) }
-        } else { data = try await pageBytes(path) }
+            // The reader whose request it was already decoded the answer to check it; every later reader gets that decoded answer.
+            let own = LoadedPage()
+            let data = try await readCache.read(key, host: origin.host) { let loaded = try await self.loadPage(path); own.keep(loaded); return loaded.data }
+            if let loaded = own.page(for: data) { page = loaded; await readCache.keepDecoded(loaded, key, for: data) }
+            else if let kept = await readCache.decoded(key, for: data) as? Page { page = kept }
+            else { page = try Page(response: data); await readCache.keepDecoded(page, key, for: data) }
+        } else { page = try await loadPage(path).page }
         try accessCheck(); try Task.checkCancellation()
-        guard let page = try? JSONDecoder().decode(Page.self, from: data) else { throw Failure.unreadableResponse }
         return page
+    }
+    private final class LoadedPage: @unchecked Sendable {
+        private let lock = NSLock()
+        private var loaded: (data: Data, page: Page)?
+        func keep(_ value: (data: Data, page: Page)) { lock.withLock { loaded = value } }
+        func page(for data: Data) -> Page? { lock.withLock { loaded?.data == data ? loaded?.page : nil } }
     }
 
     /// Request shape only: continuation pages are bulk work; a single resource or a bounded small page is metadata.
@@ -261,7 +328,7 @@ public final class AppStoreConnectClient: NSObject, URLSessionTaskDelegate, Send
         return .standard
     }
 
-    private func pageBytes(_ path: String) async throws -> Data {
+    private func loadPage(_ path: String) async throws -> (data: Data, page: Page) {
         try accessCheck()
         guard let url = URL(string: path, relativeTo: origin), url.host == origin.host, path.hasPrefix("/v1/") || path.hasPrefix("/v2/") else { throw Failure.invalidPath }
         var request = URLRequest(url: url)
@@ -272,7 +339,7 @@ public final class AppStoreConnectClient: NSObject, URLSessionTaskDelegate, Send
             request.timeoutInterval = Self.readTimeout(attempt)
             let result: BoundedResponse.Result
             let current = request, pool = pool
-            do { result = try await AppleReadAdmission.shared(for: origin.host).run(cost: AppleReadCost.current ?? Self.readCost(path)) { try await pool.read(current, maximumBytes: 4_000_000) } } catch where Self.retriesConnection(error, attempt: attempt) { continue }
+            do { result = try await AppleReadAdmission.shared(for: origin.host).run(cost: AppleReadCost.current ?? Self.readCost(path), account: token.account.id) { try await pool.read(current, maximumBytes: 4_000_000) } } catch where Self.retriesConnection(error, attempt: attempt) { continue }
             try accessCheck()
             let data = result.data, http = result.response
             AppleRequestBudget.record(http, keyId: token.account.keyId)
@@ -283,10 +350,22 @@ public final class AppStoreConnectClient: NSObject, URLSessionTaskDelegate, Send
                 continue
             }
             guard (200..<300).contains(http.statusCode) else { throw Self.failure(status: http.statusCode, data: data, contentType: http.value(forHTTPHeaderField: "Content-Type")) }
-            guard (try? JSONDecoder().decode(Page.self, from: data)) != nil else { throw Failure.unreadableResponse }
-            return data
+            return (data, try Diagnostics.measure("Apple response decode", slow: .milliseconds(100)) { try Page(response: data) })
         }
         throw Failure.unreadableResponse
+    }
+}
+
+extension AppStoreConnectClient.Resource {
+    /// One resource object as Foundation's JSON reader produced it. A missing or null member is absent; any other shape is refused.
+    init(json value: Any) throws {
+        guard let object = value as? [String: Any], let type = object["type"] as? String, let id = object["id"] as? String else { throw AppStoreConnectClient.Failure.unreadableResponse }
+        func members(_ name: String) throws -> [String: JSONValue]? {
+            guard let value = object[name], !(value is NSNull) else { return nil }
+            guard let values = value as? [String: Any] else { throw AppStoreConnectClient.Failure.unreadableResponse }
+            return try values.mapValues(JSONValue.init(json:))
+        }
+        self.init(type: type, id: id, attributes: try members("attributes"), relationships: try members("relationships"))
     }
 }
 
@@ -295,13 +374,22 @@ public final class AppStoreConnectClient: NSObject, URLSessionTaskDelegate, Send
 public enum AppleRequestBudget {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var remaining: [String: (count: Int, at: ContinuousClock.Instant)] = [:]
+    /// The wait Apple named in its latest rate-limit answer for each API key, in seconds; nil when it named none.
+    nonisolated(unsafe) private static var waits: [String: Double] = [:]
+    /// The longest wait Apple may ask for and still have the same request sent again by itself.
+    public static let longestPause: Double = 90
     /// Below this many requests left in the hour, nothing is read ahead.
     public static let reserve = 400
 
     static func record(_ response: HTTPURLResponse, keyId: String) {
-        if response.statusCode == 429 { lock.withLock { remaining[keyId] = (0, .now) }; return }
-        guard let header = response.value(forHTTPHeaderField: "X-Rate-Limit"), let left = parse(header) else { return }
-        lock.withLock { remaining[keyId] = (left, .now) }
+        if response.statusCode == 429 {
+            let asked = response.value(forHTTPHeaderField: "Retry-After").flatMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+            lock.withLock { remaining[keyId] = (0, .now); waits[keyId] = asked }
+            return
+        }
+        // An answer that is not a rate-limit refusal ends the wait Apple named in an earlier one.
+        let left = response.value(forHTTPHeaderField: "X-Rate-Limit").flatMap(parse)
+        lock.withLock { waits[keyId] = nil; if let left { remaining[keyId] = (left, .now) } }
     }
     /// `user-hour-lim:3600;user-hour-rem:3412;` gives 3412.
     static func parse(_ header: String) -> Int? {
@@ -310,6 +398,13 @@ public enum AppleRequestBudget {
             if pair.count == 2, pair[0] == "user-hour-rem", let value = Int(pair[1]), value >= 0 { return value }
         }
         return nil
+    }
+    /// How long to wait before sending again a request Apple refused for its rate limit: the wait Apple named in its latest
+    /// answer for this key, else `fallback`. Nil when Apple asked for longer than `longestPause`, so the caller stops instead.
+    static func pause(keyId: String, fallback: Duration) -> Duration? {
+        guard let asked = lock.withLock({ waits[keyId] }) else { return fallback }
+        guard asked.isFinite, asked >= 0, asked <= longestPause else { return nil }
+        return .milliseconds(Int(asked * 1_000))
     }
     /// Whether requests made ahead of time may still be sent with this key. An answer older than an hour no longer counts.
     public static func allowsReadingAhead(keyId: String) -> Bool {

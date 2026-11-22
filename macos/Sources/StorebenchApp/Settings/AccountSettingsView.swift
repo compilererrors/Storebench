@@ -43,7 +43,7 @@ struct AccountSettings: View {
                 }
             }
             .settingsSearchAnchor("accounts-connected")
-            StorebenchFormSection("Credential storage and connection help") {
+            StorebenchFormSection("Credential Storage and Connection Help") {
                 if model.writer.usesKeychain { Text("If macOS asks to access Storebench credentials, choose Always Allow. After a failed Keychain request, unlock your login keychain and choose Retry Keychain Access for the affected account.") }
                 else { Text("Credentials are encrypted with your Storebench password. Storebench does not access Keychain. Sign out and unlock again if storage protection changed in another session.") }
                 Text("Reconnect This Key verifies the original Key ID and issuer, then replaces its saved private key. Saved app history and drafts remain available. To use a different Key ID, connect another account.")
@@ -114,7 +114,7 @@ struct ReconnectAccountView: View {
     @State private var issueCode: String?
     @State private var protection = EditorProtection()
     var body: some View {
-        StorebenchDialog(title: "Reconnect This Key", height: 600, busy: working, close: { if protection.allowLeaving() { privateKey = ""; done() } }) {
+        StorebenchDialog(title: "Reconnect This Key", kind: .form, busy: working, close: { if protection.allowLeaving() { privateKey = ""; done() } }) {
                 StorebenchTextSlot(text: account.name, height: StorebenchTheme.measure("sectionTitle"), font: .sbHeadline)
                 StorebenchTextSlot(text: "Key ID \(account.keyId)\(account.issuerId.map { " · Issuer ID \($0)" } ?? "")", height: 54, font: .sbCallout)
                 Text("Choose the original downloaded P-256 .p8 file for this key. Storebench verifies app access before replacing the private key in your selected encrypted credential storage. Saved app selections, history and drafts remain available.")

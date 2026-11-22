@@ -170,13 +170,99 @@ import Testing
         reviews.update(id: "synthetic-2", title: "Text for 1.10", state: "prepared")
         #expect(ReadyReviews.text(reviews.entries) == "Ready to send · Create macOS version 1.10 · 1 more")
         reviews.update(id: "synthetic-1", title: "Create macOS version 1.10", state: "running")
-        #expect(ReadyReviews.text(reviews.entries) == "Sending · Create macOS version 1.10 · 1 more")
+        #expect(ReadyReviews.text(reviews.entries) == "Syncing to Apple · Create macOS version 1.10 · 1 more")
         reviews.update(id: "synthetic-1", title: "Create macOS version 1.10", state: "complete")
         #expect(ReadyReviews.text(reviews.entries) == "Ready to send · Text for 1.10")
         reviews.show("synthetic-2"); let first = reviews.shown?.request
         reviews.show("synthetic-2")
         #expect(reviews.shown?.id == "synthetic-2" && reviews.shown?.request != first)
         reviews.remove("synthetic-2")
-        #expect(reviews.entries.isEmpty && ReadyReviews.text(reviews.entries).isEmpty)
+        #expect(reviews.entries.isEmpty && ReadyReviews.text(reviews.entries, finished: nil).isEmpty)
+    }
+
+    /// A sync keeps its place and progress in the bar when its page closes, and the bar then says how it ended.
+    @Test func aSyncRunInTheBackgroundKeepsItsProgressAndSaysHowItEnded() {
+        let reviews = ReadyReviews()
+        reviews.update(id: "synthetic-text", title: "Save text · iOS 2.7", state: "prepared")
+        reviews.leave("synthetic-text")
+        #expect(reviews.entries.isEmpty, "A review waiting for approval leaves with its page")
+        reviews.update(id: "synthetic-text", title: "Save text · iOS 2.7", state: "running", done: 1, total: 4)
+        reviews.leave("synthetic-text")
+        #expect(ReadyReviews.text(reviews.entries) == "Syncing to Apple · Save text · iOS 2.7 · 1 of 4 steps" && ReadyReviews.progress(reviews.entries) == 0.25)
+        #expect(ReadyReviews.unavailable(reviews.entries) != nil, "Go to Review waits for the page that shows it")
+        reviews.arrive("synthetic-text")
+        #expect(ReadyReviews.unavailable(reviews.entries) == nil)
+        reviews.update(id: "synthetic-text", title: "Save text · iOS 2.7", state: "complete", done: 4, total: 4)
+        #expect(reviews.entries.isEmpty && ReadyReviews.text(reviews.entries, finished: reviews.finished) == "Synced to Apple · Save text · iOS 2.7")
+        reviews.clearFinished("synthetic-text")
+        reviews.update(id: "synthetic-build", title: "Add build", state: "running", done: 0, total: 2)
+        reviews.update(id: "synthetic-build", title: "Add build", state: "failed")
+        #expect(ReadyReviews.text(reviews.entries, finished: reviews.finished).hasPrefix("Sync stopped · Add build"))
+        // A review that was only waiting never reports an ending.
+        reviews.clearFinished("synthetic-build")
+        reviews.update(id: "synthetic-other", title: "Other", state: "prepared")
+        reviews.update(id: "synthetic-other", title: "Other", state: "complete")
+        #expect(reviews.finished == nil)
+    }
+
+    /// Run in Background on a review still being prepared keeps it in the bar until it is ready or says why it is not.
+    @Test func aReviewPreparedInTheBackgroundIsNamedUntilItIsReadyOrStopped() {
+        let reviews = ReadyReviews()
+        var page = LibraryLocation(selection: "synthetic-account/1", section: .release), opened: [LibraryLocation] = []
+        let start = page
+        reviews.currentLocation = { page }; reviews.open = { opened.append($0); page = $0 }
+        reviews.preparing(id: "prepare/synthetic", title: "Create Version")
+        #expect(ReadyReviews.text(reviews.entries) == "Preparing review · Create Version" && ReadyReviews.working(reviews.entries) && ReadyReviews.progress(reviews.entries) == nil)
+        #expect(ReadyReviews.command(reviews.entries) == "Go to Review" && ReadyReviews.unavailable(reviews.entries) != nil, "Nothing can be opened before the review exists")
+        // The page closes: the preparation stays named, and the bar opens that page again once the review is ready.
+        reviews.leave("prepare/synthetic"); page = LibraryLocation(selection: "synthetic-account/1", section: .overview)
+        #expect(reviews.isPreparing("prepare/synthetic"))
+        reviews.prepared(id: "prepare/synthetic", title: "Create Version", .ready)
+        #expect(ReadyReviews.text(reviews.entries) == "Ready to send · Create Version" && ReadyReviews.unavailable(reviews.entries) == nil)
+        reviews.go()
+        #expect(opened == [start] && reviews.shown?.id == "prepare/synthetic")
+        #expect(reviews.takePending("prepare/synthetic") && !reviews.takePending("prepare/synthetic"), "The view that owns it shows it once")
+        reviews.remove("prepare/synthetic")
+
+        // A preparation that failed keeps Go to Resolve, which opens its page and shows why.
+        reviews.preparing(id: "prepare/synthetic", title: "Create Version")
+        page = LibraryLocation(selection: "synthetic-account/2", section: .overview); opened = []
+        reviews.prepared(id: "prepare/synthetic", title: "Create Version", .failed)
+        #expect(reviews.entries.isEmpty && ReadyReviews.text(reviews.entries, finished: reviews.finished) == "Review not prepared · Create Version")
+        #expect(ReadyReviews.command(reviews.entries, finished: reviews.finished) == "Go to Resolve" && ReadyReviews.unavailable(reviews.entries, finished: reviews.finished) == nil)
+        reviews.go()
+        #expect(opened == [start] && reviews.finished == nil && reviews.takePending("prepare/synthetic"))
+
+        // Nothing to send is said for a moment; a cancelled preparation says nothing; one never sent to the background reports nothing.
+        reviews.preparing(id: "prepare/synthetic", title: "Create Version")
+        reviews.prepared(id: "prepare/synthetic", title: "Create Version", .nothingToSync)
+        #expect(ReadyReviews.text(reviews.entries, finished: reviews.finished) == "Nothing to sync · Create Version" && reviews.finished?.complete == true)
+        #expect(ReadyReviews.command(reviews.entries, finished: reviews.finished) == "Go to Review" && ReadyReviews.unavailable(reviews.entries, finished: reviews.finished) != nil)
+        reviews.clearFinished("prepare/synthetic")
+        reviews.preparing(id: "prepare/synthetic", title: "Create Version")
+        reviews.prepared(id: "prepare/synthetic", title: "Create Version", .cancelled)
+        reviews.prepared(id: "prepare/other", title: "Save Text", .failed)
+        #expect(reviews.entries.isEmpty && reviews.finished == nil)
+    }
+
+    /// A sync that stopped after its page closed keeps Go to Resolve, which opens the page that started it.
+    @Test func aStoppedSyncOpensThePageThatStartedIt() {
+        let reviews = ReadyReviews()
+        var page = LibraryLocation(selection: "synthetic-account/1", section: .release), opened: [LibraryLocation] = []
+        let start = page
+        reviews.currentLocation = { page }; reviews.open = { opened.append($0); page = $0 }
+        reviews.update(id: "synthetic-build", title: "Add build", state: "running", done: 1, total: 3)
+        reviews.leave("synthetic-build"); page = LibraryLocation(selection: "library:apps")
+        #expect(ReadyReviews.unavailable(reviews.entries) == nil, "The bar knows which page shows the running sync")
+        reviews.update(id: "synthetic-build", title: "Add build", state: "failed")
+        #expect(reviews.finished?.kind == .stopped && reviews.finished?.location == start)
+        #expect(ReadyReviews.text(reviews.entries, finished: reviews.finished) == "Sync stopped · Add build")
+        reviews.go()
+        #expect(opened == [start] && reviews.shown?.id == "synthetic-build" && reviews.finished == nil)
+        // On the page that started it, the command only brings the stopped review into view.
+        reviews.update(id: "synthetic-text", title: "Save text", state: "running")
+        reviews.update(id: "synthetic-text", title: "Save text", state: "failed")
+        opened = []; reviews.go()
+        #expect(opened.isEmpty && reviews.shown?.id == "synthetic-text")
     }
 }

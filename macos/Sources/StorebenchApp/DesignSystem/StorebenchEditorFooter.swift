@@ -28,7 +28,8 @@ struct StorebenchEditorGuide<Actions: View>: View {
     }
 }
 
-/// A contextual command area shared by editors, with feedback inside the same rounded surface.
+/// A contextual command area shared by editors: under a divider, with its title and feedback beside commands that sit in the
+/// card's own trailing command column, so they line up with every other command in the card.
 struct StorebenchEditorFooter<Actions: View>: View {
     let title, detail: String
     var hint = ""
@@ -50,9 +51,8 @@ struct StorebenchEditorFooter<Actions: View>: View {
                 if !hint.isEmpty { StorebenchAdaptiveText(text: hint, maximumHeight: 40, font: .sbCaption, color: StorebenchTheme.muted) }
             }
         } actions: { actions() }
-        .padding(StorebenchTheme.padding)
-        .background(StorebenchTheme.color("color-surface-subtle"), in: RoundedRectangle(cornerRadius: StorebenchTheme.radius))
-        .overlay(RoundedRectangle(cornerRadius: StorebenchTheme.radius).strokeBorder(StorebenchTheme.border))
+        .padding(.top, StorebenchTheme.space(2))
+        .overlay(alignment: .top) { StorebenchDivider() }
         .accessibilityElement(children: .contain).accessibilityLabel(title)
         .layoutValue(key: StorebenchFullWidthAction.self, value: true)
     }

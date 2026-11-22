@@ -8,7 +8,7 @@ struct PublishStepOutput: Sendable {
 extension WorkspaceSession {
     /// Serial and parallel steps use exactly the same fresh scope checks, upload validation and lost-answer recovery.
     func performPublishingStep(_ step: PublishStep, ids: [String: String], operations: [String: JSONValue], account: Account,
-                               appId: String, client: AppStoreConnectClient, grant: PublishGrant) async throws -> PublishStepOutput {
+                               appId: String, client: AppStoreConnectClient, grant: PublishGrant, proofs: OwnershipProofs = OwnershipProofs()) async throws -> PublishStepOutput {
         try Task.checkCancellation()
         try requirePublishingAccount(account, appId: appId, client: client)
         let path = try Self.apiPath(step.path, ids: ids)
@@ -16,7 +16,7 @@ extension WorkspaceSession {
         switch step.kind {
         case .api:
             let body = try step.body.map { try Self.resolve($0, ids: ids) }
-            try await verifyWrite(method: step.method ?? "", path: path, body: body, guardValue: step.guardValue, appId: appId, client: client)
+            try await verifyWrite(method: step.method ?? "", path: path, body: body, guardValue: step.guardValue, appId: appId, client: client, proofs: proofs)
             try requirePublishingAccount(account, appId: appId, client: client)
             var result: AppStoreConnectClient.Resource?, placed: String?
             for attempt in 1...3 {
@@ -31,7 +31,15 @@ extension WorkspaceSession {
                     // Apple may have added the file before its answer was lost: look for it first, so it is never added twice.
                     try await Task.sleep(for: .seconds(3))
                     if let id = try await placedReleaseMedia(body: body, guardValue: step.guardValue, appId: appId, client: client) { placed = id; break }
-                    try await verifyWrite(method: step.method ?? "", path: path, body: body, guardValue: step.guardValue, appId: appId, client: client)
+                    try await verifyWrite(method: step.method ?? "", path: path, body: body, guardValue: step.guardValue, appId: appId, client: client, proofs: proofs)
+                    try requirePublishingAccount(account, appId: appId, client: client)
+                }
+                catch AppStoreConnectClient.Failure.status(429) where attempt < 3 && attempt <= rateLimitPauses.count {
+                    // Apple turns a request over its rate limit away before acting on it, so nothing was changed and the same step
+                    // is sent again after the wait, behind the same fresh checks as the first time.
+                    guard let pause = AppleRequestBudget.pause(keyId: account.keyId, fallback: rateLimitPauses[attempt - 1]) else { throw AppStoreConnectClient.Failure.status(429) }
+                    try await Task.sleep(for: pause)
+                    try await verifyWrite(method: step.method ?? "", path: path, body: body, guardValue: step.guardValue, appId: appId, client: client, proofs: proofs)
                     try requirePublishingAccount(account, appId: appId, client: client)
                 }
             }

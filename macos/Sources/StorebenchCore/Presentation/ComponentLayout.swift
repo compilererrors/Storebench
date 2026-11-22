@@ -252,10 +252,54 @@ public enum ComponentLayout {
     public static func textareaHeight(rows: Int = 4, design: StorebenchDesign = .shared) -> Double {
         Double(max(1, rows)) * design.dimension("textareaLineHeight") + 2 * design.dimension("textareaPaddingY") + 2
     }
+    /// A dialog of one kind has the same size wherever it opens, inside the window that owns it. The window stays visible around it:
+    /// a small window keeps a narrow rim so the dialog has room to work, and the rim grows with the window, so even the largest
+    /// kind never covers most of a window of ordinary size.
+    public static func dialog(viewportWidth: Double, viewportHeight: Double, kind: DialogKind, design: StorebenchDesign = .shared) -> CGSize {
+        let rim = 48 + max(0, viewportHeight - 560) * 0.3
+        return CGSize(width: min(max(0, viewportWidth - 32), design.dimension(kind.widthMeasure)), height: min(max(0, viewportHeight - rim), kind.height))
+    }
     public static func dialog(viewportWidth: Double, viewportHeight: Double, wide: Bool = false, preferredHeight: Double = 720, design: StorebenchDesign = .shared) -> CGSize {
         CGSize(width: min(max(0, viewportWidth - 32), design.dimension(wide ? "dialogWide" : "dialogWidth")), height: min(max(0, viewportHeight - 48), max(0, preferredHeight)))
     }
     public static func boundedTextHeight(measured: Double, maximum: Double, empty: Bool = false) -> Double {
         empty ? 0 : min(max(0, measured), max(0, maximum))
+    }
+}
+
+/// What a dialog shows decides its size, so every dialog of one kind looks the same. A dialog that only reports progress or asks
+/// a short question stays small; one that shows lists, comparisons or media gets the room they need.
+public enum DialogKind: String, CaseIterable, Sendable {
+    /// Progress or a short result, with up to three commands, such as a review being prepared.
+    case status
+    /// A question with up to three answers, such as Save, Discard or Cancel.
+    case confirmation
+    /// A short explanation or choice with its commands, such as error details or turning a feature on.
+    case question
+    /// Fields to fill in, such as a key to reconnect or a pricing model to choose.
+    case form
+    /// Lists, comparisons, pickers and work in several parts, such as a review of changes or Asset Library.
+    case content
+    /// An image or video shown or edited at size.
+    case media
+
+    /// The shared width measure the kind uses.
+    public var widthMeasure: String {
+        switch self {
+        case .status, .confirmation: "dialogCompact"
+        case .question, .form: "dialogWidth"
+        case .content, .media: "dialogWide"
+        }
+    }
+    /// The height the kind takes when the window allows it.
+    public var height: Double {
+        switch self {
+        case .status: 260
+        case .confirmation: 280
+        case .question: 440
+        case .form: 640
+        case .content: 760
+        case .media: 780
+        }
     }
 }

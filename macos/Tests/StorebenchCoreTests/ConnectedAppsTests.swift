@@ -87,6 +87,24 @@ import Testing
         #expect(success.syncFeedback == "0 need attention · Last sync 2026-02-03 12:34 UTC")
         #expect(SyncSourceSummary(job: job).text == "7 of 7 sources synced · 0 need attention")
     }
+    @Test func aClosedAppRowShowsAShortSyncStatusWithItsToneAndLocalTime() throws {
+        let account = account(), app = try #require(account.apps.first), utc = try #require(TimeZone(identifier: "UTC"))
+        let time = "2026-02-03T12:34:56.000Z", date = try #require(ReportTimestamps.date(time))
+        let states: [SyncItem.State] = [.synced, .synced, .partial, .failed, .attention, .waiting, .synced]
+        var job = SyncJob(id: "00000000-0000-4000-8000-000000000403", accountId: account.id, appId: app.id,
+                          items: zip(AppSync.sources, states).map { SyncItem(key: $0.0, state: $1, detail: "Synthetic result", checkedAt: time) }, now: date)
+        job.state = .complete
+        let attention = try ConnectedApps.Row(account: account, app: app, savedName: nil, revisionCount: 1, sync: job).syncGlance(timeZone: utc)
+        #expect(attention == .init(headline: "3 of 7 Synced", detail: "3 need attention · 1 waiting for reports · Last sync Feb 3, 2026 12:34", tone: .problem, running: false))
+        job.items = job.items.map { SyncItem(key: $0.key, state: .synced, detail: "Synthetic checked result", checkedAt: time) }
+        let synced = try ConnectedApps.Row(account: account, app: app, savedName: nil, revisionCount: 1, sync: job).syncGlance(timeZone: utc)
+        #expect(synced.headline == "7 of 7 Synced" && synced.detail == "Last sync Feb 3, 2026 12:34" && synced.tone == .complete)
+        job.state = .running; job.items[0].state = .running
+        let running = try ConnectedApps.Row(account: account, app: app, savedName: nil, revisionCount: 1, sync: job).syncGlance(timeZone: utc)
+        #expect(running.headline == "Syncing" && running.running && running.detail == "6 of 7 sources checked")
+        #expect(try ConnectedApps.Row(account: account, app: app, savedName: nil, revisionCount: 0).syncGlance().headline == "Not Synced Yet")
+        #expect(try ConnectedApps.Row(account: account, app: app, savedName: nil, revisionCount: nil, syncUnavailable: true).syncGlance().tone == .problem)
+    }
     @Test func queuedSetupOnlyAndUnreadableFeedbackCannotClaimSuccessfulDownloads() throws {
         let account = account(), app = try #require(account.apps.first)
         var job = SyncJob(id: "00000000-0000-4000-8000-000000000402", accountId: account.id, appId: app.id, items: AppSync.pending(), now: Date())

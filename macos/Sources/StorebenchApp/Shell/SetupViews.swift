@@ -60,7 +60,7 @@ struct PasswordStorageMigrationView: View {
             StorebenchAuthCard(title: "Keep your saved data", message: "Copy this workspace's encryption key and credentials from Keychain into password-encrypted storage. macOS may ask for access during this copy. Afterward Storebench uses your password and does not access Keychain.") {
                 StorebenchSecureField("Current Storebench password, if you use one", text: $current)
                 StorebenchSecureField("New Storebench password", text: $password)
-                StorebenchSecureField("Repeat new password", text: $repeated)
+                StorebenchSecureField("Repeat New Password", text: $repeated)
                 Text("Use 12 to 256 characters. The password cannot be recovered. Earlier copies remain in Keychain for older installations; this copy does not delete them.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
                 StorebenchFeedback(text: model.lastError, error: true)
                 StorebenchActionGroup {
@@ -89,8 +89,8 @@ struct SetupView: View {
             VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
                 StorebenchAuthCard(title: model.writer.usesPasswordFile ? "Create your Storebench password" : "Set up Storebench", message: model.writer.usesPasswordFile ? "Your database key, Apple API keys, Apple ID sign-ins, reporting tokens and backup passphrases are encrypted locally. Storebench will not access Keychain." : "Storebench encrypts your saved data and keeps its encryption key and credentials in your Mac Keychain.") {
                     if model.writer.usesPasswordFile {
-                        StorebenchSecureField("Storebench password", text: $password)
-                        StorebenchSecureField("Repeat password", text: $repeated)
+                        StorebenchSecureField("Storebench Password", text: $password)
+                        StorebenchSecureField("Repeat Password", text: $repeated)
                         Text("Use 12 to 256 characters. You will need it when opening Storebench; it cannot be recovered.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
                     }
                     StorebenchFeedback(text: model.lastError, error: true)
@@ -137,7 +137,7 @@ struct ConnectAccountView: View {
     var body: some View {
         Group {
             if asDialog {
-                StorebenchDialog(title: "Connect Apple account", wide: true, height: 760, inlineActions: true, busy: working, close: {
+                StorebenchDialog(title: "Connect Apple account", kind: .content, inlineActions: true, busy: working, close: {
                     if protection?.allowLeaving() ?? true { privateKey = ""; done() }
                 }) { connectionContent } actions: { EmptyView() }
             } else { ScrollView { connectionContent } }
@@ -228,7 +228,7 @@ struct RestoreBackupCard: View {
     @State private var passphrase = ""
 
     var body: some View {
-        Card(title: "Restore from a backup", subtitle: "Choose a Storebench encrypted backup folder and enter its restore passphrase. Storebench checks every file before restoring, and then asks for that passphrase when it starts.") {
+        Card(title: "Restore from a Backup", subtitle: "Choose a Storebench encrypted backup folder and enter its restore passphrase. Storebench checks every file before restoring, and then asks for that passphrase when it starts.") {
             StorebenchActionRow {
                 Text(folder?.path ?? "No backup chosen").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).lineLimit(1).truncationMode(.middle).help(folder?.path ?? "")
             } actions: {
@@ -237,7 +237,7 @@ struct RestoreBackupCard: View {
                     if panel.runModal() == .OK { folder = panel.url }
                 }
             }
-            StorebenchSecureField("Restore passphrase", text: $passphrase).storebenchFormColumn()
+            StorebenchSecureField("Restore Passphrase", text: $passphrase).storebenchFormColumn()
             if folder != nil && passphrase.utf16.count >= 12 {
                 StorebenchFormFooter {
                     Button("Restore Backup") {

@@ -46,11 +46,11 @@ struct FinancialActivityView: View {
     var body: some View {
         if let summary = try? FinancialPresentation.summary(selected) {
             VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
-                Card(title: "Financial summary", subtitle: Self.summarySubtitle) {
+                Card(title: "Financial Summary", subtitle: Self.summarySubtitle) {
                     StorebenchActionGroup { navigationActions }
                     StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 230) {
-                    StorebenchPicker("Financial dataset", selection: Binding(get: { selectedBasis }, set: { basis = $0; fiscal = "all" })) { selectionOptions(availableBases) { SelectionOption($0.1, value: $0.0) } }
-                    StorebenchPicker("Fiscal period", selection: Binding(get: { selectedFiscal }, set: { fiscal = $0 })) {
+                    StorebenchPicker("Financial Dataset", selection: Binding(get: { selectedBasis }, set: { basis = $0; fiscal = "all" })) { selectionOptions(availableBases) { SelectionOption($0.1, value: $0.0) } }
+                    StorebenchPicker("Fiscal Period", selection: Binding(get: { selectedFiscal }, set: { fiscal = $0 })) {
                         SelectionOption("All saved fiscal periods", value: "all")
                         selectionOptions(dates) { SelectionOption("\($0.beginDate) – \($0.endDate)", value: $0.dateKey) }
                     }
@@ -80,15 +80,15 @@ struct FinancialActivityView: View {
     static let summarySubtitle = "Direct app transactions by Apple fiscal period. Summary, detailed and regional files are alternative datasets."
     static func placeholder() -> some View {
         VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
-            Card(title: "Financial summary", subtitle: summarySubtitle) {
+            Card(title: "Financial Summary", subtitle: summarySubtitle) {
                 StorebenchActionGroup { ReportDownloadButton(area: .finance) }
                 StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 230) {
-                    StorebenchPicker("Financial dataset", selection: .constant("")) { SelectionOption("All countries · summary", value: "") }
-                    StorebenchPicker("Fiscal period", selection: .constant("")) { SelectionOption("All saved fiscal periods", value: "") }
+                    StorebenchPicker("Financial Dataset", selection: .constant("")) { SelectionOption("All countries · summary", value: "") }
+                    StorebenchPicker("Fiscal Period", selection: .constant("")) { SelectionOption("All saved fiscal periods", value: "") }
                 }
                 Text("Placeholder for the note on fiscal calendar dates.").font(.sbCallout)
             }
-            StorebenchMetricGrid { ForEach(0..<4, id: \.self) { _ in Fact(title: "Saved total", value: "0") } }
+            StorebenchMetricGrid { ForEach(0..<4, id: \.self) { _ in Fact(title: "Saved Total", value: "0") } }
             StorebenchPlaceholderCard(rows: 6)
         }.storebenchPlaceholder()
     }
@@ -105,14 +105,14 @@ struct FinancialActivityView: View {
     }
     private func metrics(_ summary: FinancialPresentation.Summary) -> some View {
         Group {
-            Fact(title: "Paid purchase units", value: summary.paid.formatted(.number.locale(Locale(identifier: "en_US"))))
-            Fact(title: "Returned paid units", value: summary.returned.formatted(.number.locale(Locale(identifier: "en_US"))), info: "Paid units returned in the selected financial reports. A return can concern a purchase from an earlier period.")
-            Fact(title: "Net paid units", value: summary.net.formatted(.number.locale(Locale(identifier: "en_US"))), info: "Paid units minus returns in the selected financial reports.")
+            Fact(title: "Paid Purchase Units", value: summary.paid.formatted(.number.locale(Locale(identifier: "en_US"))))
+            Fact(title: "Returned Paid Units", value: summary.returned.formatted(.number.locale(Locale(identifier: "en_US"))), info: "Paid units returned in the selected financial reports. A return can concern a purchase from an earlier period.")
+            Fact(title: "Net Paid Units", value: summary.net.formatted(.number.locale(Locale(identifier: "en_US"))), info: "Paid units minus returns in the selected financial reports.")
             Fact(title: money.map { "Estimated proceeds · \($0.currency)" } ?? "Estimated proceeds", value: money.map { ReportMoney.label(ReportMoney.convert(summary.proceeds, context: $0).amount, currency: $0.currency) } ?? "—")
         }
     }
     private func coverage(_ summary: FinancialPresentation.Summary) -> some View {
-        Card(title: "Coverage and reference conversion", subtitle: "\(selected.count) reports in \(Set(selected.map(\.dateKey)).count) fiscal periods · \(summary.rows.count) reported territories.") {
+        Card(title: "Coverage and Reference Conversion", subtitle: "\(selected.count) reports in \(Set(selected.map(\.dateKey)).count) fiscal periods · \(summary.rows.count) reported territories.") {
             Text("\(summary.other.formatted(.number.locale(Locale(identifier: "en_US")))) other net units are reported separately. Returns can concern earlier purchases.").font(.sbCallout)
             Text(selectedBasis == "regional" ? "\(Set(selected.map(\.region)).count) imported regions only. Missing regions are not zero proceeds." : "Coverage is limited to the available rows in the imported reports.").font(.sbCallout)
             if let money {
@@ -126,7 +126,7 @@ struct FinancialActivityView: View {
     }
     private func currencyCard(_ summary: FinancialPresentation.Summary) -> some View {
         let rows = currencies(summary).filter { currencyQuery.isEmpty || ($0.currency + " " + $0.amount).localizedCaseInsensitiveContains(currencyQuery) }, pages = max(1, (rows.count + currencyPageSize - 1) / currencyPageSize), current = min(currencyPage, pages)
-        return Card(title: "Reported proceeds by currency", subtitle: "Original report amounts. Change the estimate currency in Display settings.") {
+        return Card(title: "Reported Proceeds by Currency", subtitle: "Original report amounts. Change the estimate currency in Display settings.") {
             StorebenchReportTableControls(query: $currencyQuery, order: $currencyOrder, pageSize: $currencyPageSize,
                 options: [("default", "Reported order")] + FinancialPresentation.CurrencySort.allCases.map { ($0.rawValue, label($0.rawValue)) }, searchTitle: "Find currencies")
             StorebenchTableFrame {
@@ -147,7 +147,7 @@ struct FinancialActivityView: View {
     }
     private func territoryCard(_ summary: FinancialPresentation.Summary) -> some View {
         let rows = territories(summary), pages = max(1, (rows.count + pageSize - 1) / pageSize), current = min(page, pages)
-        return Card(title: "Financial territories", subtitle: "\(rows.count) storefronts match this search. Summary totals and analysis exports cover the full selected fiscal period.") {
+        return Card(title: "Financial Territories", subtitle: "\(rows.count) storefronts match this search. Summary totals and analysis exports cover the full selected fiscal period.") {
             StorebenchReportTableControls(query: $query, order: $territoryOrder, pageSize: $pageSize,
                 options: [("default", "Paid units · reported order")] + FinancialPresentation.Sort.allCases.map { ($0.rawValue, label($0.rawValue)) }, searchTitle: "Find financial territories")
             if rows.isEmpty { Text("No territory matches this search.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }

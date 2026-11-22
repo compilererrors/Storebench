@@ -35,7 +35,7 @@ struct JournalNoteEditor: View {
                 }
                 StorebenchFormGrid {
                     StorebenchPicker("Where the change came from", selection: binding.attribution) { SelectionOption("Unknown", value: "unknown"); SelectionOption("Storebench decision", value: "storebench"); SelectionOption("External change", value: "external") }
-                    StorebenchPicker("Primary measure", selection: binding.primaryMetric) { SelectionOption("Not selected", value: "none"); selectionOptions(AsoOutcome.metrics) { SelectionOption($0.title, value: $0.key) } }
+                    StorebenchPicker("Primary Measure", selection: binding.primaryMetric) { SelectionOption("Not selected", value: "none"); selectionOptions(AsoOutcome.metrics) { SelectionOption($0.title, value: $0.key) } }
                 }
                 field("Reason for the change", binding.intent)
                 field("Hypothesis", binding.hypothesis)

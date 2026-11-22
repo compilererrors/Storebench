@@ -42,4 +42,11 @@ import Testing
         // Without a language the earlier rule still removes the other form, as the saved fixtures expect.
         #expect(SearchLint("photos,sketch", name: "Synthetic Photo").cleaned == "sketch")
     }
+    @Test func aKeywordMadeOfTheCategoryNameIsAPossibleOverlapOnlyInEnglish() {
+        let english = SearchLint("photo,videos,editor", name: "Synthetic", locale: "en-US", categories: ["Photo And Video", "Productivity"])
+        #expect(english.findings.map(\.kind) == ["category"] && english.findings[0].terms == ["photo", "videos"] && !english.findings[0].certain)
+        #expect(english.cleaned == "photo,videos,editor" && english.freedBytes == 0)
+        #expect(SearchLint("foto,video", name: "Synthetic", locale: "sv", categories: ["Photo And Video"]).findings.isEmpty)
+        #expect(SearchLint("photo", name: "Synthetic", categories: ["Photo And Video"]).findings.isEmpty)
+    }
 }

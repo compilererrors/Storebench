@@ -20,7 +20,7 @@ struct SalesView: View {
     @Environment(\.navigationPresentation) private var history
     @State private var restored = false
     private struct Choices: Equatable { var chosenPeriod: String; var requestedRange: SalesPresentation.Range? }
-    private struct Read: Codable { let reports: [SalesPresentation.Period], readAt: Date, money: ReportMoney.Context?, moneyState: String }
+    private struct Read: Codable, Sendable { let reports: [SalesPresentation.Period], readAt: Date, money: ReportMoney.Context?, moneyState: String }
     private var readKey: String { "sales/\(account.id)/\(app.id)" }
 
     private var latest: String { reports.last?.endDate ?? "" }
@@ -43,7 +43,7 @@ struct SalesView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             if loaded && (failed || reports.isEmpty || range == nil) {
-                Card(title: "Sales reports and dates", subtitle: "Download reports, then choose saved dates to analyze.", help: "report-availability", actions: AnyView(downloadAction)) { reportControls }
+                Card(title: "Sales Reports and Dates", subtitle: "Download reports, then choose saved dates to analyze.", help: "report-availability", actions: AnyView(downloadAction)) { reportControls }
             }
             if failed { Card(title: "Saved reports could not be read", subtitle: "Existing reports have not been changed. Unavailable data is unknown.") { EmptyView() } }
             else if loaded && reports.isEmpty { Card(title: "No sales reports yet", subtitle: "Download or import reports below. Missing reports are not zero sales.") { EmptyView() } }
@@ -59,7 +59,8 @@ struct SalesView: View {
         .task(id: "\(account.id):\(app.id):\(navigationRequest?.id.uuidString ?? "saved")") {
             // A range requested by another view applies when the view opens; Back keeps the range restored for this entry instead.
             if let navigationRequest, !restored { requestedRange = navigationRequest.initialRange(current: try? RecoveryGuidance.Scope(accountId: account.id, appId: app.id)) }
-            if !loaded, let read = history?.rememberedRead(readKey, as: Read.self) { reports = read.reports; readAt = read.readAt; money = read.money; moneyState = read.moneyState; loaded = true }
+            // Every saved report period decodes away from the main thread.
+            if !loaded, let read = await history?.rememberedDecodedRead(readKey, as: Read.self), !loaded { reports = read.reports; readAt = read.readAt; money = read.money; moneyState = read.moneyState; loaded = true }
             await periods.load(session, scope: try? PeriodScope(accountId: account.id, appId: app.id)); if !Task.isCancelled { await load() }
         }
         .onDisappear { loadId = UUID() }
@@ -76,7 +77,7 @@ struct SalesView: View {
                 if loaded && !failed {
                     StorebenchAdaptiveText(text: SalesPresentation.freshness(reports, completedThrough: SalesReports.latestCompletedDay()).message, maximumHeight: 66, color: StorebenchTheme.muted)
                 } else if !loaded { StorebenchLoadingStatus(message: "Reading saved reports…", surface: false) }
-                StorebenchPicker("Saved report or date range", selection: reportBinding) {
+                StorebenchPicker("Saved Report or Date Range", selection: reportBinding) {
                     SelectionOption("Date range", value: "range")
                     selectionOptions(reports) { SelectionOption("\($0.beginDate) – \($0.endDate)\($0.noSales ? " · No sales" : "")", value: $0.id) }
                 }

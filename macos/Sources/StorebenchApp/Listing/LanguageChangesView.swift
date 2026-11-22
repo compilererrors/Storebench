@@ -12,7 +12,7 @@ struct LanguageChangesView: View {
     private func before(_ field: LanguageEditorState.Field) -> String { baseline == "saved" ? editor.saved(field) : editor.original(field) }
     private var changed: [LanguageEditorState.Field] { editor.fields.filter { baseline == "saved" ? editor.unsaved($0) : editor.differsFromImport($0) } }
     var body: some View {
-        StorebenchDialog(title: StoreLocales.name(locale) + " · Changes", wide: true, height: 680,
+        StorebenchDialog(title: StoreLocales.name(locale) + " · Changes", kind: .content,
                          subtitle: "Compare the current text with its import or the draft loaded in this editor.", close: close) {
             StorebenchPicker("Compare With", selection: $baseline) {
                 SelectionOption(localDraft ? "Starting Draft" : "Last Apple Import", value: "imported")

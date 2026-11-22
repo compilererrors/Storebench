@@ -18,13 +18,20 @@ struct PerformanceSettings: View {
                 selectionOptions(CachePolicy.Level.allCases) { SelectionOption($0.title, value: $0) }
             }
             // Changing the budget or lifetime of any level makes it Custom with both current values.
-            StorebenchPicker("Memory budget", selection: Binding(get: { policy.memoryMB(physicalMemory: physicalMemory) }, set: { customize(policy, memory: $0) })) {
+            StorebenchPicker("Memory Budget", selection: Binding(get: { policy.memoryMB(physicalMemory: physicalMemory) }, set: { customize(policy, memory: $0) })) {
                 selectionOptions(CachePolicy.memoryChoices) { SelectionOption(Self.memory($0), value: $0) }
             }
             StorebenchPicker("Reuse App Store Connect reads for", selection: Binding(get: { policy.lifetimeMinutes(physicalMemory: physicalMemory) }, set: { customize(policy, minutes: $0) })) {
                 selectionOptions(CachePolicy.lifetimeChoices) { SelectionOption(Self.minutes($0), value: $0) }
             }
             StorebenchTextSlot(text: detail(policy), height: 52, font: .sbCallout, color: StorebenchTheme.muted)
+            StorebenchPicker("Background Activity", selection: Binding(get: { model.workPolicy.level }, set: { level in
+                guard level != model.workPolicy.level else { return }
+                model.workPolicy = WorkPolicy(level: level); model.workPolicy.save(in: .standard)
+            }), hint: "Applies at once and is remembered on this Mac.") {
+                selectionOptions(WorkPolicy.Level.allCases) { SelectionOption($0.title, value: $0) }
+            }
+            StorebenchTextSlot(text: activity(model.workPolicy, plan: model.workPlan), height: 72, font: .sbCallout, color: StorebenchTheme.muted)
             Text("Storebench keeps recent reads, saved versions and release status in memory, so the next screen or Release step opens without waiting, and saves each screen's last read so the next launch shows it at once. Refresh on any screen reads App Store Connect again, and every Publish review always reads Apple itself. Credentials are never part of this cache. Clear Cache removes the cached and saved reads; drafts, history and your choices are kept. When macOS runs low on memory, Storebench frees the memory cache whatever this setting allows.")
                 .font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
             StorebenchFeedback(text: status, height: 40, error: false)
@@ -50,6 +57,13 @@ struct PerformanceSettings: View {
         let chosen = policy.level == .automatic ? "Automatic uses \(policy.resolved(physicalMemory: physicalMemory).title) for this Mac's \(size) of memory. " : ""
         let used = usedBytes.map { " About \(Self.amount($0)) is in use now." } ?? ""
         return chosen + "Up to \(Self.memory(policy.memoryMB(physicalMemory: physicalMemory))) in memory; reads are reused for \(Self.minutes(policy.lifetimeMinutes(physicalMemory: physicalMemory)))." + used
+    }
+    private func activity(_ policy: WorkPolicy, plan: WorkPolicy.Plan) -> String {
+        let chosen = policy.level == .automatic ? "Automatic uses \(plan.level.title) now and lowers it in Low Power Mode or when this Mac runs hot. " : ""
+        let requests = "Up to \(plan.requests.active) requests to App Store Connect at once, \(plan.requests.nextActive) of them for reading ahead. "
+        let schedule = plan.readsWhileInactive ? "Background checks run on their usual schedule." : "Background checks run \(plan.backgroundIntervalFactor) times less often and wait while another app is in front."
+        let apps = plan.preparedApps.map { $0 == 1 ? " Only the open app is prepared, and changes are drawn without animation." : " At most \($0) apps are prepared ahead." } ?? ""
+        return chosen + requests + schedule + apps
     }
     private func measure() async {
         guard let session = model.session else { usedBytes = nil; return }

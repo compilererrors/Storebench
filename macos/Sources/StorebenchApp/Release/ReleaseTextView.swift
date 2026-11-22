@@ -4,6 +4,8 @@ import SwiftUI
 /// Editable release fields across languages. Save Changes checks and saves them on this Mac in one step.
 struct ReleaseTextView: View {
     let plan: ReleasePlan, session: WorkspaceSession?
+    /// The version's languages as the listing shows them now; a language removed there leaves this list too. Empty shows every saved one.
+    var languages: [String] = []
     var readiness: (() -> Bool)? = nil
     var onBusy: (Bool) -> Void = { _ in }
     var onSaved: (ReleaseTextSaveReceipt) -> Void = { _ in }
@@ -30,7 +32,7 @@ struct ReleaseTextView: View {
     private var activePlan: ReleasePlan { baselinePlan ?? plan }
 
     private var original: ReleaseText.Row? { rows.first { $0.locale == source } }
-    private var destinations: [ReleaseText.Row] { rows.filter { $0.locale != source } }
+    private var destinations: [ReleaseText.Row] { rows.filter { $0.locale != source && (languages.isEmpty || languages.contains($0.locale)) } }
     private var dirty: Bool { rows.contains { !ReleaseText.Values.same(values[$0.locale] ?? $0.values, $0.values) } }
     private var exceeded: Bool { destinations.filter { targets.contains($0.locale) }.contains { row in ReleaseText.fields.contains { TextDrafts.used($0, values[row.locale]?[$0] ?? "") > (TextDrafts.limits[$0] ?? 0) } } }
     private var differences: [SavedValueChange]? {
@@ -45,7 +47,7 @@ struct ReleaseTextView: View {
     }
 
     var body: some View {
-        Card(title: "Release text across languages", subtitle: "\(activePlan.label) · edit What’s New and Promotional Text together. Copying does not translate text.", help: "listing") {
+        Card(title: "Release Text Across Languages", subtitle: "\(activePlan.label) · edit What’s New and Promotional Text together. Copying does not translate text.", help: "listing") {
             VStack(alignment: .leading, spacing: 14) {
                 if failed { Text("The saved release fields could not be read. Your edits are kept. Read the latest save before continuing.").foregroundStyle(StorebenchTheme.muted) }
                 if !rows.isEmpty && rows.count < 2 {
@@ -54,7 +56,7 @@ struct ReleaseTextView: View {
                     }
                 } else if !failed {
                 StorebenchSetupStep(number: 1, title: "Choose the source language", detail: "Its saved What’s New and Promotional Text are copied to the languages you choose next.") {
-                    StorebenchPicker("Saved source language", selection: Binding(get: { source }, set: { value in
+                    StorebenchPicker("Saved Source Language", selection: Binding(get: { source }, set: { value in
                         guard value != source, !working, protection?.allowLeaving() != false else { return }
                         source = value; resetValues(); resetReview()
                     })) { selectionOptions(rows) { SelectionOption(StoreLocales.name($0.locale), value: $0.locale) } }.labelsHidden().storebenchFormColumn().storebenchWorking(working)
@@ -122,6 +124,11 @@ struct ReleaseTextView: View {
             else if activePlan.token != plan.token { failed = true; resetReview(); status = "The version plan changed. Your edits are kept. Compare the latest save before continuing." }
         }
         .onChange(of: replace) { resetReview() }
+        // A language removed or added above changes the destinations at once; saved text is read again when nothing is being edited.
+        .onChange(of: languages) {
+            targets = targets.intersection(destinations.map(\.locale))
+            if !dirty, !working { operation = Task { await load() } }
+        }
         .onAppear { active = true }
         .onDisappear { active = false; operation?.cancel() }
         .trackUnsavedChanges(dirty, busy: working, problem: { problem ? "Release text across languages: " + status : nil }, onSave: { await save() })

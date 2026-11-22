@@ -7,7 +7,7 @@ struct SavedVersionBrowser: View {
     @State private var reading = false
     @State private var status = ""
     var body: some View {
-        Card(title: "Saved app versions", subtitle: "Choose how many versions to show and expand. Each saved version contains separate language cards.") {
+        Card(title: "Saved App Versions", subtitle: "Choose how many versions to show and expand. Each saved version contains separate language cards.") {
             StorebenchFeedback(text: status, height: 34)
             StorebenchCollection(items: summaries, title: { AppStoreNames.platform($0.platform) + " " + $0.number }, subtitle: { $0.state + " · \($0.languages) languages" }, empty: "No versions are saved in this snapshot.") { summary in
                 SavedVersionDetailCard(revision: revision, summary: summary, account: account, app: app, session: session, available: available && !reading)

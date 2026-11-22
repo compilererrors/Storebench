@@ -32,7 +32,7 @@ struct TestFlightBuildAccessView: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Card(title: "Individual testers · \(build.title)", subtitle: "Direct access to this build. Apple controls invitation delivery and eligibility.") {
+            Card(title: "Individual Testers · \(build.title)", subtitle: "Direct access to this build. Apple controls invitation delivery and eligibility.") {
                 StorebenchCollection(items: assigned, title: { $0.email }, subtitle: { $0.name }, empty: loaded ? "No individual testers assigned to this build." : "Reading individual testers…") { tester in
                     StorebenchActionRow {
                         StorebenchTextSlot(text: tester.email, height: 36, font: .sbBody)
@@ -46,11 +46,11 @@ struct TestFlightBuildAccessView: View {
                 StorebenchDivider()
                 StorebenchReadAge(readAt: loaded ? readAt : nil, reading: reading)
                 if loaded && build.processed {
-                    StorebenchPicker("Existing app tester", selection: $testerId) {
+                    StorebenchPicker("Existing App Tester", selection: $testerId) {
                         SelectionOption("Choose a tester", value: "")
                         selectionOptions(testers.filter { candidate in !assigned.contains { $0.id == candidate.id } }) { SelectionOption($0.email, value: $0.id) }
                     }.storebenchFormColumn().storebenchWorking(draft?.loaded != true)
-                    if build.audience == "APP_STORE_ELIGIBLE" { StorebenchTextField("Tester email", text: $email).storebenchFormColumn().storebenchWorking(draft?.loaded != true) }
+                    if build.audience == "APP_STORE_ELIGIBLE" { StorebenchTextField("Tester Email", text: $email).storebenchFormColumn().storebenchWorking(draft?.loaded != true) }
                     else { Text("Invitations by email need a build that Apple lists as eligible for the App Store.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
                 } else if loaded {
                     Text("Apple must finish processing this build before you can give testers access.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
@@ -72,10 +72,10 @@ struct TestFlightBuildAccessView: View {
                 StorebenchFeedback(text: status, height: 40)
                 if let draft { LocalDraftActions(editor: draft, value: draftValue, restore: restoreDraft, blocked: busy) }
             }.storebenchWorking(publishing)
-            Card(title: "Automatic tester notification", subtitle: "Choose whether Apple should notify assigned testers when this build is approved for external testing.") {
+            Card(title: "Automatic Tester Notification", subtitle: "Choose whether Apple should notify assigned testers when this build is approved for external testing.") {
                 Text("Current setting: \(baseline.isEmpty ? "Unknown" : baseline == "on" ? "On" : "Off")").font(.sbHeadline)
                 if build.canSetAutomaticNotification {
-                    StorebenchPicker("Automatic notification", selection: $automatic) {
+                    StorebenchPicker("Automatic Notification", selection: $automatic) {
                         SelectionOption("Choose On or Off", value: "")
                         SelectionOption("On", value: "on")
                         SelectionOption("Off", value: "off")

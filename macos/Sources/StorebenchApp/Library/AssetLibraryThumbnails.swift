@@ -7,19 +7,23 @@ struct LocalLibraryThumbnail: View {
     let session: WorkspaceSession?
     @Environment(\.collectionVisible) private var visible
     @State private var image: ScreenshotPreview?
+    @State private var shown = ""
     @State private var failed = false
     var body: some View {
+        let source = accountId + "/" + appId + "/" + file.id + "/" + file.hash
         AssetThumbnailSurface(image: image, message: failed ? "Local preview unavailable" : "Reading image…", loading: !failed && image == nil)
-            .task(id: accountId + "/" + appId + "/" + file.id + "/" + file.hash + "/" + String(visible)) {
-                image = nil; failed = false
-                guard visible else { return }
+            .task(id: source + "/" + String(visible)) {
+                // A thumbnail that was only hidden, such as on another page of the list, is shown again without reading its file again.
+                if shown != source { image = nil; shown = "" }
+                failed = false
+                guard visible, image == nil else { return }
                 guard let session else { failed = true; return }
                 var reader: SavedMediaReader?
                 defer { reader?.close() }
                 do {
                     let opened = try await session.openSavedMedia(.init(accountId: accountId, appId: appId, revisionId: file.id, itemId: file.id, kind: .assetLibrary)); reader = opened
                     let bytes = try await opened.imageBytes(), thumbnail = try await ScreenshotRenderer.thumbnailAsync(bytes, maximumEdge: 640)
-                    try Task.checkCancellation(); try session.validateAccess(); image = thumbnail
+                    try Task.checkCancellation(); try session.validateAccess(); image = thumbnail; shown = source
                 } catch is CancellationError { } catch { failed = true }
             }
     }
@@ -34,18 +38,20 @@ struct AppleLibraryThumbnail: View {
     var height: CGFloat? = nil
     @Environment(\.collectionVisible) private var visible
     @State private var image: ScreenshotPreview?
+    @State private var shown: AssetLibrary.Asset?
     @State private var failed = false
     var body: some View {
         AssetThumbnailSurface(image: image, message: fresh ? "Preview unavailable" : "Refresh Asset Library for previews", loading: fresh && !failed && image == nil, height: height)
             .task(id: fresh && visible ? asset.value : nil) {
-                image = nil; failed = false
-                guard fresh, visible else { return }
+                // A thumbnail that was only hidden, such as on another page of the list, is shown again without downloading it again.
+                if shown != asset || !fresh { image = nil; shown = nil }
+                failed = false
+                guard fresh, visible, image == nil else { return }
                 guard let session else { failed = true; return }
                 do {
-                    let client = try await session.client(for: account)
-                    let bytes = try await session.assetLibraryThumbnail(account: account, appId: appId, asset: asset, client: client)
+                    let bytes = try await session.assetLibraryThumbnail(account: account, appId: appId, asset: asset)
                     let thumbnail = try await ScreenshotRenderer.thumbnailAsync(bytes, maximumEdge: 640)
-                    try Task.checkCancellation(); try session.validateAccess(); image = thumbnail
+                    try Task.checkCancellation(); try session.validateAccess(); image = thumbnail; shown = asset
                 } catch is CancellationError { } catch { failed = true }
             }
     }

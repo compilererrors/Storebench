@@ -20,6 +20,7 @@ struct PricingView: View {
     /// The open step; nil opens the first step App Store Connect still needs.
     @State private var step: PricingFlow.StepId?
     @Environment(\.pageScroll) private var pageScroll
+    @Environment(\.openSection) private var openSection
     @Environment(\.navigationPresentation) private var presentation
     /// The window keeps each app's last pricing read under this key, so Pricing opens with it while App Store Connect is read again.
     static func readKey(accountId: String, appId: String) -> String { "pricing-setup/\(accountId)/\(appId)" }
@@ -57,11 +58,13 @@ struct PricingView: View {
                 proposal = shown ?? .free; saveProblem = ""; changing = true
             }
         })) {
+            // Before the first read the values say they are being read, or not available when the read failed.
+            let pending = reading || problem.isEmpty ? "Reading…" : "Not Available"
             StorebenchMetricGrid(maximumColumns: 4, minimumWidth: 180) {
-                Fact(title: "Pricing Model", value: shown?.title ?? (setup == nil ? "Unknown" : "Not set up"), compact: true)
-                Fact(title: "Price", value: setup?.appPrice.label ?? "Unknown", compact: true)
-                Fact(title: "In-App Purchases", value: setup?.purchases.map { "\($0.count)" } ?? "Unknown", compact: true)
-                Fact(title: "Subscriptions", value: setup?.subscriptions.map { "\($0.count)" } ?? "Unknown", compact: true)
+                Fact(title: "Pricing Model", value: shown?.title ?? (setup == nil ? pending : "Not Set Up"), compact: true)
+                Fact(title: "Price", value: setup?.appPrice.label ?? pending, compact: true)
+                Fact(title: "In-App Purchases", value: setup?.purchases.map { "\($0.count)" } ?? pending, compact: true)
+                Fact(title: "Subscriptions", value: setup?.subscriptions.map { "\($0.count)" } ?? pending, compact: true)
             }
             StorebenchTextSlot(text: reading ? (setup == nil ? "Reading App Store Connect…" : "Checking App Store Connect for changes…") : session == nil ? "Connect the workspace to read pricing from App Store Connect." : shown.map { $0.summary + (chosen != nil ? " Chosen on this Mac." : " Read from App Store Connect.") } ?? (setup?.guideAvailable == true ? "Choose a pricing model below to set up pricing." : ""),
                                height: 36, font: .sbCallout, color: StorebenchTheme.muted, live: true)
@@ -71,7 +74,7 @@ struct PricingView: View {
     }
 
     private var changeDialog: some View {
-        StorebenchDialog(title: "Change Pricing Model", height: 640, busy: saving, close: { changing = false }) {
+        StorebenchDialog(title: "Change Pricing Model", kind: .form, busy: saving, close: { changing = false }) {
             StorebenchChoicePicker("Pricing Model", selection: $proposal, options: PricingModelKind.allCases.map { ($0, $0.title) }, style: .radio)
             Text(proposal.summary).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
             StorebenchActionGroup {
@@ -150,11 +153,9 @@ struct PricingView: View {
     private func navigation(_ open: PricingFlow.Step, steps: [PricingFlow.Step], model: PricingModelKind) -> some View {
         let (previous, next) = PricingFlow.neighbors(open.id, in: model)
         let name = { (id: PricingFlow.StepId) in steps.first { $0.id == id }.map { "step \($0.number): \($0.title)" } ?? "" }
-        return StorebenchActionGroup(alignment: .trailing) {
-            StorebenchCommand(title: "Back", busy: false, unavailable: previous == nil ? "This is the first step." : nil, primary: false) { go(previous) }
-            if next == nil { StorebenchGuideExit(guide: .pricing) }
-            else { StorebenchCommand(title: "Next", busy: false, unavailable: nil) { go(next) } }
-        }.help(next.map { "Continue to " + name($0) } ?? "")
+        return StorebenchStepCommands(state: .init(id: "pricing/\(open.id.rawValue)", title: "Step \(open.number) of \(steps.count): \(open.title)", detail: open.purpose,
+            back: .init(title: "Back", unavailable: previous == nil ? "This is the first step." : nil, primary: false, help: previous.map { "Back to " + name($0) } ?? "") { go(previous) },
+            next: [next.map { next in StorebenchStepCommand(title: "Next", help: "Continue to " + name(next)) { go(next) } } ?? StorebenchGuideExit.command(guide: .pricing, open: openSection)]))
     }
 
     private func go(_ id: PricingFlow.StepId?) {
@@ -272,7 +273,7 @@ struct CountryPriceStrategy: View {
         let amounts = preview.rows.compactMap { row in row.amount.flatMap { amount in preview.points[row.territory] == nil ? nil : (territory: row.territory, currency: row.currency, amount: amount) } }
         do {
             _ = try await session.saveCountryDrafts(accountId: account.id, appId: app.id, amounts: amounts, startDate: nil, endDate: nil)
-            saved += 1; status = "Saved \(amounts.count) Country Drafts. Review and send them in the country prices below."
+            saved += 1; status = "Saved \(amounts.count) Country Drafts on this Mac. Nothing is sent yet: choose Sync to Apple under Country Drafts below to review and send them."
         } catch let failure as PricingFailure { status = failure.message }
         catch { status = "The Country Drafts could not be saved." }
     }

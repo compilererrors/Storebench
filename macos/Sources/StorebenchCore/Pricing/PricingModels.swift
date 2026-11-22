@@ -156,9 +156,18 @@ public struct PricingTarget: Equatable, Sendable {
 public struct FxRate: Equatable, Sendable { public let rate, date, source: String; public let providers: [String]?; public let fetchedAt: String? }
 public struct IndexSnapshot: Equatable, Sendable {
     public let method, date, source: String
+    /// Each country's index value in its App Store currency.
     public let values: [String: String]
     public var fetchedAt: String? = nil
     public var cached = false
+    /// Each country's price level in US dollars: for the World Bank, US dollars per international dollar from the purchasing power
+    /// and market factors of one year; for the Big Mac Index, the burger's dollar price. It prices a country whose App Store
+    /// currency differs from the index's, with the exchange rate.
+    public var levels: [String: String] = [:]
+    /// The year of a country's observation when it differs from `date`.
+    public var years: [String: String] = [:]
+    /// Storebench's built-in observations, used because neither a download nor a saved copy could be read.
+    public var builtIn = false
 }
 
 /// One country's model price: the calculated target and the Apple price point it rounds to.
@@ -189,7 +198,8 @@ public enum PricingModels {
     /// Model prices for the recipe's countries. Each method gives a factor on the guide price: the exchange rate, or the ratio of the
     /// country's index value to the guide country's. A mix blends two factors by share, a country percentage scales the result, and
     /// the lowest and highest price keep it within a percentage of the converted guide price before it is rounded to an Apple price.
-    public static func calculate(_ profile: PricingProfile, base: String, countries: [Territory], guideCurrency: String, rates: [String: FxRate], points: [PricePoint], indexes: [IndexSnapshot], pointsUnavailable: Set<String> = []) throws -> [ModelPrice] {
+    /// With `convertsUncovered`, a country a published index does not cover is converted at the exchange rate instead of left out.
+    public static func calculate(_ profile: PricingProfile, base: String, countries: [Territory], guideCurrency: String, rates: [String: FxRate], points: [PricePoint], indexes: [IndexSnapshot], pointsUnavailable: Set<String> = [], convertsUncovered: Bool = false) throws -> [ModelPrice] {
         let guidePrice = try PricingMath.desired(base)
         guard let method = profile.pricingMethod else { throw PricingFailure.invalid("Choose a valid pricing method.") }
         let mix = profile.mixMethod.flatMap { other in profile.mix.map { (other, $0.share) } }
@@ -213,13 +223,24 @@ public enum PricingModels {
                     guard let exchange else { return nil }
                     return (exchange, country.currency == guideCurrency ? "Same currency" : "Exchange rate: \(rateText!) \(country.currency) per \(guideCurrency) · \(rate?.date ?? "") · \(rate?.source == "exchange-rate-api" ? "ExchangeRate-API" : "Frankfurter")")
                 case .ppp, .bigmac, .own:
+                    let snapshot = indexes.first { $0.method == kind.rawValue }
+                    func year(_ code: String) -> String { snapshot?.years[code] ?? snapshot?.date ?? "" }
+                    let source = kind == .own ? kind.name : "\(snapshot?.source ?? "Index") · \(year(country.code))"
                     var ratio: Decimal
                     if guide { ratio = 1 }
                     else if let local = indexValue(kind, country.code), let anchor = indexValue(kind, profile.guideTerritory), anchor > 0 {
                         var value = local / anchor; ratio = Decimal(); NSDecimalRound(&ratio, &value, 18, .plain)
+                    } else if kind.usesIndex, let exchange, let local = snapshot?.levels[country.code].flatMap(PricingMath.decimal),
+                              let anchor = snapshot?.levels[profile.guideTerritory].flatMap(PricingMath.decimal), anchor > 0 {
+                        // The App Store bills this country in another currency than its own: its price level relative to the
+                        // guide country's, at the exchange rate into the App Store currency.
+                        var value = local / anchor * exchange; ratio = Decimal(); NSDecimalRound(&ratio, &value, 18, .plain)
+                        var level = local / anchor, shown = Decimal(); NSDecimalRound(&shown, &level, 4, .plain)
+                        return (ratio, "\(source) · Price level: \(PricingMath.text(shown)) of the guide country's · Exchange rate: \(rateText ?? "1") \(country.currency) per \(guideCurrency)")
+                    } else if convertsUncovered, kind.usesIndex, let exchange {
+                        // A country the index does not cover keeps the guide price's value at the exchange rate, and says so.
+                        return (exchange, "No \(kind.name) data for this country or region · Converted at the exchange rate: \(rateText ?? "1") \(country.currency) per \(guideCurrency)")
                     } else { return nil }
-                    let snapshot = indexes.first { $0.method == kind.rawValue }
-                    let source = kind == .own ? kind.name : "\(snapshot?.source ?? "Index") · \(snapshot?.date ?? "")"
                     return (ratio, "\(source) · Local price ratio: \(PricingMath.text(ratio))")
                 }
             }
@@ -285,19 +306,46 @@ public enum PricingModels {
         guard !lines.isEmpty else { throw PricingFailure.invalid("Big Mac data columns changed.") }
         let header = try row(lines.removeFirst()), keys = ["date", "iso_a3", "currency_code", "local_price"].map { header.firstIndex(of: $0) }
         guard keys.allSatisfy({ $0 != nil }) else { throw PricingFailure.invalid("Big Mac data columns changed.") }
-        let positions = keys.map { $0! }
-        var rows: [(String, String, String)] = []
+        let positions = keys.map { $0! }, exchange = header.firstIndex(of: "dollar_ex")
+        var rows: [(date: String, code: String, currency: String, price: String, dollars: Decimal?)] = []
         for line in lines {
             let cells = try row(line)
             guard positions.allSatisfy({ $0 < cells.count }) else { continue }
             let date = cells[positions[0]], code = cells[positions[1]], currency = cells[positions[2]], value = cells[positions[3]]
             guard ReportTables.validDate(date) || date.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil, code.range(of: "^[A-Z]{3}$", options: .regularExpression) != nil,
-                  let number = Double(value), number.isFinite, number > 0, currencies.isEmpty || currencies[code] == currency else { continue }
-            rows.append((date, code, value))
+                  currency.range(of: "^[A-Z]{3}$", options: .regularExpression) != nil, let number = Double(value), number.isFinite, number > 0 else { continue }
+            // The Economist's market rate, local currency per US dollar, gives the burger's price in dollars.
+            var dollars: Decimal?
+            if let exchange, exchange < cells.count, let rate = PricingMath.decimal(cells[exchange]), rate > 0, let price = PricingMath.decimal(value) { dollars = price / rate }
+            rows.append((date, code, currency, value, dollars))
         }
-        guard let date = rows.map(\.0).max() else { throw PricingFailure.invalid("No usable Big Mac observations.") }
-        return IndexSnapshot(method: PricingMethod.bigmac.rawValue, date: date, source: "The Economist Big Mac Index", values: Dictionary(rows.filter { $0.0 == date }.map { ($0.1, $0.2) }, uniquingKeysWith: { _, last in last }))
+        guard let date = rows.map(\.date).max() else { throw PricingFailure.invalid("No usable Big Mac observations.") }
+        // Each country's newest observation from the last two years: an edition that leaves a country out never drops it, and
+        // an observation much older than the newest edition is not used.
+        let oldest = String((Int(date.prefix(4)) ?? 0) - 2) + date.dropFirst(4)
+        var newest: [String: (date: String, code: String, currency: String, price: String, dollars: Decimal?)] = [:]
+        for item in rows where item.date >= oldest {
+            if let current = newest[item.code], current.date >= item.date { continue }
+            newest[item.code] = item
+        }
+        // The Economist reports one price for the euro area; its members that have no row of their own use it.
+        if let euro = newest["EUZ"] {
+            for code in euroArea where newest[code] == nil { newest[code] = (euro.date, code, euro.currency, euro.price, euro.dollars) }
+        }
+        newest["EUZ"] = nil
+        var values: [String: String] = [:], levels: [String: String] = [:], years: [String: String] = [:]
+        for (code, item) in newest {
+            if let dollars = item.dollars, dollars > 0 { levels[code] = PricingMath.text(dollars) }
+            if item.date != date { years[code] = item.date }
+            if currencies.isEmpty || currencies[code] == item.currency { values[code] = item.price }
+        }
+        var snapshot = IndexSnapshot(method: PricingMethod.bigmac.rawValue, date: date, source: "The Economist Big Mac Index", values: values)
+        snapshot.levels = levels; snapshot.years = years
+        return snapshot
     }
+
+    /// The euro area's members, which The Economist prices together as EUZ.
+    static let euroArea: Set<String> = ["AUT", "BEL", "BGR", "CYP", "DEU", "ESP", "EST", "FIN", "FRA", "GRC", "HRV", "IRL", "ITA", "LTU", "LUX", "LVA", "MLT", "NLD", "PRT", "SVK", "SVN"]
 
     public static func worldBank(data: Data, metadata: Data, currencies: [String: String]) throws -> IndexSnapshot {
         guard let rows = (try? JSONSerialization.jsonObject(with: data)) as? [Any], rows.count > 1, let observations = rows[1] as? [[String: Any]],
@@ -329,24 +377,32 @@ public enum PricingModels {
             if indicator == "PA.NUS.FCRF" { marketByYear[year, default: [:]][code] = value }
             else if indicator == "PA.NUS.PPP" { byYear[year, default: [:]][code] = value }
         }
-        var converted: [String: [String: String]] = [:], dollarConversionYears = Set<String>()
-        for (year, observations) in byYear {
-            for (code, value) in observations {
-                if currencies.isEmpty { converted[year, default: [:]][code] = value; continue }
-                guard let currency = currencies[code], let actual = countryCurrencies[code] else { continue }
-                let expected = normalized(names.localizedString(forCurrencyCode: currency) ?? "")
-                if actual == expected || (currency == "GBP" && actual == "poundsterling") { converted[year, default: [:]][code] = value }
-                else if currency == "USD", let ppp = PricingMath.decimal(value), let market = marketByYear[year]?[code].flatMap(PricingMath.decimal), market > 0 {
-                    // Both annual factors use the same national currency. Dividing cancels it: USD per international dollar.
-                    let amount = ppp / market
-                    guard amount > 0 else { continue }
-                    converted[year, default: [:]][code] = PricingMath.text(amount); dollarConversionYears.insert(year)
-                }
+        // Each country uses its newest observation: a year missing for one country never drops that country.
+        var values: [String: String] = [:], levels: [String: String] = [:], chosen: [String: String] = [:], dollarConversion = false
+        let codes = Set(byYear.values.flatMap(\.keys))
+        for code in codes {
+            let years = byYear.keys.filter { byYear[$0]?[code] != nil }.sorted(by: >)
+            // The price level needs both factors of the same year: US dollars per international dollar.
+            if let year = years.first(where: { marketByYear[$0]?[code] != nil }), let ppp = byYear[year]?[code].flatMap(PricingMath.decimal),
+               let market = marketByYear[year]?[code].flatMap(PricingMath.decimal), market > 0, ppp / market > 0 { levels[code] = PricingMath.text(ppp / market) }
+            guard let year = years.first, let value = byYear[year]?[code] else { continue }
+            if currencies.isEmpty { values[code] = value; chosen[code] = year; continue }
+            guard let currency = currencies[code], let actual = countryCurrencies[code] else { continue }
+            let expected = normalized(names.localizedString(forCurrencyCode: currency) ?? "")
+            if actual == expected || (currency == "GBP" && actual == "poundsterling") { values[code] = value; chosen[code] = year }
+            else if currency == "USD", let level = years.first(where: { marketByYear[$0]?[code] != nil }) {
+                // Both annual factors use the same national currency. Dividing cancels it: USD per international dollar.
+                guard let ppp = byYear[level]?[code].flatMap(PricingMath.decimal), let market = marketByYear[level]?[code].flatMap(PricingMath.decimal), market > 0, ppp / market > 0 else { continue }
+                values[code] = PricingMath.text(ppp / market); chosen[code] = level; dollarConversion = true
             }
         }
-        let minimum = min(20, converted.values.map(\.count).max() ?? 1)
-        guard let date = converted.keys.sorted(by: >).first(where: { converted[$0]!.count >= minimum }) else { throw PricingFailure.invalid("No usable purchasing power observations.") }
-        return IndexSnapshot(method: PricingMethod.ppp.rawValue, date: date, source: dollarConversionYears.contains(date) ? "World Bank PA.NUS.PPP · PA.NUS.FCRF for USD Prices" : "World Bank PA.NUS.PPP", values: converted[date]!)
+        let counts = Dictionary(grouping: chosen.values, by: { $0 }).mapValues(\.count)
+        let minimum = min(20, counts.values.max() ?? 1)
+        guard let date = counts.keys.sorted(by: >).first(where: { counts[$0]! >= minimum }) else { throw PricingFailure.invalid("No usable purchasing power observations.") }
+        var snapshot = IndexSnapshot(method: PricingMethod.ppp.rawValue, date: date, source: dollarConversion ? "World Bank PA.NUS.PPP · PA.NUS.FCRF for USD Prices" : "World Bank PA.NUS.PPP", values: values)
+        snapshot.levels = levels
+        snapshot.years = chosen.filter { $0.value != date }
+        return snapshot
     }
 }
 
@@ -358,6 +414,8 @@ public struct PricingSources: Sendable {
     public var worldBank = URL(string: "https://api.worldbank.org/v2/country/all/indicator/PA.NUS.PPP;PA.NUS.FCRF?source=2&format=json&per_page=20000&mrv=5")!
     public var worldBankCurrencies = URL(string: "https://api.worldbank.org/v2/sources/2/country/all/metatypes/CurrencyUnit/metadata?format=json&per_page=5000")!
     public var configuration: URLSessionConfiguration = .ephemeral
+    /// Whether Storebench's built-in observations stand in when an index can be neither downloaded nor read from its saved copy.
+    public var builtIn = true
     public init() {}
 
     func fetch(_ url: URL, limit: Int, timeout: TimeInterval) async throws -> Data {
@@ -601,7 +659,7 @@ extension WorkspaceSession {
         guard !typed.isEmpty else { throw PricingFailure.invalid("Type a price above zero for at least one country or region.") }
         guard typed.count <= 200, typed.keys.allSatisfy({ $0.range(of: "^[A-Z]{3}$", options: .regularExpression) != nil }) else { throw PricingFailure.invalid("Invalid territory selection.") }
         let codes = typed.keys.sorted()
-        let (points, failed) = try await previewPricePoints(owner, territories: codes, client: client) { done, total in
+        let (points, failed) = try await previewPricePoints(owner, territories: codes, needs: typed, client: client) { done, total in
             await progress("Matching Apple Prices · \(done) of \(total) Countries or Regions")
         }
         var rows: [ModelPrice] = [], chosen: [String: String] = [:]
@@ -630,36 +688,66 @@ extension WorkspaceSession {
         let selected = complete.filter { $0.code == profile.guideTerritory || method?.usesCountryPercentages != true || profile.percentages[$0.code] != nil }
         var warnings: [String] = []
         var rates: [String: FxRate] = [:], indexes: [IndexSnapshot] = []
-        if profile.needsExchangeRates {
+        for kind in profile.methods where kind.usesIndex {
+            await progress("Reading \(kind.name)…")
+            let index = try await pricingIndex(method: kind, catalog: countries, sources: sources)
+            try Task.checkCancellation()
+            guard index.values[profile.guideTerritory] != nil || index.levels[profile.guideTerritory] != nil else {
+                throw PricingFailure.invalid("\(kind.name) has no observation in the guide country's App Store currency. Choose another guide country or pricing method. No prices were changed.")
+            }
+            indexes.append(index)
+            if index.builtIn {
+                warnings.append("\(kind.name) could not be downloaded, so Storebench's built-in observations from \(index.date) are used. A background refresh will retry when the source is available.")
+            } else if index.cached, let fetched = index.fetchedAt.flatMap({ ISO8601DateFormatter.storebench.date(from: $0) }), Date().timeIntervalSince(fetched) >= PricingIndexData.freshness {
+                warnings.append("Using saved \(kind.name) observations from \(index.date). A background refresh will retry when the source is available.")
+            }
+        }
+        // An index prices a country in its own App Store currency directly. Only the countries it does not cover that way, or
+        // every country when the guide country is one of them, need exchange rates.
+        let uncovered = indexes.contains { $0.values[profile.guideTerritory] == nil } ? selected : selected.filter { country in indexes.contains { $0.values[country.code] == nil } }
+        let quotes = Set((profile.needsExchangeRates ? selected : uncovered).map(\.currency).filter { !$0.isEmpty && $0 != guideCurrency })
+        if !quotes.isEmpty {
             await progress("Reading Exchange Rates…")
-            let loaded = try? await fxRates(base: guideCurrency, quotes: Array(Set(selected.map(\.currency).filter { !$0.isEmpty && $0 != guideCurrency })), sources: sources)
+            let loaded = try? await fxRates(base: guideCurrency, quotes: Array(quotes), sources: sources)
             try Task.checkCancellation()
             rates = loaded?.rates ?? [:]
             if loaded == nil || !(loaded?.missing.isEmpty ?? true) { warnings.append("Some exchange rates are unavailable. Affected countries have no model price.") }
             if !(loaded?.stale.isEmpty ?? true) { warnings.append("Some exchange rates came from a dated local cache. Check country details.") }
         }
-        for kind in profile.methods where kind.usesIndex {
-            await progress("Reading \(kind.name)…")
-            let index = try await pricingIndex(method: kind, catalog: countries, sources: sources)
-            try Task.checkCancellation()
-            guard index.values[profile.guideTerritory] != nil else {
-                throw PricingFailure.invalid("\(kind.name) has no observation in the guide country's App Store currency. Choose another guide country or pricing method. No prices were changed.")
-            }
-            indexes.append(index)
-            if index.cached, let fetched = index.fetchedAt.flatMap({ ISO8601DateFormatter.storebench.date(from: $0) }), Date().timeIntervalSince(fetched) >= PricingIndexData.freshness {
-                warnings.append("Using saved \(kind.name) observations from \(index.date). A background refresh will retry when the source is available.")
+        for index in indexes {
+            let method = PricingMethod(rawValue: index.method)
+            let converted = selected.filter { $0.code != profile.guideTerritory && index.values[$0.code] == nil && index.levels[$0.code] == nil && ($0.currency == guideCurrency || rates[$0.currency] != nil) }
+            if !converted.isEmpty, let method {
+                warnings.append("\(converted.count) \(converted.count == 1 ? "country or region has" : "countries or regions have") no \(method.name) data and \(converted.count == 1 ? "uses" : "use") the exchange rate instead.")
             }
         }
         // Skip Apple's expensive catalog entirely for countries whose model cannot produce an amount.
-        let estimates = try PricingModels.calculate(profile, base: base, countries: selected, guideCurrency: guideCurrency, rates: rates, points: [], indexes: indexes)
+        let estimates = try PricingModels.calculate(profile, base: base, countries: selected, guideCurrency: guideCurrency, rates: rates, points: [], indexes: indexes, convertsUncovered: true)
         await estimated(estimates)
         let codes = estimates.filter { $0.calculated != nil }.map(\.territory)
-        let (points, failed) = try await previewPricePoints(owner, territories: codes, client: client) { done, total in
-            await progress("Matching Apple Prices · \(done) of \(total) Countries or Regions")
+        let needs = Dictionary(uniqueKeysWithValues: estimates.compactMap { row in row.calculated.flatMap(PricingMath.decimal).map { (row.territory, $0) } })
+        // Countries fill in as Apple's prices arrive, at most a few times a second.
+        final class Partial: @unchecked Sendable {
+            let lock = NSLock(); var points: [PricePoint] = [], shown: ContinuousClock.Instant?
+            func add(_ read: [PricePoint]) -> [PricePoint]? {
+                lock.withLock {
+                    points += read
+                    let now = ContinuousClock.now
+                    if let shown, now - shown < .milliseconds(250) { return nil }
+                    shown = now; return points
+                }
+            }
         }
+        let partial = Partial(), current = (profile, base, selected, guideCurrency, rates, indexes)
+        let (points, failed) = try await previewPricePoints(owner, territories: codes, needs: needs, client: client, progress: { done, total in
+            await progress("Matching Apple Prices · \(done) of \(total) Countries or Regions")
+        }, loaded: { read in
+            guard let points = partial.add(read), let rows = try? PricingModels.calculate(current.0, base: current.1, countries: current.2, guideCurrency: current.3, rates: current.4, points: points, indexes: current.5, convertsUncovered: true) else { return }
+            await estimated(rows)
+        })
         try Task.checkCancellation()
         if !failed.isEmpty { warnings.append("Some Apple price points could not be checked. Calculated amounts are shown without a price-point match.") }
-        let rows = try PricingModels.calculate(profile, base: base, countries: selected, guideCurrency: guideCurrency, rates: rates, points: points, indexes: indexes, pointsUnavailable: failed)
+        let rows = try PricingModels.calculate(profile, base: base, countries: selected, guideCurrency: guideCurrency, rates: rates, points: points, indexes: indexes, pointsUnavailable: failed, convertsUncovered: true)
         // The Apple price point each country or region rounds to, by its amount among that country's own price points.
         var chosen: [String: String] = [:]
         let pointsByCountry = Dictionary(grouping: points, by: \.territory)

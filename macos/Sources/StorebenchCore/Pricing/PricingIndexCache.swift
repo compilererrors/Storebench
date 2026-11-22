@@ -45,7 +45,13 @@ extension WorkspaceSession {
         guard method.usesIndex else { throw PricingFailure.invalid("Choose a published pricing index.") }
         try Task.checkCancellation()
         if let saved = try savedIndex(method, now: now), let value = try? saved.snapshot(catalog: catalog, cached: true) { return value }
-        return try await refreshPricingIndex(method, catalog: catalog, sources: sources, now: now)
+        do { return try await refreshPricingIndex(method, catalog: catalog, sources: sources, now: now) }
+        catch let failure as PricingFailure {
+            try Task.checkCancellation()
+            guard sources.builtIn, var value = try? BuiltInPricingIndexes.data(method)?.snapshot(catalog: catalog, cached: true) else { throw failure }
+            value.builtIn = true
+            return value
+        }
     }
 
     /// A failed refresh preserves the last validated observations. Only the exact job owner downloads or records its result.

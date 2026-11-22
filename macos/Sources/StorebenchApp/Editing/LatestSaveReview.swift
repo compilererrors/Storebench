@@ -80,7 +80,7 @@ struct PricingInputFields: View {
     var body: some View {
         VStack(alignment: .leading, spacing: StorebenchTheme.space(3)) {
             if identity {
-                StorebenchTextField("Profile name", text: $inputs.name)
+                StorebenchTextField("Profile Name", text: $inputs.name)
                 StorebenchSearchPicker("Guide country", selection: $inputs.guideTerritory, hint: "The guide country stays at 100%.") { Self.territories(including: inputs.guideTerritory) }
             }
             StorebenchPicker("Method", selection: Binding(get: { inputs.method }, set: { inputs.choose(method: $0) }), hint: method?.explanation ?? "") { selectionOptions(PricingMethod.allCases) { SelectionOption($0.name, value: $0.rawValue) } }

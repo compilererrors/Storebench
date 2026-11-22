@@ -8,8 +8,10 @@ struct AssetLibraryView: View {
     let openReview: (PublishReview) -> Bool
     @State private var snapshot: AssetLibrary.Snapshot?
     @State private var files: [AssetLibrary.File] = []
+    @State private var describing: AssetLibrary.File?
     @State private var fresh = false
     @State private var working = false
+    @State private var readAt: Date?
     @State private var status = ""
     @State private var issueCode: String?
     @State private var observations: [AssetLibraryVersions.Observation] = []
@@ -75,13 +77,14 @@ struct AssetLibraryView: View {
                     StorebenchReadButton("Refresh") { await refresh(fresh: true) }.storebenchWorking(working)
                     if let snapshot { Text("\(snapshot.assets.count) assets at Apple · \(files.count) saved local files").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
                 }
+                StorebenchReadAge(readAt: snapshot == nil ? nil : readAt, reading: working)
                 if !fresh && !working { Text(snapshot == nil ? "Apple's library has not been read. Saved local files remain available." : "The displayed Apple library could not be refreshed. Read it again before preparing changes.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
                 StorebenchFeedback(text: status, height: 56)
                 RecoveryActions(code: issueCode)
                 if let prepared { StorebenchActionGroup { Button("Open Review") { _ = openReview(prepared) }.help("Open Prepared Review").accessibilityLabel("Open Prepared Review").storebenchWorking(working) } }
             }
             localFilesCard
-            DisclosureGroup("Creative assets for header and search") {
+            DisclosureGroup("Creative Assets for Header and Search") {
                 Text("Choose Creative Assets for images or videos used in the product page header or search results. Upload the original, submit it for App Review, then place the approved asset in the matching language and destination.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
                 Text("Header images: 3840 × 1646 px. Search images: 3:2, from 1920 × 1280 to 3840 × 2560 px. A 5244 × 2950 PNG can serve both placements. Images must have no alpha channel. Videos have separate requirements; check the current Apple specification before upload.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
                 StorebenchTextLink("Apple creative asset specifications", destination: URL(string: "https://developer.apple.com/help/app-store-connect/reference/app-information/creative-assets-specifications")!)
@@ -102,6 +105,12 @@ struct AssetLibraryView: View {
         .onDisappear { orderReadTicket = UUID(); orderLoading = false; orderEditor?.retire() }
         .onChange(of: localName) { prepared = nil }
         .task(id: selectedId) { await loadPreview() }
+        .sheet(item: $describing) { file in
+            if let session {
+                AssetDescriptionDialog(account: account, appId: app.id, session: session, file: file,
+                                       saved: { updated in if let index = files.firstIndex(where: { $0.id == updated.id }) { files[index] = updated } }, close: { describing = nil })
+            }
+        }
         .sheet(item: $editingImage) { edit in
             ScreenshotImageEditor(item: edit.item, platform: "MAC_OS", displayType: nil, customTargets: edit.targets, outputPNG: true, apply: { data, _ in
                 working = true
@@ -113,7 +122,7 @@ struct AssetLibraryView: View {
             }, close: { editingImage = nil })
         }
         .sheet(item: $playingFile) { file in
-            StorebenchDialog(title: file.fileName, wide: true, height: 620, busy: playbackBusy, close: { if !playbackBusy { playingFile = nil } }) {
+            StorebenchDialog(title: file.fileName, kind: .content, busy: playbackBusy, close: { if !playbackBusy { playingFile = nil } }) {
                 SavedPreviewPlayer(scope: .init(accountId: account.id, appId: app.id, revisionId: file.id, local: true), localizationId: "", type: "", item: .init(id: file.id, fileName: file.fileName, sha256: file.hash, ext: file.ext, width: file.width, height: file.height, duration: file.duration ?? 0), posterTime: 0, session: session,
                     source: .init(accountId: account.id, appId: app.id, revisionId: file.id, itemId: file.id, kind: .assetLibrary), busyChanged: { playbackBusy = $0 })
             } actions: { EmptyView() }
@@ -136,7 +145,8 @@ struct AssetLibraryView: View {
                 StorebenchCollection(items: files, title: { $0.referenceName.isEmpty ? $0.fileName : $0.referenceName }, subtitle: { "Local " + $0.kind.rawValue + " · " + $0.category.label }, maximumColumns: 4, cardSurface: false, initialOpeningLimit: -1,
                                      empty: "No local originals yet. Drop images or videos above, or choose Choose Files…") { file in
                     StorebenchAssetCard(title: file.referenceName.isEmpty ? file.fileName : file.referenceName + "\n" + file.fileName,
-                        metadata: "\(file.width) × \(file.height) px · \(file.size / 1024) KiB · \(file.category.label)", status: file.kind == .image ? "Local image" : "Local video") {
+                        metadata: "\(file.width) × \(file.height) px · \(file.size / 1024) KiB · \(file.category.label)" + (file.tags.isEmpty ? "" : " · " + file.tags.joined(separator: ", ")),
+                        status: file.kind == .image ? (file.aiDescription.isEmpty ? "Local image" : "Local image · Described for AI cards") : "Local video") {
                         if file.kind == .image {
                             LocalLibraryThumbnail(accountId: account.id, appId: app.id, file: file, session: session).accessibilityLabel(file.fileName)
                         } else {
@@ -158,6 +168,7 @@ struct AssetLibraryView: View {
                             }
                             StorebenchMenu("More actions", icon: "settings") {
                                 Button("Export Original") { Task { await export(file) } }.storebenchWorking(working)
+                                if file.kind == .image { Button("Describe for AI Cards…") { describing = file }.storebenchWorking(working || session == nil) }
                                 if file.kind == .image { if fresh && snapshot?.catalog.editingTargets(category: file.category).isEmpty == false { Button("Edit Image") { Task { await edit(file) } }.storebenchWorking(working) } }
                                 else { Button("Play Video") { playbackBusy = false; playingFile = file }.storebenchWorking(working || session == nil) }
                                 Button("Remove Local File", role: .destructive) {
@@ -175,13 +186,13 @@ struct AssetLibraryView: View {
             selectedIDs: $selectedIDs, open: select, selectionChanged: { prepared = nil })
     }
     private func selectedCard(_ asset: AssetLibrary.Asset) -> some View {
-        Card(title: "Selected asset", subtitle: asset.fileName) {
+        Card(title: "Selected Asset", subtitle: asset.fileName) {
             if let preview { Image(decorative: preview.image, scale: 1).resizable().aspectRatio(contentMode: .fit).frame(maxWidth: .infinity, maxHeight: 280).accessibilityLabel(asset.name) }
             StorebenchTextSlot(text: previewIssue, height: 34, font: .sbCaption, color: StorebenchTheme.muted, live: true)
             StorebenchStateLabel(code: asset.state)
             if let modified = AppStoreNames.date(asset.modified) { Text("Modified " + modified).font(.sbCaption).foregroundStyle(StorebenchTheme.muted) }
             StorebenchTextSlot(text: asset.details, height: asset.details.isEmpty ? 24 : 80, font: .sbCallout, color: StorebenchTheme.muted)
-            StorebenchTextField("Reference name", text: $referenceName).storebenchWorking(working)
+            StorebenchTextField("Reference Name", text: $referenceName).storebenchWorking(working)
             if asset.kind == .video { StorebenchTextField("Preview frame · HH:MM:SS:FF", text: $timeCode).storebenchWorking(working) }
             StorebenchActionGroup {
                 if fresh {
@@ -226,7 +237,7 @@ struct AssetLibraryView: View {
                 Text(target.editable ? "Editable destination · current placements below." : target.liveCreative ? "Live version · approved creative assets can be placed or removed after Publish approval. Screenshots and previews need an editable version." : "This destination is not editable. Choose another destination to change placements.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
                 StorebenchActionGroup { Button("Refresh Placements") { Task { await readPlacements(fresh: true) } }.storebenchWorking(working) }
             }
-            StorebenchPicker("Compatible placement for selected asset", selection: $slotId) {
+            StorebenchPicker("Compatible Placement for Selected Asset", selection: $slotId) {
                 SelectionOption("Choose a placement", value: ""); selectionOptions(slots) { SelectionOption("\($0.label) · maximum \($0.limit)", value: $0.id) }
             }.storebenchWorking(working)
             StorebenchCollection(items: placements, title: { placement in snapshot?.assets.first { $0.id == placement.assetId }?.name ?? placement.assetId }, subtitle: { $0.type + " · " + $0.group },
@@ -262,7 +273,7 @@ struct AssetLibraryView: View {
     }
     private var orderingControls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            StorebenchPicker("Order placement group", selection: Binding(get: { group }, set: { value in guard !operationBusy, protection?.allowLeaving() != false else { return }; group = value; orderEditor?.retire(); orderEditor = nil; Task { await loadOrder() }; prepared = nil })) {
+            StorebenchPicker("Order Placement Group", selection: Binding(get: { group }, set: { value in guard !operationBusy, protection?.allowLeaving() != false else { return }; group = value; orderEditor?.retire(); orderEditor = nil; Task { await loadOrder() }; prepared = nil })) {
                 SelectionOption("Choose a group", value: ""); selectionOptions(Array(Set(placements.map(\.group))).sorted()) { SelectionOption($0, value: $0) }
             }.storebenchWorking(working)
             if let orderEditor {
@@ -274,7 +285,7 @@ struct AssetLibraryView: View {
     private var submissionCard: some View {
         Card(title: "App Review", subtitle: "Submit selected library assets independently after this platform has an approved app version. Assets for a first version travel with that version's submission. Creative Assets must be suitable for ages 4+.") {
             Text("\(selectedIDs.count) assets selected").font(.sbHeadline)
-            StorebenchPicker("Review platform", selection: $platform) { SelectionOption("macOS", value: "MAC_OS"); SelectionOption("iOS", value: "IOS"); SelectionOption("tvOS", value: "TV_OS"); SelectionOption("visionOS", value: "VISION_OS") }.storebenchWorking(working)
+            StorebenchPicker("Review Platform", selection: $platform) { SelectionOption("macOS", value: "MAC_OS"); SelectionOption("iOS", value: "IOS"); SelectionOption("tvOS", value: "TV_OS"); SelectionOption("visionOS", value: "VISION_OS") }.storebenchWorking(working)
             StorebenchPicker("Submission", selection: $submissionId) { SelectionOption("Create a new submission", value: ""); selectionOptions(reviewChoices) { SelectionOption($0.name, value: $0.id) } }.storebenchWorking(working)
             if fresh {
                 StorebenchFormFooter {
@@ -328,7 +339,7 @@ struct AssetLibraryView: View {
             do { files = try await session.assetLibraryFiles(accountId: account.id, appId: app.id) } catch { status = "Saved local files could not be read." }
             do {
                 let next = try await session.assetLibrary(account: account, appId: app.id, client: session.readClient(for: account)); try Task.checkCancellation()
-                snapshot = next; fresh = true; selectedIDs.formIntersection(Set(next.assets.filter(AssetLibraryAssetsCard.reviewable).map(\.id)))
+                snapshot = next; fresh = true; readAt = Date(); selectedIDs.formIntersection(Set(next.assets.filter(AssetLibraryAssetsCard.reviewable).map(\.id)))
                 if let asset = next.assets.first(where: { $0.id == selectedId }) { referenceName = asset.referenceName; timeCode = asset.value["attributes"]?["previewFrameTimeCode"]?.text ?? "" } else { selectedId = "" }
                 prepared = nil; issueCode = nil; status = "Asset Library and current specifications read."
                 await readVersionHistory(session)
@@ -339,7 +350,7 @@ struct AssetLibraryView: View {
     /// The library last read shows at once; Apple changes stay unavailable until the read that follows confirms it.
     private func showRemembered() {
         guard snapshot == nil, let read = history?.rememberedRead(readKey, as: Read.self) else { return }
-        snapshot = read.snapshot; observations = read.observations; if files.isEmpty { files = read.files }
+        snapshot = read.snapshot; observations = read.observations; readAt = history?.rememberedReadAt(readKey); if files.isEmpty { files = read.files }
         if let asset = read.snapshot.assets.first(where: { $0.id == selectedId }) { referenceName = asset.referenceName; timeCode = asset.value["attributes"]?["previewFrameTimeCode"]?.text ?? "" }
     }
     private func applyRestoring() async {
@@ -453,7 +464,7 @@ struct AssetLibraryView: View {
     }
     private func loadPreview() async {
         preview = nil; previewIssue = ""; guard let selected, let session else { return }
-        do { let bytes = try await session.assetLibraryThumbnail(account: account, appId: app.id, asset: selected, client: session.client(for: account)); let decoded = try await ScreenshotRenderer.loadAsync(bytes); try Task.checkCancellation(); guard selectedId == selected.id else { return }; preview = decoded }
+        do { let bytes = try await session.assetLibraryThumbnail(account: account, appId: app.id, asset: selected); let decoded = try await ScreenshotRenderer.loadAsync(bytes); try Task.checkCancellation(); guard selectedId == selected.id else { return }; preview = decoded }
         catch is CancellationError {} catch { guard selectedId == selected.id else { return }; previewIssue = "A processed preview is not available. The asset status remains visible." }
     }
     private func problem(_ error: Error, fallback: String) { status = (error as? PublishFailure)?.message ?? (error as? PreviewFailure)?.message ?? fallback; issueCode = RecoveryIssue.apple(error) }

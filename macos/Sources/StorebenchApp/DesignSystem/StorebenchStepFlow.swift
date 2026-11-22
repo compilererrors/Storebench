@@ -2,11 +2,14 @@ import StorebenchCore
 import SwiftUI
 
 /// A numbered list of steps beside their content: each step shows its number, or a check once done, and its status in words.
+/// Beside the open step the list stays in view while the page scrolls, so every step can be reached from anywhere in the step.
 struct StorebenchStepRail: View {
     struct Item: Identifiable {
         let id: String, number: Int, title: String, label: String
         let complete: Bool, current: Bool
         var tone: StorebenchStatusTone? = nil
+        /// Why this step can't be opened yet, such as a step that needs the one before it; nil opens it.
+        var unavailable: String? = nil
     }
     let title: String
     let items: [Item]
@@ -17,6 +20,10 @@ struct StorebenchStepRail: View {
     private var completed: Int { items.filter(\.complete).count }
 
     var body: some View {
+        StorebenchStickyColumn { list }
+    }
+
+    private var list: some View {
         VStack(alignment: .leading, spacing: StorebenchTheme.space(1)) {
             Text(title).font(.sbHeadline)
             Text("\(completed) of \(items.count) complete").font(.sbCaption).foregroundStyle(StorebenchTheme.muted).padding(.bottom, StorebenchTheme.space(2))
@@ -56,6 +63,8 @@ struct StorebenchStepRail: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(StorebenchPressStyle())
+        .disabled(item.unavailable != nil)
+        .help(item.unavailable ?? "")
         .accessibilityLabel("Step \(item.number): \(item.title), \(item.label)")
         .accessibilityAddTraits(selected ? .isSelected : [])
         .storebenchControlID(identifierPrefix + item.id)
@@ -63,6 +72,7 @@ struct StorebenchStepRail: View {
 }
 
 /// The step list on the left and the open step beside it; on narrow windows the list sits above the step.
+/// Beside the step the list is given the step's whole height, so it can stay in view while the page scrolls through the step.
 struct StorebenchStepLayout: Layout {
     private let railWidth: CGFloat = 248, gap: CGFloat = 24, stackAt: CGFloat = 880
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
@@ -78,7 +88,7 @@ struct StorebenchStepLayout: Layout {
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         guard subviews.count == 2 else { return }
         if bounds.width >= stackAt {
-            subviews[0].place(at: bounds.origin, proposal: .init(width: railWidth, height: nil))
+            subviews[0].place(at: bounds.origin, proposal: .init(width: railWidth, height: bounds.height))
             subviews[1].place(at: CGPoint(x: bounds.minX + railWidth + gap, y: bounds.minY), proposal: .init(width: bounds.width - railWidth - gap, height: nil))
         } else {
             let rail = subviews[0].sizeThatFits(.init(width: bounds.width, height: nil))
@@ -106,8 +116,11 @@ struct StorebenchStepPage<Content: View>: View {
     var actions: AnyView? = nil
     /// The guide this page is; its last step continues to the page the guide leads to.
     var guide: AppNavigation.Section? = nil
+    /// The open step's own commands, such as Save Draft, shown between Back and Next. A primary one leaves Next secondary.
+    var commands: ((String) -> [StorebenchStepCommand])? = nil
     @ViewBuilder let content: (String) -> Content
     @Environment(\.pageScroll) private var pageScroll
+    @Environment(\.openSection) private var openSection
 
     /// The open step: the one chosen, else the first step not done, else the last.
     private var open: StorebenchGuideStep? {
@@ -131,11 +144,7 @@ struct StorebenchStepPage<Content: View>: View {
                         }
                     }.id("guide-step-heading")
                     content(open.id).id("guide-step-\(open.id)")
-                    StorebenchActionGroup(alignment: .trailing) {
-                        StorebenchCommand(title: "Back", busy: false, unavailable: index == 0 ? "This is the first step." : nil, primary: false) { go(steps[index - 1].id) }
-                        if index + 1 >= steps.count, let guide { StorebenchGuideExit(guide: guide) }
-                        else { StorebenchCommand(title: "Next", busy: false, unavailable: index + 1 >= steps.count ? "This is the last step." : nil) { go(steps[index + 1].id) } }
-                    }.help(index + 1 < steps.count ? "Continue to step \(steps[index + 1].number): \(steps[index + 1].title)" : "")
+                    StorebenchStepCommands(state: barState(open, index: index))
                 }
             }
         }
@@ -144,6 +153,19 @@ struct StorebenchStepPage<Content: View>: View {
     private func go(_ id: String) {
         selected = id
         pageScroll?("guide-step-heading", .top)
+    }
+    private func barState(_ open: StorebenchGuideStep, index: Int) -> StorebenchStepBarState {
+        let back = StorebenchStepCommand(title: "Back", unavailable: index == 0 ? "This is the first step." : nil, primary: false,
+                                         help: index == 0 ? "" : "Back to step \(steps[index - 1].number): \(steps[index - 1].title)") { go(steps[index - 1].id) }
+        let own = commands?(open.id) ?? []
+        var next: StorebenchStepCommand
+        if index + 1 < steps.count {
+            next = .init(title: "Next", help: "Continue to step \(steps[index + 1].number): \(steps[index + 1].title)") { go(steps[index + 1].id) }
+        } else { next = StorebenchGuideExit.command(guide: guide, open: openSection) }
+        if own.contains(where: \.primary) { next.primary = false }
+        return .init(id: "guide/\(title)/\(open.id)", title: "Step \(open.number) of \(steps.count): \(open.title)",
+                     detail: open.complete ? "This step is done." : open.needed.first.map { "Needed: " + $0 + (open.needed.count > 1 ? " and \(open.needed.count - 1) more" : "") } ?? open.purpose,
+                     back: back, next: own + [next])
     }
 }
 
@@ -173,6 +195,11 @@ struct StorebenchGuideSection: View {
 struct StorebenchGuideExit: View {
     let guide: AppNavigation.Section
     @Environment(\.openSection) private var openSection
+    /// The last step's command for the bar: it continues to the page the guide leads to.
+    static func command(guide: AppNavigation.Section?, open: ((AppNavigation.Section) -> Void)?) -> StorebenchStepCommand {
+        guard let target = guide?.afterGuide else { return .init(title: "Next", unavailable: "This is the last step.") {} }
+        return .init(title: "To \(target.title)", unavailable: open == nil ? "Open this app to continue." : nil, help: "This is the last step. Continue in \(target.title).") { open?(target) }
+    }
     var body: some View {
         if let target = guide.afterGuide {
             StorebenchCommand(title: "To \(target.title)", busy: false, unavailable: openSection == nil ? "Open this app to continue." : nil) { openSection?(target) }

@@ -28,6 +28,12 @@ struct AICardsCreator: View {
     @State private var problem = false
     @State private var connections: [AIConnection] = []
     @State private var servicesLoaded = false
+    @State private var mode = AICardDefaults.stored(in: .standard).mode
+    @State private var useListing = AICardDefaults.stored(in: .standard).useListing
+    /// The language of the app's App Store text sent with the cards; nil when the app has no saved listing.
+    @State private var listingLocale: String?
+    @State private var pickingLibrary = false
+    private var usesListing: Bool { useListing && listingLocale != nil }
     private var executionSummary: String {
         guard let service = AIProvider(rawValue: provider) else { return "Choose an AI Service" }
         if service == .apple { return "Apple Intelligence · On This Mac" }
@@ -38,7 +44,7 @@ struct AICardsCreator: View {
         if let issue = AICards.customInstructionIssue(customInstructions) { return issue }
         if let issue = AICards.cardBriefIssue(cardBriefs) { return issue }
         if !servicesLoaded { return "Checking the selected AI service…" }
-        return AICards.generationIssue(name: name, brief: brief, screenshots: shots.count, provider: provider, connections: connections, localAvailable: AppleLocalAI.available)
+        return AICards.generationIssue(name: name, brief: brief, screenshots: shots.count, provider: provider, connections: connections, localAvailable: AppleLocalAI.available, usesListing: usesListing)
     }
     private var footerHint: String {
         if working { return "Working… " + executionSummary }
@@ -52,11 +58,16 @@ struct AICardsCreator: View {
             ("screenshots", (try? JSONText.parse(encoder.encode(shots))) ?? .null),
             ("directions", .array(AICardDirection.allCases.filter { directions.contains($0) }.map { .string($0.rawValue) })),
             ("variationID", variationID.map(JSONText.string) ?? .null), ("previousCard", previousCard ?? .null), ("customInstructions", customInstructions.map(JSONText.string) ?? .null),
-            ("cardBriefs", .array(cardBriefs.map(JSONText.string))), ("cardPalette", customColors ? palette.value : .null)])
+            ("cardBriefs", .array(cardBriefs.map(JSONText.string))), ("cardPalette", customColors ? palette.value : .null),
+            ("mode", .string(mode.rawValue)), ("useListing", .bool(useListing))])
     }
     private func restore(_ value: JSONText) {
-        name = value["name"]?.text ?? ""; brief = value["brief"]?.text ?? ""; language = value["language"]?.text ?? "en-US"
-        provider = value["provider"]?.text ?? AIProvider.apple.rawValue; targetId = value["target"]?.text ?? MediaCards.defaultTarget.id
+        // A new set starts from the defaults chosen in Settings; a saved draft keeps its own choices.
+        let defaults = AICardDefaults.stored(in: .standard)
+        name = value["name"]?.text ?? ""; brief = value["brief"]?.text ?? ""; language = value["language"]?.text ?? defaults.language
+        provider = value["provider"]?.text ?? AIProvider.apple.rawValue; targetId = value["target"]?.text ?? defaults.targetId
+        mode = value["mode"]?.text.flatMap(AICardDefaults.Mode.init(rawValue:)) ?? defaults.mode
+        useListing = value["useListing"] == nil ? defaults.useListing : value["useListing"] != .bool(false)
         modelID = value["model"]?.text ?? ""
         directions = Set((try? AICardDirection.selected(in: value)) ?? AICardDirection.defaults)
         customInstructions = value["customInstructions"]?.text
@@ -68,52 +79,67 @@ struct AICardsCreator: View {
         customColors = savedPalette != nil; palette = savedPalette ?? AICardPalette()
     }
     var body: some View {
-        Card(title: "Create AI Cards", subtitle: "Describe the message and style in one or two sentences. AI proposes editable cards using your original screenshots.") {
-            StorebenchTextField("Card Set Name", text: $name, hint: "Up to 80 characters")
-            StorebenchTextArea(title: "What Should the Cards Convey? · \(brief.utf16.count)/2000", text: $brief, height: StorebenchTheme.textarea(rows: 3))
-            if let previousCard {
-                StorebenchCardSection(title: "Improve This Version") {
-                    StorebenchAdaptiveText(text: previousCard["title"]?.text ?? "Selected Card")
-                    Text("The current wording and colors are included for comparison. Edit the brief or directions below; generating keeps the previous card set.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
-                }
+        Card(title: "Create AI Cards", subtitle: mode.detail) {
+            StorebenchChoicePicker("How to Create", selection: $mode, options: AICardDefaults.Mode.allCases.map { ($0, $0.title) }, style: .pills)
+                .storebenchControlID("ai-cards.mode")
+            StorebenchFormGrid {
+                StorebenchTextField("Card Set Name", text: $name, hint: "Up to 80 characters")
+                StorebenchPicker("Card Language", selection: $language) { selectionOptions(StoreLocales.codes) { SelectionOption(StoreLocales.name($0), value: $0) } }
+                StorebenchPicker("Display Size", selection: $targetId) { selectionOptions(MediaCards.targets) { SelectionOption($0.label, value: $0.id) } }
             }
-            if !sourceNote.isEmpty { Text(sourceNote).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true) }
-            StorebenchOptionGroup(title: "Creative Directions", description: "Choose any combination. Hover over an option to read the instruction it adds to your brief.") {
-                StorebenchOptionGrid {
-                    ForEach(AICardDirection.allCases, id: \.self) { direction in
-                        StorebenchToggle(direction.title, isOn: Binding(get: { directions.contains(direction) }, set: { selected in
-                            if selected { directions.insert(direction) } else { directions.remove(direction) }
-                        })).help(direction.instruction)
+            VStack(alignment: .leading, spacing: StorebenchTheme.space(1)) {
+                StorebenchToggle("Use the App's App Store Text", isOn: $useListing).storebenchControlID("ai-cards.use-listing")
+                StorebenchTextSlot(text: listingHint, height: 32, font: .sbCaption, color: StorebenchTheme.muted)
+            }
+            if mode == .guided {
+                StorebenchTextArea(title: "What Should the Cards Convey?\(usesListing ? " (Optional)" : "") · \(brief.utf16.count)/2000", text: $brief, height: StorebenchTheme.textarea(rows: 3))
+                if let previousCard {
+                    StorebenchCardSection(title: "Improve This Version") {
+                        StorebenchAdaptiveText(text: previousCard["title"]?.text ?? "Selected Card")
+                        Text("The current wording and colors are included for comparison. Edit the brief or directions below; generating keeps the previous card set.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
                     }
                 }
+                if !sourceNote.isEmpty { Text(sourceNote).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true) }
+                StorebenchOptionGroup(title: "Creative Directions", description: "Choose any combination. Hover over an option to read the instruction it adds to your brief.") {
+                    StorebenchOptionGrid {
+                        ForEach(AICardDirection.allCases, id: \.self) { direction in
+                            StorebenchToggle(direction.title, isOn: Binding(get: { directions.contains(direction) }, set: { selected in
+                                if selected { directions.insert(direction) } else { directions.remove(direction) }
+                            })).help(direction.instruction)
+                        }
+                    }
+                }
+                DisclosureGroup {
+                    AICardPromptEditor(customInstructions: $customInstructions, directions: AICardDirection.allCases.filter { directions.contains($0) })
+                } label: {
+                    Text("Prompt Instructions").storebenchControlID("ai-cards.prompt-instructions")
+                }
+                AICardColorControls(custom: $customColors, palette: $palette)
             }
-            DisclosureGroup {
-                AICardPromptEditor(customInstructions: $customInstructions, directions: AICardDirection.allCases.filter { directions.contains($0) })
-            } label: {
-                Text("Prompt Instructions").storebenchControlID("ai-cards.prompt-instructions")
-            }
-            StorebenchFormGrid {
-                StorebenchPicker("Display Size", selection: $targetId) { selectionOptions(MediaCards.targets) { SelectionOption($0.label, value: $0.id) } }
-                StorebenchPicker("Card Language", selection: $language) { selectionOptions(StoreLocales.codes) { SelectionOption(StoreLocales.name($0), value: $0) } }
-            }
-            AICardColorControls(custom: $customColors, palette: $palette)
-            AIServicePicker(session: session, selection: $provider, modelID: $modelID, sharedContent: "Your brief and selected screenshots", requiresImages: true, loaded: { connections = $0; servicesLoaded = true })
-            StorebenchCardSection(title: "Screenshots") {
-                Text("\(shots.count) of 10 selected. Their original pixels remain in the cards; AI chooses the text, order and colors. The whole screenshot stays visible unless you allow cropping.")
+            AIServicePicker(session: session, selection: $provider, modelID: $modelID, sharedContent: usesListing ? "Your screenshots, brief and the app's App Store text" : "Your brief and selected screenshots",
+                            requiresImages: true, loaded: { connections = $0; servicesLoaded = true })
+            StorebenchCardSection(title: shots.isEmpty ? "Cards" : "Cards · \(shots.count)") {
+                Text(shots.isEmpty ? "Add up to 10 screenshots. Each becomes one card, in this order."
+                     : "\(shots.count) of 10. Each screenshot becomes one card, in this order. Their original pixels stay in the cards; AI writes the text and chooses the colors.")
                     .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
                 ForEach(Array(shots.enumerated()), id: \.offset) { index, shot in
-                    StorebenchCardSection(title: "Screenshot \(index + 1)") {
-                        StorebenchStatusRow(title: shot.name, detail: "\(shot.width) × \(shot.height) px") { Text("Selected").font(.sbCaption) } action: {
+                    StorebenchCardSection(title: "Card \(index + 1)") {
+                        StorebenchStatusRow(title: shot.name, detail: "\(shot.width) × \(shot.height) px") { Text("Screenshot").font(.sbCaption) } action: {
                             Button("Remove") { shots.remove(at: index); cardBriefs.remove(at: index) }
                                 .storebenchControlID("ai-cards.remove-screenshot-\(index)")
                         } details: { EmptyView() }
-                        StorebenchTextArea(title: "Instructions for This Card (Optional) · \(cardBriefs.indices.contains(index) ? cardBriefs[index].utf16.count : 0)/\(AICards.cardBriefLimit)",
-                                           text: cardBrief(index), height: StorebenchTheme.textarea(rows: 2),
-                                           hint: "Describe this screenshot's feature or message. Leave empty to use the shared brief and screenshot content.")
-                            .storebenchControlID("ai-cards.card-brief-\(index)")
+                        if mode == .guided {
+                            StorebenchTextArea(title: "Message for This Card (Optional) · \(cardBriefs.indices.contains(index) ? cardBriefs[index].utf16.count : 0)/\(AICards.cardBriefLimit)",
+                                               text: cardBrief(index), height: StorebenchTheme.textarea(rows: 2),
+                                               hint: "What this card should say about the feature it shows. Leave empty to let AI write it from the screenshot.")
+                                .storebenchControlID("ai-cards.card-brief-\(index)")
+                        }
                     }
                 }
-                StorebenchFormFooter { Button("Add Screenshots…") { choose() }.storebenchControlID("ai-cards.add-screenshots").storebenchWorking(shots.count >= 10) }
+                StorebenchFormFooter {
+                    Button("Add Screenshots…") { choose() }.storebenchControlID("ai-cards.add-screenshots").storebenchWorking(shots.count >= 10)
+                    Button("Add from Asset Library…") { pickingLibrary = true }.storebenchControlID("ai-cards.add-library").storebenchWorking(shots.count >= 10 || session == nil)
+                }
             }
             StorebenchTextSlot(text: status, height: 54, font: .sbCallout, color: problem ? StorebenchTheme.color("color-danger") : StorebenchTheme.muted, live: true)
             if let draft {
@@ -137,6 +163,17 @@ struct AICardsCreator: View {
             else if owner.syncSnapshot()?.revision == 0, let preferences = try? await session.aiSetupPreferences() { provider = preferences.defaultProvider.rawValue }
             if owner.loaded, let initialSource { restore(initialSource) }
         }
+        // Which language of the app's App Store text goes with the cards, read again when the card language changes.
+        .task(id: language) {
+            guard let session else { listingLocale = nil; return }
+            listingLocale = (try? await session.aiCardListing(accountId: account.id, appId: app.id, language: language))?["locale"]?.text
+        }
+        .sheet(isPresented: $pickingLibrary) {
+            if let session {
+                AssetLibraryPicker(account: account, appId: app.id, session: session, model: nil, close: { pickingLibrary = false },
+                                   addCards: { await addPicked($0) }, limit: max(1, 10 - shots.count))
+            }
+        }
     }
     private func cardBrief(_ index: Int) -> Binding<String> {
         Binding(get: { cardBriefs.indices.contains(index) ? cardBriefs[index] : "" }, set: { value in
@@ -149,6 +186,27 @@ struct AICardsCreator: View {
         let saved = await draft.saveCurrent(value: { draftValue })
         status = saved ? "Draft saved on this Mac. You can leave and continue later." : draft.status
         problem = !saved
+    }
+    private var listingHint: String {
+        guard useListing else { return mode == .quick ? "Without the app's text, write what the cards should convey in Guided." : "Cards are written from your brief and the screenshots only." }
+        guard let listingLocale else { return "This app has no saved App Store text yet. Import its listing, or describe the cards in Guided." }
+        return "Sends the app's \(StoreLocales.name(listingLocale)) name, subtitle, description and keywords with the screenshots, so the cards stay about this app."
+    }
+    /// Screenshots chosen in Asset Library become cards, each with its saved description as the card's message.
+    private func addPicked(_ picks: [AssetLibraryPicker.CardPick]) async -> Bool {
+        guard let session, !picks.isEmpty else { return false }
+        guard shots.count + picks.count <= 10 else { status = "Choose no more than 10 screenshots in this set."; problem = true; return false }
+        do {
+            for pick in picks {
+                shots.append(try await session.stageMediaCardScreenshot(accountId: account.id, appId: app.id, bytes: pick.data, name: pick.name))
+                cardBriefs.append(String(pick.description.prefix(AICards.cardBriefLimit)))
+            }
+            if picks.contains(where: { !$0.description.isEmpty }) { mode = .guided }
+            let saved = await draft?.saveCurrent(value: { draftValue }) == true
+            status = saved ? "Screenshots added from Asset Library and the draft is saved on this Mac." : (draft?.status ?? "Screenshots added. Save the draft before leaving.")
+            problem = !saved
+            return true
+        } catch { status = AIFailure.message(error); problem = true; return false }
     }
     private func choose() {
         guard !working, let session else { return }

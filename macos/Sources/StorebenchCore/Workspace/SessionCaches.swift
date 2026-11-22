@@ -6,16 +6,22 @@ extension WorkspaceSession {
         let budget = policy.budget()
         cacheBudget = budget
         decodedRevisions.resize(budget.decodedRevisions)
+        parsedSources.resize(budget.draftSources)
         archivedRevisions.resize(budget.archivedRevisions)
         releaseStatusMemory.resize(budget.releaseStatus)
         pricingCaches.resize(budget.pricingScreens)
+        libraryThumbnails.resize(budget.thumbnails)
         await appleReadCache.configure(limit: budget.appleReads, lifetime: budget.appleReadLifetime)
     }
+
+    /// Applies the Performance setting's activity level to what this session prepares ahead.
+    public func applyWorkPlan(_ plan: WorkPolicy.Plan) { workPlan = plan }
 
     /// Frees what can be read or decoded again when macOS reports memory pressure. Saved work, drafts and reads in flight are kept.
     public func trimCachedMemory() async {
         decodedRevisions.removeAll(); archivedRevisions.removeAll(); releaseStatusMemory.removeAll()
-        pricingCaches.trim(); libraryMetadataCache.removeAll()
+        revisionLists.removeAll(); archivedLists.removeAll(); committedImports.removeAll(); parsedSources.removeAll()
+        pricingCaches.trim(); libraryMetadataCache.removeAll(); libraryThumbnails.removeAll(); libraryThumbnailRefreshed.removeAll(); publishHistoryMemo.removeAll()
         await appleReadCache.trim()
     }
 
@@ -30,7 +36,7 @@ extension WorkspaceSession {
 
     /// Estimated bytes the session caches hold now.
     public func cachedMemoryBytes() async -> Int {
-        let local = decodedRevisions.cost + archivedRevisions.cost + releaseStatusMemory.cost + pricingCaches.retainedBytes + libraryMetadataCache.cost
+        let local = decodedRevisions.cost + parsedSources.cost + archivedRevisions.cost + releaseStatusMemory.cost + pricingCaches.retainedBytes + libraryMetadataCache.cost + libraryThumbnails.cost + publishHistoryMemo.cost
         return await local + appleReadCache.retainedBytes
     }
 

@@ -24,7 +24,7 @@ struct StorebenchCollectionReveal<ID: Hashable>: Equatable {
 struct StorebenchResultsPerPage: View {
     @Binding var size: Int
     var body: some View {
-        StorebenchPicker("Results per page", selection: $size) {
+        StorebenchPicker("Results per Page", selection: $size) {
             selectionOptions(CollectionPresentation<Int>.pageSizes) { SelectionOption("\($0) results", value: $0) }
         }.environment(\.fieldHintHeight, 0)
     }
@@ -38,6 +38,8 @@ struct StorebenchCollection<Item: Identifiable, Content: View>: View {
     var icon: ((Item) -> AnyView)? = nil
     /// Commands for this record stay outside its disclosure target and remain available when it is closed.
     var headerActions: ((Item) -> AnyView)? = nil
+    /// A short status beside the title, such as `StorebenchGlance`, so a closed record still says how it stands.
+    var headerStatus: ((Item) -> AnyView)? = nil
     var sorts: [StorebenchCollectionSort<Item>] = []
     var maximumColumns = 1
     var minimumWidth: CGFloat = 260
@@ -91,6 +93,8 @@ struct StorebenchCollection<Item: Identifiable, Content: View>: View {
     }
     private var current: CollectionPresentation<Item.ID>.Page { presentation.page(ordered.map(\.id)) }
     var body: some View {
+        // Sorted and paged once for the whole update; every row below reads these instead of sorting the list again.
+        let ordered = self.ordered, current = presentation.page(ordered.map(\.id)), shown = Set(current.ids)
         VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             if items.count > 1 { StorebenchCollectionControls(summary: current.summary, pageSize: Binding(get: { presentation.pageSize }, set: { presentation.chooseSize($0) }),
                 sort: $sort, descending: $descending, sorts: [("name", "Name")] + sorts.map { ($0.id, $0.label) },
@@ -101,7 +105,7 @@ struct StorebenchCollection<Item: Identifiable, Content: View>: View {
             if items.isEmpty && !empty.isEmpty { Text(empty).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true) }
             StorebenchCollectionLayout(maximumColumns: maximumColumns, minimumWidth: minimumWidth) {
                 ForEach(ordered) { item in
-                    let visible = current.ids.contains(item.id)
+                    let visible = shown.contains(item.id)
                     if standalone {
                         content(item).transformEnvironment(\.navigationPresentation) { $0 = $0?.scoped(String(describing: item.id)) }
                             .collectionVisibility(visible).layoutValue(key: CollectionVisible.self, value: visible)
@@ -110,7 +114,7 @@ struct StorebenchCollection<Item: Identifiable, Content: View>: View {
                             .storebenchControlID("collection.open." + String(describing: item.id))
                             .layoutValue(key: CollectionVisible.self, value: visible)
                     } else {
-                    StorebenchCollectionCard(title: title(item), subtitle: subtitle(item), controlID: String(describing: item.id), icon: icon?(item), headerActions: headerActions?(item), visible: visible, surface: cardSurface,
+                    StorebenchCollectionCard(title: title(item), subtitle: subtitle(item), controlID: String(describing: item.id), icon: icon?(item), headerActions: headerActions?(item), headerStatus: headerStatus?(item), visible: visible, surface: cardSurface,
                         expanded: Binding(get: { presentation.expanded(item.id, on: current) }, set: { value in
                             presentation.setExpanded(item.id, value); if value { onOpen?(item) }
                         }), revealToken: reveal?.id == item.id ? reveal?.token : nil, onShown: { onRevealed?(item.id) }) { content(item).transformEnvironment(\.navigationPresentation) { $0 = $0?.scoped(String(describing: item.id)) } }
@@ -271,10 +275,10 @@ private struct StorebenchCollectionLink: View {
                 }.foregroundStyle(StorebenchTheme.color("color-accent-muted"))
             }
             .padding(surface ? StorebenchTheme.padding : 0).frame(maxWidth: .infinity, alignment: .leading)
-            .background { if surface { RoundedRectangle(cornerRadius: StorebenchTheme.radius).fill(hovering ? StorebenchTheme.page : StorebenchTheme.surface) } }
-            .overlay { if surface { RoundedRectangle(cornerRadius: StorebenchTheme.radius).strokeBorder(StorebenchTheme.border) } }
+            .background { if surface { RoundedRectangle(cornerRadius: StorebenchTheme.radius).fill(StorebenchTheme.hoverColor(hovering, resting: StorebenchTheme.surface)) } }
+            .overlay { if surface { RoundedRectangle(cornerRadius: StorebenchTheme.radius).strokeBorder(hovering ? StorebenchTheme.hoverOutline(true) : StorebenchTheme.border) } }
             .contentShape(Rectangle())
-        }.buttonStyle(StorebenchPressStyle()).onHover { hovering = $0 }
+        }.buttonStyle(StorebenchPressStyle()).storebenchHover { hovering = $0 }
             .help(title + " · " + action).accessibilityLabel(title + " · " + action).accessibilityHint(subtitle)
             .collectionVisibility(visible)
     }
@@ -284,6 +288,7 @@ private struct StorebenchCollectionCard<Content: View>: View {
     let title, subtitle, controlID: String
     let icon: AnyView?
     let headerActions: AnyView?
+    var headerStatus: AnyView? = nil
     let visible: Bool, surface: Bool
     @Binding var expanded: Bool
     var revealToken: UUID? = nil
@@ -300,6 +305,7 @@ private struct StorebenchCollectionCard<Content: View>: View {
                         StorebenchAdaptiveText(text: title, maximumHeight: 40, font: .sbTitle3.weight(.semibold))
                         if !subtitle.isEmpty { StorebenchAdaptiveText(text: subtitle, maximumHeight: 34, font: .sbCaption, color: StorebenchTheme.muted) }
                     }.frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                    if let headerStatus { headerStatus.fixedSize() }
                 }
             }.accessibilityLabel(title).storebenchControlID("collection.disclosure." + controlID)
             if let headerActions { headerActions.fixedSize().storebenchControlID("collection.actions." + controlID) }
@@ -313,6 +319,9 @@ private struct StorebenchCollectionCard<Content: View>: View {
             }
         }.padding(surface ? StorebenchTheme.padding : 0).frame(maxWidth: .infinity, alignment: .leading)
             .background { if surface { RoundedRectangle(cornerRadius: StorebenchTheme.radius).fill(StorebenchTheme.surface) } }
+            // An open record taller than the page keeps its top in view while the user scrolls through it.
+            .background { StorebenchStickySection(header: .init(id: "collection." + controlID, title: title, subtitle: subtitle, disclosure: true), active: expanded && visible) }
+            .storebenchScrollAnchor()
             .overlay { if surface { RoundedRectangle(cornerRadius: StorebenchTheme.radius).strokeBorder(StorebenchTheme.border) } }
             .collectionVisibility(visible)
             .onChange(of: expanded, initial: true) { if expanded { mounted = true } }

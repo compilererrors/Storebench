@@ -46,7 +46,7 @@ struct AnalyticsView: View {
     }
     private var reportFilters: some View {
         StorebenchFormGrid(maximumColumns: 3) {
-            StorebenchPicker("Saved report", selection: $kind) { SelectionOption("Downloads", value: "downloads"); SelectionOption("Discovery and engagement", value: "engagement") }
+            StorebenchPicker("Saved Report", selection: $kind) { SelectionOption("Downloads", value: "downloads"); SelectionOption("Discovery and engagement", value: "engagement") }
             StorebenchPicker("Detail", selection: $level) { SelectionOption("Standard", value: "standard"); SelectionOption("Detailed", value: "detailed") }
             StorebenchPicker("Granularity", selection: $granularity) {
                 SelectionOption("Daily", value: "DAILY")
@@ -56,7 +56,7 @@ struct AnalyticsView: View {
     }
 
     private var analysisFilters: some View {
-        StorebenchCardSection(title: "Saved reports and activity dates", description: "These choices apply to the summary, breakdown, chart and top lists in this card. Activity dates use UTC; downloads use separate processing dates.") {
+        StorebenchCardSection(title: "Saved Reports and Activity Dates", description: "These choices apply to the summary, breakdown, chart and top lists in this card. Activity dates use UTC; downloads use separate processing dates.") {
             reportFilters
             PeriodRangeField(choice: choices.rangeBinding(.analyticsRange, session: session), latest: latest)
             PeriodPreferencesNotice(periods: choices)
@@ -122,7 +122,7 @@ struct ReviewsView: View {
 
     /// Downloads from App Store Connect and merges into the saved history; nothing is sent to Apple.
     private var downloadCard: some View {
-        Card(title: "Download reviews", subtitle: "New and changed reviews are saved. Reviews Apple no longer returns stay saved.", help: "reviews") {
+        Card(title: "Download Reviews", subtitle: "New and changed reviews are saved. Reviews Apple no longer returns stay saved.", help: "reviews") {
             StorebenchActionGroup { downloadActions }
             if downloadRunning { StorebenchProgressStatus(message: downloadProgressMessage, height: 88).accessibilityLabel("Review download progress") }
             else { StorebenchTextSlot(text: downloadProgressMessage, height: 88, font: .sbCallout, color: nil, live: true).accessibilityLabel("Saved review download status") }

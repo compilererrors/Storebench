@@ -341,7 +341,7 @@ extension WorkspaceSession {
         // Verify the authenticated source bytes before another version references them.
         for hash in assets {
             guard hash.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else { throw ReleaseFailure.invalid("Invalid saved media reference.") }
-            guard (try? media.read(hash)) != nil else { throw ReleaseFailure.invalid("A saved media file changed or is damaged. Restore or upload it again before copying.") }
+            guard (try? media.stream(hash) { _ in }) != nil else { throw ReleaseFailure.invalid("A saved media file changed or is damaged. Restore or upload it again before copying.") }
         }
         try store.transaction { current in
             guard try current("revisions", sourceKey) != nil, try current("drafts", sourceKey)?.revision == before?.revision else { throw ReleaseFailure.invalid("The saved source changed. Reload before copying.") }

@@ -32,12 +32,13 @@ import SwiftUI
             }
             let expected = context
             guard visible else { return }
-            await StorebenchPolling.repeating(every: .milliseconds(500), while: { context == expected }) { await read(expected: expected) }
+            await StorebenchPolling.repeating(every: .milliseconds(500), stamp: { try? await session?.savedStateToken() }, working: { readFailed || job?.isActive == true },
+                                              while: { context == expected }) { await read(expected: expected) }
         }
         .onDisappear { context = UUID() }
     }
     private var card: some View {
-        Card(title: "Sync app material", subtitle: "Downloads app details, versions, languages and screenshots. Saves a new revision when Apple material changed; local drafts stay saved.", help: "sync") {
+        Card(title: "Sync App Material", subtitle: "Downloads app details, versions, languages and screenshots. Saves a new revision when Apple material changed; local drafts stay saved.", help: "sync") {
             StorebenchActionGroup { actions }
             StorebenchFeedback(text: message, height: StorebenchTheme.measure("fieldHint"))
                 .accessibilityLabel("Saved app material import status")

@@ -57,12 +57,41 @@ import Security
         didSet { if cachePolicy != oldValue, let session { let policy = cachePolicy; Task { await session.applyCachePolicy(policy) } } }
     }
 
-    public init(workspace: Workspace = Workspace(), writer: VaultWriter? = nil, keychainStorage: VaultStorage = KeychainVaultStorage(), authenticator: WorkspaceAuthenticating = DeviceOwnerAuthentication(), protectedStorage: VaultStorage? = nil, backupDelay: Duration = .seconds(15 * 60), availabilityDelay: Duration = .seconds(1), releaseWarmDelay: Duration? = .seconds(5), backgroundReadInterval: Duration = .seconds(60), preparationInterval: Duration = .seconds(10 * 60)) {
+    /// The Performance setting's activity level. Automatic follows this Mac's Low Power Mode and temperature as they change.
+    public var workPolicy = WorkPolicy() { didSet { if workPolicy != oldValue { applyWorkPlan() } } }
+    /// What the activity level allows right now.
+    public private(set) var workPlan = WorkPolicy.Plan.full
+    /// What the last Storage Cleanup in this session removed, for Settings.
+    public private(set) var lastStorageCleanup: StorageCleanupResult?
+    /// Runs Storage Cleanup now with the saved settings.
+    @discardableResult public func cleanUpStorage() async throws -> StorageCleanupResult {
+        guard let current = session else { throw SessionFailure.closed }
+        let result = try await current.runStorageCleanup()
+        if session === current { lastStorageCleanup = result }
+        return result
+    }
+    /// What quitting or signing out still waits for, one line per kind of work.
+    public func unfinishedWork() -> [String] { session?.unfinishedWork ?? [] }
+    /// Ends the app at once while it waits for work to finish. The interface sets it; work in progress stops where it is.
+    @ObservationIgnored public var quitNow: @MainActor () -> Void = {}
+    /// Whether Storebench is the app in front. The interface sets it; scheduled reading at a lower activity level waits for it.
+    @ObservationIgnored public var isActive: @MainActor () -> Bool = { true }
+    @ObservationIgnored private var conditionWatch: WorkConditionWatch?
+    private func applyWorkPlan() {
+        let plan = workPolicy.plan()
+        guard plan != workPlan else { return }
+        workPlan = plan
+        AppleReadAdmission.configureShared(plan.requests)
+        if let session { Task { await session.applyWorkPlan(plan) } }
+    }
+
+    public init(workspace: Workspace = Workspace(), writer: VaultWriter? = nil, keychainStorage: VaultStorage = KeychainVaultStorage(), authenticator: WorkspaceAuthenticating = DeviceOwnerAuthentication(), protectedStorage: VaultStorage? = nil, backupDelay: Duration = .seconds(15 * 60), availabilityDelay: Duration = .seconds(1), releaseWarmDelay: Duration? = .seconds(1), backgroundReadInterval: Duration = .seconds(60), preparationInterval: Duration = .seconds(10 * 60)) {
         self.workspace = workspace; self.writer = writer ?? VaultWriter(dataRoot: workspace.root)
         self.choosesStorage = writer == nil; self.keychainStorage = keychainStorage
         self.authenticator = authenticator; self.protectedStorage = protectedStorage ?? TouchIDKeychainStorage(dataRoot: workspace.root)
         self.backupDelay = backupDelay; self.availabilityDelay = availabilityDelay; self.releaseWarmDelay = releaseWarmDelay
         self.backgroundReadInterval = max(.milliseconds(10), backgroundReadInterval); self.preparationInterval = max(.milliseconds(10), preparationInterval)
+        conditionWatch = WorkConditionWatch { [weak self] in self?.applyWorkPlan() }
     }
     deinit { backupTask?.cancel(); availabilityTask?.cancel(); releaseWarmTask?.cancel(); backgroundReadRun?.task.cancel(); appRefresh?.task.cancel(); memoryPressure?.cancel() }
 
@@ -219,6 +248,15 @@ import Security
         if requiresDeviceAuthentication && session == nil { return lockMode ?? .device }
         return try workspace.lock(writer: writer)
     }
+    /// As `workspaceLock()`, reading the saved key record away from the main thread: that read waits for the shared file lock
+    /// and may ask Keychain, and neither may hold up the window.
+    private func readWorkspaceLock() async throws -> Workspace.Lock? {
+        if choosesStorage && storageMode == nil { return nil }
+        if storageMode == .password || writer.usesPasswordFile { return .password }
+        if requiresDeviceAuthentication && session == nil { return lockMode ?? .device }
+        let workspace = workspace, writer = writer
+        return try await Task.detached { try workspace.lock(writer: writer) }.value
+    }
 
     public func changeDeviceAuthentication(required: Bool) async throws {
         guard !showingSampleData, choosesStorage, !transitioning, storageMode == .keychain, writer.usesKeychain, let current = session, required != requiresDeviceAuthentication else { throw CredentialAccessFailure.changed }
@@ -263,7 +301,7 @@ import Security
             // The protection change was authorized by the open session; read its newly committed mode before dropping it.
             let updatedLock: Workspace.Lock?
             if writer.usesPasswordFile { updatedLock = .password }
-            else { updatedLock = try workspace.lock(writer: writer) }
+            else { let workspace = workspace, writer = writer; updatedLock = try await Task.detached { try workspace.lock(writer: writer) }.value }
             drop(current)
             lockMode = updatedLock
             if lockMode == .device && !requiresDeviceAuthentication { try await open(password: nil) }
@@ -272,7 +310,7 @@ import Security
                 lastError = lockMode == .device ? "Storage protection changed. Unlock Storebench with your Mac." : "Storage protection changed. Unlock Storebench with the new password."
             }
         } catch {
-            if await current.lifetime.status != .open { drop(current); lockMode = try? workspaceLock(); state = .locked; lastError = Self.message(for: error) }
+            if await current.lifetime.status != .open { drop(current); lockMode = try? await readWorkspaceLock(); state = .locked; lastError = Self.message(for: error) }
             throw error
         }
     }
@@ -302,7 +340,7 @@ import Security
         backupTask?.cancel(); availabilityTask?.cancel(); releaseWarmTask?.cancel(); backgroundReadRun?.task.cancel(); appRefresh?.task.cancel()
         do { try await current.signOut() }
         catch { lastError = Self.message(for: error) }
-        drop(current); lockMode = try? workspaceLock(); state = .locked
+        drop(current); lockMode = try? await readWorkspaceLock(); state = .locked
     }
 
     /// Quit stops background readers and waits for admitted writes before AppKit terminates the process.
@@ -357,7 +395,7 @@ import Security
             let opened = try await SampleWorkspace.open(beside: workspace.root)
             do {
                 let accounts = try await opened.session.accounts(), preferences = try? await opened.session.editingPreferences()
-                await opened.session.applyCachePolicy(cachePolicy)
+                await opened.session.applyCachePolicy(cachePolicy); await opened.session.applyWorkPlan(workPlan)
                 sampleWorkspace = opened; showingSampleData = true
                 session = opened.session; editingPreferences = preferences; state = .unlocked(accounts)
                 startBackgroundWork(opened.session)
@@ -446,18 +484,21 @@ import Security
     public func refreshBackgroundReads() async {
         guard !transitioning, !isTerminating, releaseWarmDelay != nil, let current = session, !current.isSample, !Task.isCancelled else { return }
         if let existing = backgroundReadRun, existing.session === current { await existing.task.value; return }
-        let id = UUID(), jobs = backgroundReads
+        let id = UUID(), jobs = backgroundReads, ahead = workPlan.preparesOnSchedule
         let task = Task(priority: .utility) { [weak self] in
             await AppleReadPriority.$current.withValue(.background) {
                 // A completed read may have been held back while an editor was dirty. Adopt it once it is safe, even while fresh.
                 await self?.reloadAccounts(automatically: true)
-                if (try? await jobs.catalogDue(current)) == true {
-                    guard !Task.isCancelled, let self, !self.transitioning, self.session === current else { return }
-                    _ = try? await self.refreshApps(using: jobs.catalog, automatic: true)
-                }
+                // Release status leads Overview, so it is checked before the slower app list refresh.
                 guard !Task.isCancelled, let self, !self.transitioning, self.session === current else { return }
                 await jobs.releaseStates(current)
+                if (try? await jobs.catalogDue(current)) == true {
+                    guard !Task.isCancelled, !self.transitioning, self.session === current else { return }
+                    _ = try? await self.refreshApps(using: jobs.catalog, automatic: true)
+                }
                 guard !Task.isCancelled, !self.transitioning, self.session === current else { return }
+                // The lowest activity level checks release status and the app list only.
+                guard ahead else { return }
                 let now = ContinuousClock.now
                 if self.nextPreparation.map({ now >= $0 }) ?? true {
                     self.nextPreparation = now + self.preparationInterval
@@ -475,7 +516,7 @@ import Security
     private func accept(_ opened: WorkspaceSession) async throws {
         do {
             let accounts = try await opened.accounts(), preferences = try? await opened.editingPreferences()
-            await opened.applyCachePolicy(cachePolicy)
+            await opened.applyCachePolicy(cachePolicy); await opened.applyWorkPlan(workPlan)
             session = opened; editingPreferences = preferences; state = .unlocked(accounts); lastError = ""
             startBackgroundWork(opened)
         } catch { try? await opened.signOut(); throw error }
@@ -488,7 +529,7 @@ import Security
             do { return try WorkspaceSession(workspace: workspace, password: password, credentialWriter: writer) }
             catch Workspace.Failure.notReady { return try workspace.completeSetup(writer: writer, password: password) }
         }.value
-        lockMode = try workspaceLock()
+        lockMode = try await readWorkspaceLock()
         try await accept(opened)
     }
     private func drop(_ expected: WorkspaceSession) {
@@ -497,7 +538,7 @@ import Security
         backupTask?.cancel(); backupTask = nil; availabilityTask?.cancel(); availabilityTask = nil; releaseWarmTask?.cancel(); releaseWarmTask = nil
         backgroundReadRun?.task.cancel(); backgroundReadRun = nil; nextPreparation = nil
         memoryPressure?.cancel(); memoryPressure = nil
-        session = nil; editingPreferences = nil
+        session = nil; editingPreferences = nil; lastStorageCleanup = nil
         writer.lockCredentials()
     }
     private func startBackgroundWork(_ expected: WorkspaceSession) {
@@ -520,15 +561,23 @@ import Security
             releaseWarmTask = Task { [weak self] in
                 do { try await Task.sleep(for: warm, clock: .continuous) } catch { return }
                 while !Task.isCancelled, self?.session === expected {
-                    await self?.refreshBackgroundReads()
-                    do { try await Task.sleep(for: interval, clock: .continuous) } catch { return }
+                    // A lower activity level reads less often and waits while another app is in front; returning to Storebench reads at once.
+                    let plan = self?.workPlan ?? .full
+                    if plan.readsWhileInactive || self?.isActive() == true { await self?.refreshBackgroundReads() }
+                    do { try await Task.sleep(for: interval * plan.backgroundIntervalFactor, clock: .continuous) } catch { return }
                 }
             }
         }
         let writer = writer, delay = backupDelay
         backupTask = Task { [weak self] in
+            // Storage Cleanup runs once a day beside the backup poll, the first time a while after unlocking.
+            var nextCleanup = ContinuousClock.now + .seconds(60)
             while !Task.isCancelled, self?.session === expected {
                 _ = try? await expected.runBackups(writer: writer)
+                if ContinuousClock.now >= nextCleanup {
+                    nextCleanup = .now + .seconds(86_400)
+                    if let result = try? await expected.runStorageCleanup(), self?.session === expected { self?.lastStorageCleanup = result }
+                }
                 do { try await Task.sleep(for: delay) } catch { return }
             }
         }
@@ -541,7 +590,7 @@ import Security
                 catch {
                     self.transitioning = true; self.state = .closing; self.backupTask?.cancel(); self.releaseWarmTask?.cancel(); self.backgroundReadRun?.task.cancel(); self.appRefresh?.task.cancel()
                     try? await expected.signOut()
-                    self.drop(expected); self.lockMode = try? self.workspaceLock(); self.state = .locked; self.lastError = Self.message(for: error); self.transitioning = false
+                    self.drop(expected); self.lockMode = try? await self.readWorkspaceLock(); self.state = .locked; self.lastError = Self.message(for: error); self.transitioning = false
                     return
                 }
             }

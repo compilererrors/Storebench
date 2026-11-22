@@ -193,6 +193,23 @@ import Testing
         })
         #expect(result.reviewReady && result.saves == 3 && preparations == 1 && !selected.dirty && model.workflow.ready)
     }
+    @Test func aDraftChangedBehindTheEditorNeverReachesAReview() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let plan = try await plan(session), saved = try #require(plan.plan), model = try VersionListingEditor(planEditor: plan, session: session, media: false)
+        await model.load()
+        let language = try #require(model.languages.first), field = try textField(language)
+        try language.text.change(field, to: "Synthetic description written now")
+        #expect((await model.run()).complete)
+        // Another writer replaces the saved description while the editor still shows the one just written.
+        let localization = try #require(language.text.editor?.selections.first { $0.scope == .version }?.id)
+        try await session.useAppStoreConnectText(accountId: saved.accountId, appId: saved.appId, revisionId: saved.sourceRevisionId, localizationId: localization, scope: .version,
+                                                 values: ["description": "Synthetic earlier description"])
+        var preparations = 0
+        let result = await model.run(prepare: { preparations += 1 })
+        #expect(result.failure == .preparation && preparations == 0 && language.text.needsComparison, "A review was prepared from text the editor does not show")
+        #expect(language.text.editor?.value(field) == "Synthetic description written now" && model.unsavedItem?.contains("changed elsewhere") == true)
+        #expect((await model.run(prepare: { preparations += 1 })).failure == .blocked && preparations == 0)
+    }
     @Test func unreadPlanMismatchBlocksInitialMaterialInsteadOfAdoptingLatest() async throws {
         let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
         let owner = try await plan(session), saved = try #require(owner.plan), account = try #require(try await session.accounts().first)

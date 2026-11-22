@@ -35,14 +35,14 @@ public enum ReleaseGuide {
         public var completed: Int { phases.filter { [.done, .review, .differs].contains($0.status) }.count }
         /// The version is with App Review or later, so Apple rejects changes to its text, screenshots, build and review details.
         public var submitted: Bool { appleState.map(ReleaseGuide.submitted.contains) == true }
-        /// App Store Connect still offers Cancel Submission, which returns the version to an editable state.
+        /// App Store Connect still offers Remove from Review, which returns the version to an editable state.
         public var removable: Bool { appleState.map(ReleaseGuide.removable.contains) == true }
         /// Why a locked step has nothing to change, in App Store Connect's words.
         public var lockNotice: (title: String, description: String)? {
             guard submitted, let appleState else { return nil }
             let label = AppStoreNames.state(appleState)
             return ("\(label) at Apple", removable
-                ? "App Store Connect allows only some changes while a version is \(label). To change this version's text, screenshots or build, remove it from review with Cancel Submission. Edits on this Mac stay saved here."
+                ? "App Store Connect allows only some changes while a version is \(label). To change this version's text, screenshots or build, use Remove from Review in Build. Edits on this Mac stay saved here."
                 : "App Store Connect no longer accepts changes to this version's text, screenshots or build. Edits on this Mac stay saved here for the next version.")
         }
     }

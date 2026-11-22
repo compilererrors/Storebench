@@ -71,9 +71,9 @@ struct AnalyticsActivityView: View {
             Card(title: "Saved Analytics analysis", subtitle: Self.analysisSubtitle, actions: actions) {
                 filters
                 StorebenchFeedback(text: prepared.input == input ? "" : "Updating Analytics… Figures below still use the previous measure and scale.", height: 26)
-                StorebenchCardSection(title: "Activity summary", description: coverageText) { StorebenchMetricGrid { metrics(summary) } }
+                StorebenchCardSection(title: "Activity Summary", description: coverageText) { StorebenchMetricGrid { metrics(summary) } }
                 activityCard(summary, metric: prepared.input.metric)
-                StorebenchCardSection(title: "Activity over time", description: "Each point is one complete saved activity period in UTC. Missing intervals break the line. Indexed lines have an average of 100.") {
+                StorebenchCardSection(title: "Activity Over Time", description: "Each point is one complete saved activity period in UTC. Missing intervals break the line. Indexed lines have an average of 100.") {
                     ChartMeasureToggles(options: measures.map { (key: $0.0, title: $0.1) }, selection: Binding(get: { overlay }, set: { chartMetrics = $0 }))
                     StorebenchPicker("Scale", selection: $scale, hint: ChartScalePicker.explanation) { SelectionOption("Reported values", value: "absolute"); SelectionOption("Indexed · average = 100", value: "indexed") }.storebenchFormColumn()
                     if prepared.input.overlay.count == 1 && !prepared.input.indexed {
@@ -81,8 +81,8 @@ struct AnalyticsActivityView: View {
                     }
                     SavedReportChart(series: series, format: { value in AsoProgress.count(prepared.input.indexed ? value.rounded() : value) }, emptyText: "No saved activity for this selection. Missing reports are not zero activity.")
                 }
-                StorebenchCardSection(title: "Top storefronts and sources", description: "The eight largest reported groups for this measure in the selected dates.") {
-                    StorebenchPicker("Measure for top lists", selection: Binding(get: { selectedTop }, set: { topMetric = $0 })) { selectionOptions(measures) { SelectionOption($0.1, value: $0.0) } }.storebenchFormColumn()
+                StorebenchCardSection(title: "Top Storefronts and Sources", description: "The eight largest reported groups for this measure in the selected dates.") {
+                    StorebenchPicker("Measure for Top Lists", selection: Binding(get: { selectedTop }, set: { topMetric = $0 })) { selectionOptions(measures) { SelectionOption($0.1, value: $0.0) } }.storebenchFormColumn()
                     ranked("Leading territories · " + label(prepared.input.top), rows: Array(top.territories.prefix(8)), total: top.totals[prepared.input.top] ?? 0, countries: true)
                     ranked("Discovery sources · " + label(prepared.input.top), rows: Array(top.sources.prefix(8)), total: top.totals[prepared.input.top] ?? 0, countries: false)
                 }
@@ -92,7 +92,7 @@ struct AnalyticsActivityView: View {
                         if let openLocalizations { StorebenchActionGroup { Button("Review Languages") { openLocalizations() } } }
                     }
                 }
-                StorebenchCardSection(title: "Report definitions", description: "Analytics describes recorded activity, with privacy limits. Missing reports remain unknown.") {
+                StorebenchCardSection(title: "Report Definitions", description: "Analytics describes recorded activity, with privacy limits. Missing reports remain unknown.") {
                     Text("First-time downloads exclude redownloads, updates and restores. Impressions, product page views, Get taps and downloads are separate events and can differ in timing and suppression. Weekly and monthly reports retain their full periods. These observations do not establish a conversion rate or attributed listing impact.").font(.sbCallout).fixedSize(horizontal: false, vertical: true)
                     StorebenchTextLink("Apple Analytics metric definitions", destination: URL(string: "https://developer.apple.com/help/app-store-connect-analytics/reference/metrics-definitions")!)
                 }
@@ -114,8 +114,8 @@ struct AnalyticsActivityView: View {
             filters
             StorebenchFeedback(text: "", height: 26)
             StorebenchLoadState(state: .loading("Preparing the selected saved reports…")) { EmptyView() } placeholder: {
-                StorebenchCardSection(title: "Activity summary") { StorebenchMetricGrid { ForEach(0..<4, id: \.self) { _ in Fact(title: "Saved measure", value: "0") } } }
-                StorebenchCardSection(title: "Activity over time", description: "Placeholder for the saved activity periods shown in the chart below.") {
+                StorebenchCardSection(title: "Activity Summary") { StorebenchMetricGrid { ForEach(0..<4, id: \.self) { _ in Fact(title: "Saved Measure", value: "0") } } }
+                StorebenchCardSection(title: "Activity Over Time", description: "Placeholder for the saved activity periods shown in the chart below.") {
                     RoundedRectangle(cornerRadius: 8).fill(StorebenchTheme.border).frame(maxWidth: .infinity, minHeight: 320)
                 }
             }
@@ -135,9 +135,9 @@ struct AnalyticsActivityView: View {
     }
     private func activityCard(_ summary: AnalyticsPresentation.Summary, metric dataMetric: String) -> some View {
         let rows = filtered(summary, metric: dataMetric), pages = max(1, (rows.count + pageSize - 1) / pageSize), current = min(page, pages)
-        return StorebenchCardSection(title: "Activity breakdown", description: "Every reported group or saved period for the chosen measure. \(rows.count) groups match this search.") {
+        return StorebenchCardSection(title: "Activity Breakdown", description: "Every reported group or saved period for the chosen measure. \(rows.count) groups match this search.") {
             StorebenchMetricGrid(maximumColumns: 2, minimumWidth: 230) {
-                StorebenchPicker("Breakdown measure", selection: Binding(get: { selectedMetric }, set: { metric = $0 })) { selectionOptions(measures) { SelectionOption($0.1, value: $0.0) } }
+                StorebenchPicker("Breakdown Measure", selection: Binding(get: { selectedMetric }, set: { metric = $0 })) { selectionOptions(measures) { SelectionOption($0.1, value: $0.0) } }
                 StorebenchPicker("Group by", selection: $dimension) { SelectionOption("Territory", value: "territory"); SelectionOption("Discovery source", value: "source"); SelectionOption("Device", value: "device"); SelectionOption("Activity period", value: "period") }
             }
             StorebenchTableControls(query: $query,

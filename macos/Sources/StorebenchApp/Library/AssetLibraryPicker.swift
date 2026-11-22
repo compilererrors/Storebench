@@ -5,7 +5,12 @@ import SwiftUI
 /// files App Store Connect's Asset Library already has. Apple's files keep their Asset Library ID, so a Save adds them to
 /// App Previews and Screenshots without uploading them again. Everything is added on this Mac first, like a file from disk.
 struct AssetLibraryPicker: View {
-    let account: Account, appId: String, session: WorkspaceSession, model: MediaLayoutTarget, close: () -> Void
+    let account: Account, appId: String, session: WorkspaceSession, model: MediaLayoutTarget?, close: () -> Void
+    /// Adds the chosen screenshots as AI cards instead of to a language, each with its Asset Library description; true when added.
+    var addCards: (([CardPick]) async -> Bool)? = nil
+    /// How many may be chosen.
+    var limit = ScreenshotSpecs.maximum
+    struct CardPick { let name: String; let data: Data; let description: String }
     @State private var local: [AssetLibrary.File]?
     @State private var apple: [AssetLibrary.Asset]?
     @State private var appleFailed = false
@@ -17,8 +22,9 @@ struct AssetLibraryPicker: View {
     struct MediaLayoutTarget { let editor: MediaListingEditor; let setId: String? }
 
     var body: some View {
-        StorebenchDialog(title: "Add from Asset Library", wide: true, height: 760, busy: working, close: close) {
-            Text("Choose up to \(ScreenshotSpecs.maximum) screenshots. They are added to this language on this Mac in the order you choose them; Save to App Previews and Screenshots then sends them. Files already in App Store Connect are added without uploading them again.")
+        StorebenchDialog(title: "Add from Asset Library", kind: .content, busy: working, close: close) {
+            Text(addCards != nil ? "Choose up to \(limit) screenshots. Each becomes a card, in the order you choose them; a screenshot's description from Asset Library becomes its card's message."
+                 : "Choose up to \(ScreenshotSpecs.maximum) screenshots. They are added to this language on this Mac in the order you choose them; Save to App Previews and Screenshots then sends them. Files already in App Store Connect are added without uploading them again.")
                 .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
             StorebenchCardSection(title: "On This Mac", description: "Originals saved in Asset Library on this Mac, including cards added from Create Media.") {
                 if let local {
@@ -57,7 +63,7 @@ struct AssetLibraryPicker: View {
     private func position(_ id: String) -> String { chosen.firstIndex(of: id).map { "Chosen · \($0 + 1)" } ?? "" }
     private func toggle(_ id: String, name: String) -> some View {
         StorebenchCheckbox("Add " + name, isOn: Binding(get: { chosen.contains(id) }, set: { on in
-            if on { if chosen.count < ScreenshotSpecs.maximum { chosen.append(id) } else { status = "Choose up to \(ScreenshotSpecs.maximum) screenshots at a time." } }
+            if on { if chosen.count < limit { chosen.append(id) } else { status = "Choose up to \(limit) screenshots at a time." } }
             else { chosen.removeAll { $0 == id } }
         })).storebenchWorking(working)
     }
@@ -74,6 +80,21 @@ struct AssetLibraryPicker: View {
     private func add() async {
         guard !working, !chosen.isEmpty else { return }; working = true; defer { working = false }; status = ""
         do {
+            if let addCards {
+                var cards: [CardPick] = []
+                let client = chosen.contains { $0.hasPrefix("apple:") } ? try await session.client(for: account) : nil
+                for id in chosen {
+                    if id.hasPrefix("mac:"), let file = local?.first(where: { "mac:" + $0.id == id }) {
+                        let reader = try await session.openSavedMedia(.init(accountId: account.id, appId: appId, revisionId: file.id, itemId: file.id, kind: .assetLibrary)); defer { reader.close() }
+                        cards.append(.init(name: file.fileName, data: try await reader.imageBytes(), description: file.aiDescription))
+                    } else if id.hasPrefix("apple:"), let client, let asset = apple?.first(where: { "apple:" + $0.id == id }) {
+                        cards.append(.init(name: asset.fileName, data: try await session.assetLibraryScreenshot(account: account, appId: appId, asset: asset, client: client), description: ""))
+                    }
+                }
+                if await addCards(cards) { close() }
+                return
+            }
+            guard let model else { return }
             var picks: [MediaListingEditor.LibraryPick] = []
             let client = chosen.contains { $0.hasPrefix("apple:") } ? try await session.client(for: account) : nil
             for id in chosen {

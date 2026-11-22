@@ -12,10 +12,10 @@ struct ReleaseVersionButton: View {
         Button {
             if section == .release || quick { continueHere() } else { openRelease() }
         } label: {
-            StorebenchLabel(quick ? (hasPlan ? "Continue Release" : "Prepare Release") : hasPlan ? "Continue Version" : "New Version",
+            StorebenchLabel(hasPlan ? "Continue Release" : quick ? "Prepare Release" : "New Version",
                             icon: hasPlan ? "release" : "plus", size: 16)
         }
-        .help(quick ? "Continue this update in Quick Release" : hasPlan ? "Continue the version in progress" : "Prepare a new version")
+        .help(quick ? "Continue this update in Quick Release" : hasPlan ? "Continue the release in progress" : "Prepare a new version")
         .storebenchControlID("workspace.version")
     }
 }

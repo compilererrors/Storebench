@@ -10,6 +10,7 @@ struct Card: View {
     private let accessory: AnyView?
     @Environment(\.gridCardRows) private var gridCardRows
     @Environment(\.settingsPresentation) private var settingsPresentation
+    @Environment(\.disclosureIndent) private var disclosureIndent
 
     /// `help` names a public help topic; its (?) sits beside the title.
     init<Content: View>(title: String, subtitle: String, help: String = "", icon: String = "", actions: AnyView? = nil, accessory: AnyView? = nil, @ViewBuilder content: () -> Content) {
@@ -25,6 +26,13 @@ struct Card: View {
                 .transformEnvironment(\.navigationPresentation) { $0 = $0?.scoped(title) }
         }
         .modifier(CardSurface())
+        // A card shown by a disclosure keeps the page's grid: it takes back the room the disclosure gives its options.
+        .padding(.leading, -disclosureIndent)
+        .environment(\.disclosureIndent, 0)
+        // A card taller than the page keeps its top in view while the user scrolls through it.
+        .background { StorebenchStickySection(header: .init(id: "card." + title + "/" + subtitle, title: title, subtitle: subtitle, disclosure: false)) }
+        // Content above the card changing height leaves it where the user sees it.
+        .storebenchScrollAnchor()
     }
 }
 
@@ -82,7 +90,9 @@ private struct CardHeading: View {
                     }.layoutPriority(1)
                     if !help.isEmpty { StorebenchHelpButton(topic: help) }
                     if !help.isEmpty || accessory != nil { Spacer(minLength: StorebenchTheme.space(2)) }
-                    if let accessory { accessory.fixedSize() }
+                    // The accessory is centred on the title's line without making that line taller, so a card with one
+                    // keeps its title and description where every other card has them.
+                    if let accessory { accessory.fixedSize().frame(height: StorebenchTheme.measure("sectionTitle")) }
                 }
                 if !subtitle.isEmpty { StorebenchTextSlot(text: subtitle, height: StorebenchTheme.measure("sectionDescription"), font: .sbCallout, color: StorebenchTheme.muted) }
             }
@@ -125,7 +135,7 @@ struct StorebenchCardSection<Content: View>: View {
             }.frame(maxWidth: .infinity, alignment: .leading)
             if !description.isEmpty { StorebenchAdaptiveText(text: description, color: StorebenchTheme.muted) }
             content()
-        }.frame(maxWidth: .infinity, alignment: .leading).accessibilityElement(children: .contain)
+        }.frame(maxWidth: .infinity, alignment: .leading).accessibilityElement(children: .contain).storebenchScrollAnchor()
     }
 }
 
@@ -294,10 +304,10 @@ struct StorebenchNavigationCard<Icon: View>: View {
                     StorebenchIcon(name: "right")
                 }.padding(.horizontal, 12).foregroundStyle(StorebenchTheme.color("color-accent-muted"))
             }.padding(.vertical, embedded ? StorebenchTheme.space(2) : StorebenchTheme.padding).padding(.horizontal, embedded ? 0 : StorebenchTheme.padding)
-                .background(hovering ? StorebenchTheme.page : StorebenchTheme.surface)
-                .overlay(StorebenchControlOutline(border: .clear, radius: StorebenchTheme.radius))
+                .background(StorebenchTheme.hoverColor(hovering, resting: StorebenchTheme.surface))
+                .overlay(StorebenchControlOutline(border: StorebenchTheme.hoverOutline(hovering), radius: StorebenchTheme.radius))
                 .contentShape(Rectangle())
-        }.buttonStyle(StorebenchPressStyle()).onHover { hovering = $0 }.help(title + " · " + action)
+        }.buttonStyle(StorebenchPressStyle()).storebenchHover { hovering = $0 }.help(title + " · " + action)
             .accessibilityLabel(title + " · " + action).accessibilityHint(description)
     }
 }

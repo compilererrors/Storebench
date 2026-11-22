@@ -161,7 +161,7 @@ private struct FeedbackImageViewer: View {
     @Environment(\.dismiss) private var dismiss
     @State private var exporting = false
     var body: some View {
-        StorebenchDialog(title: "Tester screenshot \(file.id + 1)", wide: true, height: 760, scrollBody: false, media: true, close: { dismiss() }) {
+        StorebenchDialog(title: "Tester screenshot \(file.id + 1)", kind: .media, scrollBody: false, media: true, close: { dismiss() }) {
             if let image = file.thumbnail { Image(decorative: image, scale: 1).resizable().scaledToFit().accessibilityLabel("Tester screenshot \(file.id + 1)") }
             else { Text("The screenshot could not be decoded.").foregroundStyle(StorebenchTheme.muted) }
         } actions: {

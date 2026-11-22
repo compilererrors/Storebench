@@ -16,7 +16,7 @@ struct LibraryChooserView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: StorebenchTheme.gap) {
-                StorebenchPageHeader(title: section.rawValue, description: "Choose an app to open " + section.rawValue.lowercased() + ". Saved languages and images come from the latest complete archive.", eyebrow: "APP WORKFLOWS", actions: AnyView(HStack {
+                StorebenchPageHeader(title: section.title, description: "Choose an app to open " + section.title + ". Saved languages and images come from the latest complete import.", eyebrow: "APP WORKFLOWS", actions: AnyView(HStack {
                     Spacer(minLength: 0)
                     LibraryAppRefreshButton(model: model, identity: section.key) { await load(context, wait: true) }
                 }), feedback: AnyView(StorebenchFeedback(text: failed ? "Saved apps could not be confirmed. Refresh before opening an app." : navigationMessage.isEmpty ? model.appRefreshMessage : navigationMessage, height: 34, error: failed || model.appRefreshFailed)))
@@ -48,7 +48,9 @@ struct LibraryChooserView: View {
         .task(id: section) {
             let id = UUID(); context = id; failed = false; loading = false
             entries = history?.rememberedRead("library-chooser/" + section.key, as: [LibraryChooser.Entry].self)
-            await StorebenchPolling.repeating(every: .seconds(2), while: { context == id }) { await load(id) }
+            await StorebenchPolling.repeating(every: .seconds(2), stamp: { try? await model.session?.savedStateToken() },
+                                              working: { failed || entries.map { $0.contains { $0.row.changing } } != false },
+                                              while: { context == id }) { await load(id) }
         }
         .onDisappear { context = UUID(); readGate.end(); gallery = nil }
         .trackUnsavedChanges(false, busy: loading)

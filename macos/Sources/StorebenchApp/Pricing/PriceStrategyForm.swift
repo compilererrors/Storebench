@@ -129,7 +129,7 @@ struct PricingStrategyPicker: View {
         }
     }
 
-    func perform(_ ticket: Ticket, timeout: Duration = .seconds(60), operation: @escaping @Sendable () async throws -> (rows: [ModelPrice], warnings: [String], points: [String: String])?) async {
+    func perform(_ ticket: Ticket, timeout: Duration = .seconds(120), operation: @escaping @Sendable () async throws -> (rows: [ModelPrice], warnings: [String], points: [String: String])?) async {
         guard current(ticket), !previewing else { return }
         previewing = true; problem = ""; progress = "Preparing Prices…"
         let task = Task { try await PricingCalculation.run(timeout: timeout, operation: operation) }

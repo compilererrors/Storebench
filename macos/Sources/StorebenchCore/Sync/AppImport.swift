@@ -117,18 +117,20 @@ extension WorkspaceSession {
     }
 
     func importRevision(account: Account, appId: String, revisionId: String, client: AppStoreConnectClient, now: () -> Date, check: @escaping () throws -> Void,
-                        progress: (String, Int) throws -> Void) async throws -> ImportResult {
+                        announce: @escaping () throws -> Void = {}, progress: (String, Int) throws -> Void) async throws -> ImportResult {
+        // Languages are read side by side, so the first one to reach a screenshot says that downloading starts, before its download.
+        importFirstScreenshot[revisionId] = announce
+        defer { importFirstScreenshot[revisionId] = nil }
         func list(_ path: String, type: String, parent: (String, String, String)) async throws -> [AppStoreConnectClient.Resource] {
-            try check(); let values = try await client.list(path); try check()
-            guard values.allSatisfy({ $0.type == type && AnalyticsCatalog.id($0.id) && Apple.within($0, parent.0, parent.1, parent.2) }), Set(values.map(\.id)).count == values.count else { throw ImportFailure.download }
-            return values
+            try await importList(path, type: type, parent: parent, client: client, check: check)
         }
         try check(); try progress("Reading app information", 0)
         let apps = try await client.get("/v1/apps/\(appId)"); try check()
         guard apps.count == 1, let app = apps.first, app.type == "apps", app.id == appId else { throw ImportFailure.download }
         let previous = try latestImport(accountId: account.id, appId: appId), previousId = previous?["id"]?.text
-        var reusable: [String: JSONText] = [:]
+        var reusable: [String: JSONText] = [:], keptVersions: [String: JSONText] = [:]
         if case .array(let versions)? = previous?["versions"] {
+            for version in versions { if let id = version["id"]?.text { keptVersions[id] = version } }
             for version in versions { if case .array(let locales)? = version["localizations"] { for locale in locales { if case .array(let sets)? = locale["screenshotSets"] {
                 for set in sets { if case .array(let shots)? = set["screenshots"] { for shot in shots { if let shotId = shot["id"]?.text { reusable[shotId] = shot } } } }
             } } } }
@@ -157,43 +159,36 @@ extension WorkspaceSession {
         try check()
         for version in try await list("/v1/apps/\(appId)/appStoreVersions?include=app&limit=200", type: "appStoreVersions", parent: ("app", "apps", appId)) {
             try check()
+            // A version a newer one replaced can no longer change at Apple, so the previous import's copy is kept instead of
+            // reading every language again, as long as each of its screenshots is still saved on this Mac.
+            if let kept = Self.frozenCopy(of: version, in: keptVersions, mediaSaved: { (try? self.media.metadata($0)) != nil }) {
+                versions.append(kept.version); hashes.formUnion(kept.hashes); continue
+            }
             var localizations: [JSONText] = []
             let platform = Self.value(version, "platform")
-            for locale in try await list("/v1/appStoreVersions/\(version.id)/appStoreVersionLocalizations?limit=200", type: "appStoreVersionLocalizations", parent: ("appStoreVersion", "appStoreVersions", version.id)) {
-                var sets: [JSONText] = []
-                if let images {
-                    let placements = try await reader.placements(target: .init(id: locale.id, name: "", platform: platform, state: "", surface: .versions)).filter { $0.type == ReleaseMedia.screenshot && $0.kind == .image }
+            let locales = try await list("/v1/appStoreVersions/\(version.id)/appStoreVersionLocalizations?limit=200", type: "appStoreVersionLocalizations", parent: ("appStoreVersion", "appStoreVersions", version.id))
+            // Each language's placements and screenshots are separate requests, so a few languages are read side by side.
+            // Their results keep Apple's order, and the count grows as each language finishes.
+            let side = min(4, max(1, workPlan.requests.nextActive)), earlier: [String: JSONText]? = previousId == nil ? nil : reusable, library = images
+            var media = [ImportedLocaleMedia?](repeating: nil, count: locales.count)
+            try await withThrowingTaskGroup(of: (Int, ImportedLocaleMedia).self) { group in
+                var next = 0
+                while next < min(side, locales.count) {
+                    let index = next, locale = locales[index]; next += 1
+                    group.addTask { (index, try await self.importLocaleMedia(locale, platform: platform, images: library, reusable: earlier, appId: appId, revisionId: revisionId, client: client)) }
+                }
+                while let (index, read) = try await group.next() {
                     try check()
-                    var groups: [String] = []
-                    for placement in placements where !groups.contains(placement.group) { groups.append(placement.group) }
-                    for group in groups {
-                        var screenshots: [JSONText] = []
-                        for placement in placements where placement.group == group {
-                            guard let image = images[placement.assetId] else { throw ImportFailure.download }
-                            if screenshotCount == 0 { try progress("Downloading screenshots", 0) }
-                            let entry = try await screenshot(image, id: placement.id, reusable: previousId == nil ? nil : reusable[placement.id], client: client, check: check)
-                            screenshotCount += 1; try progress("Downloading screenshots", screenshotCount)
-                            if let hash = entry["sha256"]?.text { hashes.insert(hash) }
-                            screenshots.append(entry)
-                        }
-                        let size = screenshots.first.flatMap { first in AssetLibrary.integer(first["width"]).flatMap { width in AssetLibrary.integer(first["height"]).map { (width, $0) } } }
-                        let type = size.flatMap { ScreenshotSpecs.type(platform: platform, width: $0.0, height: $0.1) } ?? group
-                        sets.append(.object([("id", .string("\(locale.id)-\(group)")), ("displayType", .string(type)), ("placementGroup", .string(group)), ("screenshots", .array(screenshots))]))
+                    media[index] = read; hashes.formUnion(read.hashes)
+                    if read.count > 0 { screenshotCount += read.count; try progress("Downloading screenshots", screenshotCount) }
+                    if next < locales.count {
+                        let index = next, locale = locales[index]; next += 1
+                        group.addTask { (index, try await self.importLocaleMedia(locale, platform: platform, images: library, reusable: earlier, appId: appId, revisionId: revisionId, client: client)) }
                     }
                 }
-                for set in try await (sets.isEmpty ? list("/v1/appStoreVersionLocalizations/\(locale.id)/appScreenshotSets?limit=200", type: "appScreenshotSets", parent: ("appStoreVersionLocalization", "appStoreVersionLocalizations", locale.id)) : []) {
-                    var screenshots: [JSONText] = []
-                    for shot in try await list("/v1/appScreenshotSets/\(set.id)/appScreenshots?limit=200", type: "appScreenshots", parent: ("appScreenshotSet", "appScreenshotSets", set.id)) {
-                        try check()
-                        if screenshotCount == 0 { try progress("Downloading screenshots", 0) }
-                        let entry = try await screenshot(shot, reusable: previousId == nil ? nil : reusable[shot.id], client: client, check: check)
-                        screenshotCount += 1; try progress("Downloading screenshots", screenshotCount)
-                        if let hash = entry["sha256"]?.text { hashes.insert(hash) }
-                        screenshots.append(entry)
-                    }
-                    sets.append(.object([("id", .string(set.id)), ("displayType", .string(Self.value(set, "screenshotDisplayType"))), ("screenshots", .array(screenshots))]))
-                }
-                localizations.append(.object([("id", .string(locale.id)), ("fields", Self.fields(locale, ["locale", "description", "keywords", "marketingUrl", "promotionalText", "supportUrl", "whatsNew"])), ("screenshotSets", .array(sets))]))
+            }
+            for (index, locale) in locales.enumerated() {
+                localizations.append(.object([("id", .string(locale.id)), ("fields", Self.fields(locale, ["locale", "description", "keywords", "marketingUrl", "promotionalText", "supportUrl", "whatsNew"])), ("screenshotSets", .array(media[index]?.sets ?? []))]))
             }
             versions.append(.object([("id", .string(version.id)), ("fields", Self.fields(version, ["platform", "versionString", "appStoreState", "appVersionState", "copyright", "createdDate"])), ("localizations", .array(localizations))]))
         }
@@ -225,18 +220,92 @@ extension WorkspaceSession {
         return ImportResult(revisionId: revisionId, changed: true, screenshots: screenshotCount)
     }
 
+    /// One list from Apple whose every item has the expected type and belongs to the expected parent.
+    func importList(_ path: String, type: String, parent: (String, String, String), client: AppStoreConnectClient, check: () throws -> Void) async throws -> [AppStoreConnectClient.Resource] {
+        try check(); let values = try await client.list(path); try check()
+        guard values.allSatisfy({ $0.type == type && AnalyticsCatalog.id($0.id) && Apple.within($0, parent.0, parent.1, parent.2) }), Set(values.map(\.id)).count == values.count else { throw ImportFailure.download }
+        return values
+    }
+
+    /// One language's screenshots: its Asset Library placements, or its deprecated sets when it has no placements.
+    /// Languages are read side by side, so this checks that the session is open and the import was not cancelled;
+    /// the import checks its account, app and job again each time a language finishes.
+    func importLocaleMedia(_ locale: AppStoreConnectClient.Resource, platform: String, images: [String: AppStoreConnectClient.Resource]?, reusable: [String: JSONText]?,
+                           appId: String, revisionId: String, client: AppStoreConnectClient) async throws -> ImportedLocaleMedia {
+        let check: () throws -> Void = { try Task.checkCancellation(); try self.requireSessionAccess() }
+        func announce() throws { if let first = importFirstScreenshot.removeValue(forKey: revisionId) { try first() } }
+        var sets: [JSONText] = [], hashes: Set<String> = [], count = 0
+        if let images {
+            let placements = try await libraryReader(appId: appId, client: client).placements(target: .init(id: locale.id, name: "", platform: platform, state: "", surface: .versions)).filter { $0.type == ReleaseMedia.screenshot && $0.kind == .image }
+            try check()
+            var groups: [String] = []
+            for placement in placements where !groups.contains(placement.group) { groups.append(placement.group) }
+            for group in groups {
+                var screenshots: [JSONText] = []
+                for placement in placements where placement.group == group {
+                    guard let image = images[placement.assetId] else { throw ImportFailure.download }
+                    try announce()
+                    let entry = try await screenshot(image, id: placement.id, reusable: reusable?[placement.id], client: client, check: check)
+                    count += 1
+                    if let hash = entry["sha256"]?.text { hashes.insert(hash) }
+                    screenshots.append(entry)
+                }
+                let size = screenshots.first.flatMap { first in AssetLibrary.integer(first["width"]).flatMap { width in AssetLibrary.integer(first["height"]).map { (width, $0) } } }
+                let type = size.flatMap { ScreenshotSpecs.type(platform: platform, width: $0.0, height: $0.1) } ?? group
+                sets.append(.object([("id", .string("\(locale.id)-\(group)")), ("displayType", .string(type)), ("placementGroup", .string(group)), ("screenshots", .array(screenshots))]))
+            }
+        }
+        if sets.isEmpty {
+            for set in try await importList("/v1/appStoreVersionLocalizations/\(locale.id)/appScreenshotSets?limit=200", type: "appScreenshotSets", parent: ("appStoreVersionLocalization", "appStoreVersionLocalizations", locale.id), client: client, check: check) {
+                var screenshots: [JSONText] = []
+                for shot in try await importList("/v1/appScreenshotSets/\(set.id)/appScreenshots?limit=200", type: "appScreenshots", parent: ("appScreenshotSet", "appScreenshotSets", set.id), client: client, check: check) {
+                    try check(); try announce()
+                    let entry = try await screenshot(shot, reusable: reusable?[shot.id], client: client, check: check)
+                    count += 1
+                    if let hash = entry["sha256"]?.text { hashes.insert(hash) }
+                    screenshots.append(entry)
+                }
+                sets.append(.object([("id", .string(set.id)), ("displayType", .string(Self.value(set, "screenshotDisplayType"))), ("screenshots", .array(screenshots))]))
+            }
+        }
+        return ImportedLocaleMedia(sets: sets, hashes: hashes, count: count)
+    }
+
+    /// Apple states in which a version's listing and screenshots can no longer change.
+    static let frozenStates: Set<String> = ["REPLACED_WITH_NEW_VERSION"]
+    /// The previous import's copy of a version that can no longer change, with its screenshots' checksums, or nil when it must be read.
+    static func frozenCopy(of version: AppStoreConnectClient.Resource, in previous: [String: JSONText], mediaSaved: (String) -> Bool) -> (version: JSONText, hashes: Set<String>)? {
+        let state = value(version, "appVersionState"), storeState = value(version, "appStoreState")
+        guard frozenStates.contains(state) || frozenStates.contains(storeState), let kept = previous[version.id],
+              kept["fields"]?["appVersionState"]?.text ?? "" == state, kept["fields"]?["appStoreState"]?.text ?? "" == storeState,
+              case .array(let locales)? = kept["localizations"] else { return nil }
+        var hashes = Set<String>()
+        for locale in locales {
+            guard case .array(let sets)? = locale["screenshotSets"] else { continue }
+            for set in sets {
+                guard case .array(let shots)? = set["screenshots"] else { continue }
+                for shot in shots {
+                    guard let hash = shot["sha256"]?.text, mediaSaved(hash) else { return nil }
+                    hashes.insert(hash)
+                }
+            }
+        }
+        return (kept, hashes)
+    }
+
     /// A screenshot already saved with the same source checksum is reused; anything else is downloaded and encrypted.
     func screenshot(_ resource: AppStoreConnectClient.Resource, id: String? = nil, reusable: JSONText?, client: AppStoreConnectClient, check: () throws -> Void) async throws -> JSONText {
         try check()
         let asset = try Self.screenshotAsset(resource), fileName = Self.value(resource, "fileName")
         if let reusable, let fingerprint = asset.sourceFingerprint, reusable["sourceFingerprint"]?.text == fingerprint,
-           let hash = reusable["sha256"]?.text, let type = reusable["contentType"]?.text, ["image/png", "image/jpeg"].contains(type), (try? media.read(hash)) != nil,
+           let hash = reusable["sha256"]?.text, let type = reusable["contentType"]?.text, ["image/png", "image/jpeg"].contains(type), (try? media.metadata(hash)) != nil,
            case .object(let pairs) = reusable {
             return .object(pairs.map { $0.0 == "fileName" ? ($0.0, .string(fileName)) : $0 })
         }
         let (bytes, type) = try await client.image(asset.url)
         try check()
-        let saved = try media.write(bytes, limit: 50_000_000)
+        let saved = try await saveMedia(bytes, limit: 50_000_000)
+        try check()
         guard saved.length == bytes.count else { throw ImportFailure.download }
         var fields: [(String, JSONText)] = []
         if let fingerprint = asset.sourceFingerprint { fields.append(("sourceFingerprint", .string(fingerprint))) }
@@ -247,6 +316,25 @@ extension WorkspaceSession {
         return .object(fields)
     }
 
-    /// A saved screenshot or preview image from the encrypted media files.
-    public func mediaBytes(_ hash: String) throws -> Data { try requireSessionAccess(); return try media.read(hash) }
+    /// Encrypts and saves media bytes away from the session, so languages imported side by side do not wait for each other's files.
+    nonisolated func saveMedia(_ bytes: Data, limit: Int) async throws -> (hash: String, length: Int) {
+        try requireSessionAccess()
+        let saved = try media.write(bytes, limit: limit)
+        try requireSessionAccess()
+        return saved
+    }
+
+    /// A saved screenshot or preview image from the encrypted media files. The file is decrypted and checked away from the
+    /// session, so other reads continue meanwhile.
+    public nonisolated func mediaBytes(_ hash: String) async throws -> Data {
+        try requireSessionAccess()
+        let bytes = try media.read(hash)
+        try requireSessionAccess()
+        return bytes
+    }
+}
+
+/// What one language's screenshots came to: its sets in Apple's order, their files' checksums and how many there are.
+struct ImportedLocaleMedia: Sendable {
+    let sets: [JSONText], hashes: Set<String>, count: Int
 }

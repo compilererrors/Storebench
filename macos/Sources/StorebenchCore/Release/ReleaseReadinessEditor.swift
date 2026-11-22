@@ -99,7 +99,12 @@ import Observation
     }
     /// A cheap check of the target version's Apple state. A changed or unreadable state, a remembered snapshot or a failed earlier read
     /// leads to a full read; an unchanged state only confirms the time. Returns true when a full read replaced the snapshot.
+    /// An automatic check exists to see what Apple shows now, so it never settles for an answer read before the check started,
+    /// such as a version list from before the version was created.
     @discardableResult public func sync() async -> Bool {
+        await ScreenReads.reading(fresh: false) { await syncNow() }
+    }
+    private func syncNow() async -> Bool {
         guard active, !busy, planEditor.ready, !planEditor.dirty, let plan = planEditor.plan, !Task.isCancelled else { return false }
         guard let probe, let current = snapshot, confirmed, !readFailed, sinceWrite.map({ $0 >= ReleaseStatusSync.settleWindow }) ?? true else { return await refresh() }
         if let materialSignature {

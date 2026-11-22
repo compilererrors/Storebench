@@ -19,8 +19,14 @@ struct QuickReleaseView: View {
     @State private var loadStatus = ""
     @State private var loading = false
     @State private var locale: String?
+    @State private var categories: [String] = []
     @State private var buildId: String?
     @State private var textStatus = ""
+    /// Version numbers Apple has that the last import may not, kept from a released plan for the next version's suggestion.
+    @State private var usedVersionsByApp: [String: Set<String>] = [:]
+    /// Set once a version was removed from review to take a newer build, so Add Build opens when Apple shows it editable again.
+    @State private var replacingBuild = false
+    private var usedVersions: Set<String> { usedVersionsByApp[app.id] ?? [] }
     @State private var textReview: PublishReview?
     @State private var publishingText = false
     @State private var operation: Task<Void, Never>?
@@ -64,15 +70,21 @@ struct QuickReleaseView: View {
         VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             if let model, model.loaded {
                     if let snapshot, case .submitted(let state) = QuickRelease.stage(snapshot) {
+                        // Quick Release prepares new versions: a submitted one is shown as done, with the next version one command away.
                         ReleaseSubmittedStatus(version: snapshot.plan.label, state: state)
-                    }
+                        replaceBuild(snapshot, state: state)
+                        nextVersion(model, after: snapshot.plan)
+                    } else {
+                    // The steps' states are worked out once per update and shared by the rail and the open step.
+                    let phases = phases, first = QuickRelease.initialStep(phases)
                     StorebenchStepLayout {
                         StorebenchStepRail(title: "Quick Release", items: phases.map {
                             .init(id: $0.id, number: $0.number, title: $0.title, label: $0.check.label, complete: $0.complete,
-                                  current: $0.id == QuickRelease.initialStep(phases), tone: $0.check.status.tone)
+                                  current: $0.id == first, tone: $0.check.status.tone)
                         }, selected: selected, select: reveal, identifierPrefix: "quick.step.", showsNumbers: true)
                             .storebenchControlID("quick.rail")
-                        pane(model).storebenchControlID("quick.pane")
+                        pane(model, phases: phases).storebenchControlID("quick.pane")
+                    }
                     }
             } else {
                 Card(title: "Quick Release", subtitle: AppNavigation.Section.quickRelease.purpose) {
@@ -83,10 +95,18 @@ struct QuickReleaseView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .storebenchControlID("quick.release")
         .task(id: identity) { await load() }
+        .task(id: app.id) { categories = await session?.searchCategoryNames(account: account, appId: app.id) ?? [] }
         .onChange(of: initialSelectionPlan, initial: true) { _, token in
             if selectedStep == nil, token != nil { selectedStep = QuickRelease.initialStep(phases) }
         }
         .onChange(of: continueRequests) { reveal(QuickRelease.initialStep(phases)) }
+        // After Remove from Review, Apple shows the version as editable again; the build is the step to change next.
+        .onChange(of: snapshot.map { QuickRelease.stage($0) == .prepare } ?? false) { _, editable in
+            guard editable, replacingBuild else { return }
+            replacingBuild = false; reveal("build")
+        }
+        // Background reads still due follow the step now open.
+        .onChange(of: selectedStep) { readiness?.focus = QuickRelease.reads(selectedStep) }
         .environment(\.openReleaseStep, { reveal(QuickRelease.step(for: $0)) })
         .environment(\.openSection, { openHere($0) })
         .environment(\.editorNavigation, EditorNavigation(scope: try? .init(accountId: account.id, appId: app.id), navigate: { destination in
@@ -102,6 +122,10 @@ struct QuickReleaseView: View {
             async let warm: Void = prepareListing()
             await refreshStatus()
             await warm
+            // Once the open step has its text and status, the other steps are built and read their own data behind it,
+            // so moving between steps shows each one at once instead of starting its reads at the click.
+            guard !Task.isCancelled, confirmedPlan != nil, model?.plan != nil, snapshot != nil else { return }
+            mountedSteps.formUnion(QuickRelease.stepIDs)
         }
         // Every save of the text checks the version again, so the list of what is still needed matches what is saved.
         .onChange(of: listing?.workflow.shown.dirty) { was, now in if was == true, now == false { recheck() } }
@@ -114,13 +138,64 @@ struct QuickReleaseView: View {
 
     // MARK: Steps
 
-    private func reveal(_ step: String) {
-        selectedStep = QuickRelease.stepIDs.contains(step) ? step : QuickRelease.step(for: step)
-        if selectedStep == "version" { versionExpanded = true }
-        Task { @MainActor in await Task.yield(); pageScroll?("quick-step-heading", .top) }
+    /// The next version after a submitted one: its number and the version it copies, and one command that prepares it.
+    /// A version waiting for or in App Review can take a newer build: Remove from Review, choose the build in Add Build, then Add for
+    /// Review again. Each is its own review with its own approval. Once Apple shows the version as Developer Rejected, the page opens
+    /// Add Build by itself, and Add for Review is prepared as soon as the build is added.
+    @ViewBuilder private func replaceBuild(_ snapshot: ReleaseReadinessSnapshot, state: String) -> some View {
+        if PublishingWorkspace.removableFromReview.contains(state), let version = snapshot.targetVersionId {
+            PublishActionPanel(account: account, app: app, session: session, actions: [.cancel],
+                               initialRequest: PublishRequest(accountId: account.id, appId: app.id, scope: .cancelSubmission, versionId: version),
+                               guided: ("Replace the Build", "To send a newer build of \(snapshot.plan.label): 1. Remove from Review. 2. Choose the build in Add Build. 3. Add for Review again. Each step shows its change first and waits for your approval."),
+                               prepareTitle: "Remove from Review", syncTitle: "Remove from Review", showsDestinationChoices: false,
+                               done: { review in
+                                   guard review?.state == "complete" else { return }
+                                   replacingBuild = true; afterApple()
+                               })
+                .id("quick-replace-build-\(version)")
+        }
+    }
+    private func nextVersion(_ model: ReleasePlanEditor, after plan: ReleasePlan) -> some View {
+        // The released or submitted version and every version Apple reported count as used, also when the last import is older.
+        let known = QuickRelease.usedVersions(snapshot, plan: plan)
+        let next = ReleaseSetup.quickSuggestion(history, date: Date().addingTimeInterval(7 * 86_400), known: known.union(usedVersions))
+        let state = snapshot?.targetState.map(AppStoreNames.state) ?? "submitted"
+        return Card(title: "Next Version", subtitle: "Quick Release prepares new versions. \(plan.label) is \(state), so the next version starts from its listing and screenshots.") {
+            StorebenchFact(label: "Next Version", value: next.targetVersion.isEmpty ? "Chosen in step 1" : next.targetVersion)
+            StorebenchFormFooter {
+                StorebenchBusyButton(title: next.targetVersion.isEmpty ? "Prepare Next Version" : "Prepare Version \(next.targetVersion)", loadingTitle: "Preparing…", busy: model.busy) {
+                    usedVersionsByApp[app.id, default: []].formUnion(known); startNext(model)
+                }
+                    .storebenchWorking(!model.ready)
+                    .help("Start the next version on this Mac. \(plan.label) stays submitted at Apple.")
+                    .storebenchControlID("quick.next-version")
+            }
+        }
+    }
+    /// Lets go of the submitted version's local plan and opens Quick Release on the next version. Nothing changes at Apple.
+    private func startNext(_ model: ReleasePlanEditor) {
+        guard model.ready, protection?.allowLeaving() != false else { return }
+        operation = Task {
+            guard await model.remove(), !Task.isCancelled else { return }
+            listing?.retire(); listing = nil; readiness?.retire(); readiness = nil
+            model.retire(); self.model = nil
+            protection?.remove(id: protectionId); protection?.remove(id: listingProtectionId)
+            selectedStep = nil; buildId = nil; textStatus = ""
+            await load()
+        }
     }
 
-    private func pane(_ model: ReleasePlanEditor) -> some View {
+    /// Opens a step. The page scrolls to its heading only when the step changes, so a command pressed inside the open step,
+    /// such as Sync to Apple, never moves the page.
+    private func reveal(_ step: String) {
+        let target = QuickRelease.stepIDs.contains(step) ? step : QuickRelease.step(for: step)
+        let moves = selected != target
+        selectedStep = target
+        if selectedStep == "version" { versionExpanded = true }
+        if moves { Task { @MainActor in await Task.yield(); pageScroll?("quick-step-heading", .top) } }
+    }
+
+    private func pane(_ model: ReleasePlanEditor, phases: [QuickRelease.Phase]) -> some View {
         let current = phases.first { $0.id == selected } ?? phases[0]
         return VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             Card(title: "Step \(current.number) of 4: \(current.title)", subtitle: current.purpose,
@@ -136,33 +211,31 @@ struct QuickReleaseView: View {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(phases) { step in
                     if mountedSteps.contains(step.id) || selected == step.id {
-                        VStack(alignment: .leading, spacing: StorebenchTheme.gap) { stepContent(step.id, model: model) }
+                        VStack(alignment: .leading, spacing: StorebenchTheme.gap) { stepContent(step.id, model: model, versionReady: phases[0].check.status == .ready) }
                             .onAppear { mountedSteps.insert(step.id) }.collectionVisibility(selected == step.id)
                     }
                 }
             }
+            textSyncReview()
             if let plan = model.plan {
                 QuickReleaseDetails(account: account, app: app, session: session, plan: plan, listing: listing,
                                     snapshot: snapshot, expanded: $details, editText: { openHere(.localizations) }, afterApple: afterApple)
             }
-            StorebenchActionGroup(alignment: .trailing) {
-                StorebenchCommand(title: "Back", busy: false, unavailable: current.number == 1 ? "This is the first step." : nil, primary: false) {
-                    reveal(phases[current.number - 2].id)
-                }.storebenchControlID("quick.back")
-                if current.number < 4 {
-                    StorebenchCommand(title: "Next", busy: false, unavailable: model.plan == nil ? "Prepare the release first." : nil) {
-                        reveal(phases[current.number].id)
-                    }.storebenchControlID("quick.next")
-                }
-            }
+            StorebenchStepCommands(state: .init(id: "quick-release/\(current.id)", title: "Step \(current.number) of \(phases.count): \(current.title)", detail: current.purpose,
+                back: .init(title: "Back", unavailable: current.number == 1 ? "This is the first step." : nil, primary: false, controlID: "quick.back") { reveal(phases[current.number - 2].id) },
+                next: current.number < phases.count ? [.init(title: "Next", unavailable: model.plan == nil ? "Prepare the release first." : nil,
+                                                             help: "Continue to step \(current.number + 1): \(phases[current.number].title)", controlID: "quick.next") { reveal(phases[current.number].id) }] : []))
         }
     }
 
-    @ViewBuilder private func stepContent(_ id: String, model: ReleasePlanEditor) -> some View {
+    @ViewBuilder private func stepContent(_ id: String, model: ReleasePlanEditor, versionReady: Bool) -> some View {
         if id == "version" {
+            // Until App Store Connect has the version, its settings and their Sync to Apple stay open: that is what this step asks for.
+            let creating = snapshot.map { QuickRelease.stage($0) == .create } ?? false
             DisclosureGroup("Version Settings", isExpanded: $versionExpanded) { versionCard(model) }
                 .onChange(of: model.plan == nil, initial: true) { if model.plan == nil { versionExpanded = true } }
-            if let plan = model.plan, phases[0].check.status != .ready || requestedVersionPlan == plan.token { create(plan) }
+                .onChange(of: creating, initial: true) { if creating { versionExpanded = true } }
+            if let plan = model.plan, !versionReady || requestedVersionPlan == plan.token { create(plan) }
         } else if let plan = model.plan {
             switch id {
             case "text": text(plan)
@@ -180,8 +253,8 @@ struct QuickReleaseView: View {
                 selectedStep = "version"
                 if let session { availability = await session.newVersionAvailability(accountId: account.id, appId: app.id) }
                 if !model.dirty { changed() }
-            }, quick: !QuickRelease.needsFullRelease(model.inputs, history: history), sync: { requestedVersionPlan = model.plan?.token; createRequests += 1; reveal("version") }, createTitle: "Prepare Release",
-               syncTitle: snapshot?.targetVersionId == nil ? "Create Version" : "Sync to Apple")
+            }, quick: !QuickRelease.needsFullRelease(model.inputs, history: history), sync: { requestedVersionPlan = model.plan?.token; createRequests += 1; reveal("version") }, createTitle: "Save Draft",
+               syncTitle: "Sync to Apple")
         }
     }
 
@@ -202,13 +275,17 @@ struct QuickReleaseView: View {
                 if case .submitted(let state) = QuickRelease.stage(snapshot) {
                     ReleaseSubmittedStatus(version: plan.label, state: state)
                 } else if blockers.isEmpty && !unchecked.isEmpty {
-                    StorebenchNotice(title: "Some Checks Are Still Pending", description: "No additional missing fields are confirmed. Refresh Status to finish checking the remaining release details.", icon: "info") { EmptyView() }
+                    let reading = readiness?.busy == true || readiness?.filling == true
+                    StorebenchNotice(title: reading ? "Checking the Remaining Details" : "Some Checks Are Still Pending",
+                                     description: reading ? "Nothing is missing so far. The remaining release details are being read from App Store Connect now."
+                                        : "No additional missing fields are confirmed. Refresh Status to finish checking the remaining release details.", icon: "info") { EmptyView() }
                 } else if blockers.isEmpty {
                     StorebenchNotice(title: "Nothing else is needed", description: "Everything outside this page is ready for this version. Save the text, add the build, then Add for Review.", icon: "check") { EmptyView() }
                 } else {
                     StorebenchNotice(title: blockers.count == 1 ? "1 thing still needed" : "\(blockers.count) things still needed",
                                      description: "Open the item below to complete it on this page, then continue with Add for Review.", icon: "warning") { EmptyView() }
-                    ReleaseCheckList(steps: blockers.map(ReleaseWizard.presented), ready: readiness?.ready == true, open: { fix($0) }, fix: { fix($0, $1) })
+                    ReleaseCheckList(steps: ReleaseWizard.grouped(blockers.map(ReleaseWizard.presented)), ready: readiness?.ready == true, open: { fix($0) }, fix: { fix($0, $1) },
+                                     resolve: { _, issue, keep in resolveAppleText(issue, keepMine: keep) })
                 }
             } else {
                 StorebenchLoadingStatus(message: readiness?.readFailed == true ? "The release status is not available yet. Choose Refresh Status." : "Checking this version against App Store Connect…", surface: false)
@@ -224,13 +301,13 @@ struct QuickReleaseView: View {
             if !versionExpanded { ReleaseCreationNotice(snapshot: snapshot) }
         } else if let snapshot, QuickRelease.stage(snapshot) == .create {
             PublishActionPanel(account: account, app: app, session: session, actions: [.release], initialRequest: PublishRequest(accountId: account.id, appId: app.id, scope: .release), automatic: requestedVersionPlan == plan.token,
-                               guided: ("Create Version", "App Store Connect copies the current version's listing and screenshots. Review and approve creating version \(plan.targetVersion)."), prepareTitle: "Create Version", syncTitle: "Create Version",
+                               guided: ("Create Version", "App Store Connect copies the current version's listing and screenshots. Review and approve creating version \(plan.targetVersion)."), prepareTitle: "Sync to Apple", syncTitle: "Sync to Apple", showsPrepare: false,
                                fix: { fix(check: $0) }, checked: { requestedVersionPlan = nil; recheck() }, trigger: createRequests, done: { _ in afterApple() })
                 .id("quick-create-\(plan.targetVersion)")
         } else if let snapshot, QuickRelease.stage(snapshot) == .prepare {
             // A release option changed after the version exists at Apple is saved there in its own review; an unchanged one needs nothing.
             PublishActionPanel(account: account, app: app, session: session, actions: [.release], initialRequest: PublishRequest(accountId: account.id, appId: app.id, scope: .release), automatic: requestedVersionPlan == plan.token,
-                               guided: ("App Store Version Release", "\(plan.settings) for version \(plan.targetVersion). Review and approve the change."), prepareTitle: "Save", syncTitle: "Save",
+                               guided: ("App Store Version Release", "\(plan.settings) for version \(plan.targetVersion). Review and approve the change."), prepareTitle: "Sync to Apple", syncTitle: "Sync to Apple", showsPrepare: false,
                                refreshKey: plan.token, fix: { fix(check: $0) }, checked: { requestedVersionPlan = nil; recheck() }, trigger: createRequests, done: { _ in afterApple() })
                 .id("quick-release-option-\(plan.targetVersion)")
         } else if snapshot == nil {
@@ -270,6 +347,14 @@ struct QuickReleaseView: View {
                     }.onChange(of: otherTextExpanded) { if otherTextExpanded { otherTextOpened = true } }
                 }
                 else { Text("No saved language text is available. Refresh Status to check the version.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted) }
+                // Fields changed both here and in App Store Connect wait for a choice before Sync to Apple sends anything.
+                let conflicted = (snapshot?.steps ?? []).filter { step in
+                    (step.id.hasPrefix("apple-text:") || step.id.hasPrefix("apple-info:")) && step.issues.contains { $0.changedOnBothSides && !QuickRelease.fields.contains($0.field) }
+                }
+                if !conflicted.isEmpty {
+                    ReleaseCheckList(steps: conflicted, ready: readiness?.ready == true, open: { fix($0) }, fix: { fix($0, $1) },
+                                     resolve: { _, issue, keep in resolveAppleText(issue, keepMine: keep) })
+                }
                 let feedback = textStatus.isEmpty ? listing.status : textStatus
                 StorebenchTextSlot(text: feedback, height: 40, font: .sbCallout, color: StorebenchTheme.muted, live: true)
                 StorebenchFormFooter {
@@ -277,8 +362,12 @@ struct QuickReleaseView: View {
                         .help("Save the text of every language on this Mac")
                         .storebenchWorking(!listing.workflow.shown.dirty || listing.busy || listing.workflow.shown.blocked || publishingText)
                         .storebenchControlID("quick.text.save")
+                    // Once App Store Connect is confirmed to have every language's text, Sync to Apple rests until the next edit.
+                    let textSteps = (snapshot?.steps ?? []).filter { $0.id.hasPrefix("apple-text:") || $0.id.hasPrefix("apple-info:") }
+                    let atApple = !listing.workflow.shown.dirty && !textSteps.isEmpty && textSteps.allSatisfy { $0.state == .ready || $0.id.hasPrefix("apple-info:") && $0.state != .blocked }
                     StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Preparing…", busy: listing.workflow.phase == .preparing, variant: .primary) { save(listing, sync: true) }
-                        .storebenchWorking(listing.busy || listing.workflow.shown.blocked || publishingText)
+                        .storebenchWorking(listing.busy || listing.workflow.shown.blocked || publishingText || atApple && listing.workflow.phase != .preparing)
+                        .help(atApple ? "App Store Connect already has this text" : "Save the text, then open the review that sends it to App Store Connect")
                         .storebenchControlID("quick.text.sync")
                 }
             } else {
@@ -286,14 +375,21 @@ struct QuickReleaseView: View {
             }
         }
         .id("quick-text")
-        .onChange(of: listing?.workflow.lastResult) {
-            if textReview?.state == "prepared", listing?.workflow.lastResult?.reviewReady != true { textReview = nil }
-        }
+    }
+
+    /// The review of a text sync, shared by every step that starts one, so its approval opens in the step where Sync to Apple was chosen.
+    @ViewBuilder private func textSyncReview() -> some View {
         if let listing {
             ReviewPanel(account: account, app: app, session: session, review: $textReview, done: {
-                if textReview?.state == "complete" { textReview = nil; textStatus = "Synced to Apple."; afterApple() }
+                // However a sync ends, the steps beside it are read again from App Store Connect; a failed one stays here to show why.
+                guard let state = textReview?.state, !["prepared", "running"].contains(state) else { return }
+                if state == "complete" { textReview = nil; textStatus = "Synced to Apple." }
+                afterApple()
             }, busyChanged: { publishingText = $0 }, actionsBusy: listing.busy || listing.workflow.shown.dirty || listing.workflow.shown.blocked, syncConfirmation: true)
                 .id("quick-text-save")
+                .onChange(of: listing.workflow.lastResult) {
+                    if textReview?.state == "prepared", listing.workflow.lastResult?.reviewReady != true { textReview = nil }
+                }
         }
     }
 
@@ -326,7 +422,7 @@ struct QuickReleaseView: View {
     }
 
     @ViewBuilder private func keywordCheck(_ language: LanguageDraftEditor, _ field: LanguageEditorState.Field, value: String, title: (name: String, subtitle: String)) -> some View {
-        let lint = SearchLint(value, name: title.name, subtitle: title.subtitle, locale: language.locale)
+        let lint = SearchLint(value, name: title.name, subtitle: title.subtitle, locale: language.locale, categories: categories)
         if !lint.findings.isEmpty || !lint.nameAndSubtitle.isEmpty {
             Text(SearchLintPresentation.lines(lint).joined(separator: " ")).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
         }
@@ -342,7 +438,11 @@ struct QuickReleaseView: View {
         if snapshot.map({ QuickRelease.stage($0) == .create || QuickRelease.stage($0) == .prepare }) ?? true {
             ReleaseBuildStep(account: account, app: app, session: session, plan: plan, versionId: snapshot?.targetVersionId, selectedBuildId: $buildId,
                              focus: nil, addRequests: 0, goToSend: {}, done: afterApple,
-                             createFirst: "Open Prepare Release in step 1 and approve creating version \(plan.targetVersion) in App Store Connect. Then return to Add Build in step 3.")
+                             createFirst: "Version \(plan.targetVersion) isn't in App Store Connect yet. Sync it to Apple in step 1, then add the build here.",
+                             syncVersion: {
+                                 selectedStep = "version"; versionExpanded = true
+                                 requestedVersionPlan = plan.token; createRequests += 1; reveal("version")
+                             })
         }
     }
 
@@ -351,21 +451,63 @@ struct QuickReleaseView: View {
         if let snapshot, QuickRelease.stage(snapshot) == .prepare, let version = snapshot.targetVersionId {
             let waiting = snapshot.steps.filter { QuickRelease.textNeedsAction($0) || ["build", "export-compliance"].contains($0.id) && $0.state != .ready }
             let blockers = QuickRelease.blockers(snapshot.steps)
-            if waiting.isEmpty && blockers.isEmpty {
+            // While the remaining details are still being read in the background, Add for Review waits for them rather than for a guess.
+            let checking = readiness?.filling == true && snapshot.steps.contains { $0.state == .unknown && !QuickRelease.handledHere($0.id) }
+            if waiting.isEmpty && blockers.isEmpty && !checking {
                 PublishActionPanel(account: account, app: app, session: session, actions: [.submit], initialRequest: PublishRequest(accountId: account.id, appId: app.id, scope: .submit, versionId: version, buildId: buildId),
                                    guided: ("Add for Review", "Review the complete version, then approve sending it to App Review."), prepareTitle: "Add for Review", syncTitle: "Add for Review", showsDestinationChoices: false, fix: { fix(check: $0) }, done: { _ in afterApple() })
                     .id("quick-submit-\(buildId ?? "")")
+                    // Prepared in the background as soon as nothing else is needed, so Add for Review opens its approval at once.
+                    // Nothing is sent to Apple before that approval.
+                    .task(id: "\(version):\(buildId ?? ""):\(ReleaseWizard.submissionBasis(snapshot))") {
+                        guard let session, readiness?.busy != true else { return }
+                        await session.preparePublishingAhead(account: account, request: PublishRequest(accountId: account.id, appId: app.id, scope: .submit, versionId: version, buildId: buildId),
+                                                             basis: ReleaseWizard.submissionBasis(snapshot))
+                    }
             } else {
                 // The command stays in its place, dimmed with what is still missing, so it is clear where Add for Review comes.
                 Card(title: "Add for Review", subtitle: "Apple adds a version for review once its text, build and everything before are complete.") {
-                    Text(Self.waitingFor(waiting: waiting, blockers: blockers.count)).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
-                    ForEach(Self.reasons(waiting), id: \.self) { StorebenchFact(label: "Needed", value: $0) }
+                    let reason = waiting.isEmpty && blockers.isEmpty ? "Checking the remaining release details in App Store Connect…" : Self.waitingFor(waiting: waiting, blockers: blockers.count)
+                    Text(reason).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(waiting, id: \.id) { step in needed(step, separator: step.id != waiting.last?.id) }
+                    }
+                    // What a Sync to Apple chosen here answered, such as text App Store Connect already has.
+                    StorebenchTextSlot(text: textStatus, height: 40, font: .sbCallout, color: StorebenchTheme.muted, live: true)
                     StorebenchFormFooter {
-                        StorebenchCommand(title: "Add for Review", busy: false, unavailable: ([Self.waitingFor(waiting: waiting, blockers: blockers.count)] + Self.reasons(waiting)).joined(separator: "\n")) {}
+                        StorebenchCommand(title: "Add for Review", busy: false, unavailable: ([reason] + Self.reasons(waiting)).joined(separator: "\n")) {}
                     }
                 }
             }
         }
+    }
+
+    /// One thing Add for Review still waits for, with the command that does it here: text Apple doesn't have yet is synced from
+    /// What's New in This Version, a missing build is added in Add Build, and anything else opens where it is fixed.
+    private func needed(_ step: ReleaseReadiness.Step, separator: Bool) -> some View {
+        let text = step.id.hasPrefix("apple-text:") || step.id.hasPrefix("apple-info:")
+        return StorebenchStatusRow(title: step.label, detail: step.detail, separator: separator) {
+            StorebenchFact(label: "Status", value: "Needed", problem: true)
+        } action: {
+            if text {
+                StorebenchBusyButton(title: "Sync to Apple", loadingTitle: "Preparing…", busy: listing?.workflow.phase == .preparing) { syncText(for: step) }
+                    .storebenchWorking(listing.map { $0.busy || $0.workflow.shown.blocked } ?? true || publishingText)
+                    .help("Go to What's New in This Version and open the review that saves its text to App Store Connect")
+                    .storebenchControlID("quick.needed.sync." + step.id)
+            } else if step.id == "build" {
+                Button("Add Build") { reveal("build") }.buttonStyle(StorebenchButtonStyle(.secondary))
+                    .help("Go to Add Build and choose the build for this version").storebenchControlID("quick.needed.build")
+            } else {
+                Button("Edit") { fix(step) }.buttonStyle(StorebenchButtonStyle(.secondary))
+                    .help("Open where this is fixed in Quick Release").storebenchControlID("quick.needed.edit." + step.id)
+            }
+        } details: { EmptyView() }
+    }
+    /// Syncs every language's text from the step it was chosen in: the review opens there, and Add for Review is right below once it is
+    /// approved. Only text that first needs a choice or a correction opens step 2, where that is done.
+    private func syncText(for step: ReleaseReadiness.Step) {
+        locale = String(step.id.split(separator: ":", maxSplits: 1).last ?? "")
+        if let listing { save(listing, sync: true) }
     }
 
     /// What Add for Review still waits for, in the order of this page.
@@ -389,6 +531,13 @@ struct QuickReleaseView: View {
         if id == "version" || id == "plan" { versionExpanded = true; reveal("version"); return }
         if let step = snapshot?.steps.first(where: { $0.id == id }) { fix(step); return }
         reveal(QuickRelease.step(for: id))
+    }
+    private func resolveAppleText(_ issue: ReleaseMaterial.Issue, keepMine: Bool) {
+        guard let session, let plan = model?.plan else { return }
+        Task {
+            _ = await ReleaseTextChoice.resolve(issue, keepMine: keepMine, session: session, account: account, appId: app.id, plan: plan, listing: listing)
+            await refreshStatus(fresh: true, full: true)
+        }
     }
     private func fix(_ step: ReleaseReadiness.Step, _ issue: ReleaseMaterial.Issue? = nil) {
         if step.id.hasPrefix("local:") || step.id.hasPrefix("apple-text:") || step.id.hasPrefix("apple-info:") {
@@ -428,20 +577,41 @@ struct QuickReleaseView: View {
         do { try language.change(field, to: value); textStatus = "" }
         catch { textStatus = "Keep each local text field within 10,000 UTF-16 characters. Your previous text is retained." }
     }
+    /// Save Draft keeps the text on this Mac. Sync to Apple first settles text App Store Connect changed: fields only Apple changed
+    /// take Apple's current text into the draft, and fields changed on both sides wait for the person's choice. Other differences in
+    /// fields Quick Release doesn't show are covered with its four, so the review answers every difference the status reports.
     private func save(_ listing: VersionListingEditor, sync: Bool = false) {
         guard listing.active, !listing.busy, !listing.workflow.blocked, !publishingText else { return }
         textReview = nil
+        let settle = sync ? QuickRelease.textSync(snapshot?.steps ?? []) : nil
+        if let settle, !settle.conflicts.isEmpty {
+            let names = ListFormatter.localizedString(byJoining: Array(Set(settle.conflicts.map { TextDrafts.labels[$0.field] ?? $0.field })).sorted())
+            textStatus = "\(names) changed on this Mac and in App Store Connect. Choose which text to keep below, then Sync to Apple again."
+            reveal("text"); return
+        }
         operation = Task {
-            var prepared: LanguageListingReview?, failure: String?
+            var prepared: LanguageListingReview?, failure: String?, alreadyThere = false
+            if sync, let session, let plan = model?.plan {
+                // What was typed is saved first, so it is never mistaken for untouched text. Then text this Mac never edited takes
+                // App Store Connect's text as it is read now, so the status only reports what was typed here and Add for Review is
+                // reached. A typed or kept field is never replaced, and nothing comes from an earlier reading of Apple.
+                let saved = await listing.run()
+                guard listing.active, !Task.isCancelled, listing.workflow.owns(saved) else { return }
+                if saved.complete, let taken = try? await session.reuseCurrentAppleText(account: account, plan: plan), taken > 0 {
+                    for language in listing.languages { await language.text.load(afterReuse: true) }
+                }
+                guard listing.active, !Task.isCancelled else { return }
+            }
             let prepare: (@MainActor () async throws -> Void)?
             if sync {
                 prepare = {
                     guard let session, let plan = model?.plan else { throw PublishFailure.conflict }
                     do {
-                        let request = QuickRelease.textRequest(accountId: account.id, appId: app.id, plan: plan, includingOtherText: otherTextOpened)
-                        prepared = try await session.prepareLanguageListingReview(account: account, request: request, client: try await session.client(for: account))
+                        let request = QuickRelease.textRequest(accountId: account.id, appId: app.id, plan: plan, includingOtherText: otherTextOpened || settle?.includesOtherText == true)
+                        prepared = try await session.prepareLanguageListingReview(account: account, request: request)
                     } catch {
                         failure = (error as? PublishFailure)?.message
+                        if error as? PublishFailure == .noChanges { alreadyThere = true; failure = "App Store Connect already has this text. Its status is checked again now." }
                         if error as? PublishFailure == .versionRequired { versionExpanded = true; requestedVersionPlan = model?.plan?.token; createRequests += 1; reveal("version") }
                         throw error
                     }
@@ -449,8 +619,15 @@ struct QuickReleaseView: View {
             } else { prepare = nil }
             let result = await listing.run(prepare: prepare)
             guard listing.active, !Task.isCancelled, listing.workflow.owns(result) else { return }
-            textStatus = failure ?? (result.complete ? "Saved on this Mac. Sync to Apple prepares a review for your approval." : listing.unsavedItem ?? "The text could not be saved. Your edits are kept.")
+            // Saved text that no longer is what its editor shows is compared in Other Listing Text before any review is prepared.
+            let compares = listing.languages.contains { $0.text.needsComparison }
+            if compares { otherTextOpened = true; otherTextExpanded = true }
+            // Text that could not be saved is corrected in step 2; a review that could not be prepared says why where Sync was chosen.
+            if !result.complete, failure == nil { reveal("text") }
+            textStatus = failure ?? (result.complete ? "Saved on this Mac. Sync to Apple prepares a review for your approval."
+                : listing.unsavedItem.map { compares ? $0 + " It is open in Other Listing Text below. Nothing was prepared or sent." : $0 } ?? "The text could not be saved. Your edits are kept.")
             if result.reviewReady, listing.workflow.ready { textReview = prepared?.review }
+            if alreadyThere { await refreshStatus(fresh: true) }
         }
     }
     /// A Save to App Store Connect clears the shared reads; the status is read again, then what the later steps show, so they open at once.
@@ -471,6 +648,11 @@ struct QuickReleaseView: View {
 
     // MARK: Loading
 
+    /// How long a new version waits for the newest material before it starts from what is saved.
+    static let startPatience: Duration = .seconds(6)
+    /// Why a new version waits while the page is already open.
+    static let readingStart = "Reading the current version from App Store Connect…"
+
     private func load() async {
         guard model == nil, !loading, !Task.isCancelled else { return }
         if let providedModel {
@@ -484,15 +666,26 @@ struct QuickReleaseView: View {
             let remembered = await presentation?.rememberedDecodedRead(historyKey, as: [Revision].self)
             try Task.checkCancellation()
             let savedPlan = try await session.releasePlan(accountId: account.id, appId: app.id)
+            // Without a saved plan a new version starts from the current material at Apple, which may first need a download. The page opens
+            // from the versions saved on this Mac meanwhile; only an app with nothing saved yet waits for the download before it opens.
+            var needsImport = false, local = remembered
+            if savedPlan == nil { needsImport = (try? await session.releaseStartNeedsImport(account: account, appId: app.id)) ?? true }
+            if local == nil, needsImport { local = (try? await session.revisions(accountId: account.id, appId: app.id)) ?? [] }
+            let opensEarly = local.map { !$0.isEmpty } ?? false
             let savedHistory: [Revision]
-            if let remembered { savedHistory = remembered }
+            if opensEarly, let local { savedHistory = local }
             else { savedHistory = try await session.releaseStartingHistory(account: account, appId: app.id); presentation?.rememberRead(savedHistory, historyKey) }
             try Task.checkCancellation()
             history = savedHistory
             // Start from what is saved: the plan itself, else the version still being prepared at Apple, else a copy into the next number.
             let suggestionDate = Date().addingTimeInterval(7 * 86_400)
             let preference = savedPlan == nil ? try? await session.releasePreference(accountId: account.id, appId: app.id) : nil
-            let initial = savedPlan.map { ReleasePlanInputs($0, fallbackDate: suggestionDate) } ?? ReleasePreference.applying(preference, to: ReleaseSetup.suggestion(savedHistory, date: suggestionDate))
+            // The numbers Apple last reported are saved on this Mac, so the suggestion is right before the newest material arrives.
+            let appleNumbers = savedPlan == nil ? await session.appleVersionNumbers(account: account, appId: app.id) : [:]
+            func suggestion(_ versions: [Revision], apple: [String: Set<String>]) -> ReleasePlanInputs {
+                ReleasePreference.applying(preference, to: ReleaseSetup.quickSuggestion(versions, date: suggestionDate, known: usedVersions, apple: apple))
+            }
+            let initial = savedPlan.map { ReleasePlanInputs($0, fallbackDate: suggestionDate) } ?? suggestion(savedHistory, apple: appleNumbers)
             let owner = ReleasePlanEditor(account: account, appId: app.id, initial: initial, session: session), ownerId = protectionId
             owner.didChange = { [weak owner, weak editingProtection = protection] in
                 guard let owner, owner.active else { editingProtection?.remove(id: ownerId); return }
@@ -503,14 +696,38 @@ struct QuickReleaseView: View {
                 let saved = await owner.save()
                 return saved && owner.active && !owner.dirty
             }
+            // A new version is never created from older material: it waits for the current version from App Store Connect.
+            if opensEarly, savedPlan == nil { owner.awaitStart(Self.readingStart) }
             model = owner; await owner.load()
             guard owner.active, !Task.isCancelled else { return }
-            // A new plan starts from current Apple material: the remembered versions are replaced by a fresh read, which may import first,
-            // and an unedited suggestion follows it.
-            if remembered != nil, let latest = try? await session.releaseStartingHistory(account: account, appId: app.id) {
-                guard owner.active, !Task.isCancelled else { return }
-                history = latest; presentation?.rememberRead(latest, historyKey)
-                if savedPlan == nil { owner.suggest(ReleasePreference.applying(preference, to: ReleaseSetup.suggestion(latest, date: suggestionDate))) }
+            // The versions the page opened with are read again: a new plan starts from current Apple material, which may import first,
+            // and the suggestion follows it, keeping whatever was typed meanwhile.
+            if opensEarly {
+                // A download that takes long never keeps the page waiting: after a few seconds the version starts from the saved material,
+                // numbered after every version Apple reported, while the download goes on. Text App Store Connect has that is newer is
+                // taken in when syncing, as the status compares every field with Apple.
+                let patience = savedPlan == nil ? Task { @MainActor [weak owner] in
+                    try? await Task.sleep(for: Self.startPatience)
+                    guard !Task.isCancelled, let owner, owner.active, owner.waiting != nil else { return }
+                    owner.startArrived(suggestion(savedHistory, apple: await session.appleVersionNumbers(account: account, appId: app.id)))
+                } : nil
+                defer { patience?.cancel() }
+                do {
+                    let latest = try await session.releaseStartingHistory(account: account, appId: app.id)
+                    guard owner.active, !Task.isCancelled else { if owner.waiting != nil { drop(owner) }; return }
+                    history = latest; presentation?.rememberRead(latest, historyKey)
+                    if owner.waiting != nil {
+                        owner.startArrived(savedPlan == nil ? suggestion(latest, apple: await session.appleVersionNumbers(account: account, appId: app.id)) : nil)
+                    }
+                } catch {
+                    // A page closed while it waited reads the material again when it opens, rather than keeping a version that can't start.
+                    guard owner.active, !Task.isCancelled else { if owner.waiting != nil { drop(owner) }; return }
+                    // A version already started from the saved material keeps working; the download is tried again on the next opening.
+                    if owner.waiting == nil { return }
+                    // A saved plan keeps working from its own record; a new version shows why it can't start yet and offers Try Again.
+                    if savedPlan != nil { owner.startArrived(nil) }
+                    else { owner.retire(); model = nil; throw error }
+                }
             }
             // A version App Store Connect is already preparing needs no Create: the plan to continue it is saved on this Mac right away.
             if savedPlan == nil, owner.plan == nil, owner.baseline.start == .reuse, owner.ready, await owner.save(), owner.active, !Task.isCancelled { changed() }
@@ -519,6 +736,11 @@ struct QuickReleaseView: View {
             protection?.remove(id: protectionId)
             if !Task.isCancelled { loadStatus = (error as? ImportFailure)?.message ?? "Saved starting versions could not be read." }
         }
+    }
+
+    /// Lets go of a version still waiting for its starting material, so the next load starts it again.
+    private func drop(_ owner: ReleasePlanEditor) {
+        owner.retire(); if model === owner { model = nil }; protection?.remove(id: protectionId)
     }
 
     /// The same listing owner as Release: every language's text, kept while the page is open and saved together.
@@ -557,7 +779,8 @@ struct QuickReleaseView: View {
                 guard readiness == nil, !Task.isCancelled else { return }
                 readiness = ReleaseReadinessEditor(planEditor: model, account: account, session: session, seed: seed)
             }
-            readiness?.focus = .all
+            // The open step's parts are read first, so it answers before the rest of the status arrives in the background.
+            readiness?.focus = QuickRelease.reads(selectedStep)
             // A save can invalidate an older background read. Let that owner finish before checking the new material.
             while readiness?.busy == true {
                 do { try await Task.sleep(for: .milliseconds(25)) } catch { return }

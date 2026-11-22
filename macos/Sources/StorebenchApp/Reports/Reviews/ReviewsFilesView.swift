@@ -23,7 +23,7 @@ import UniformTypeIdentifiers
 
     var body: some View {
         VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
-            Card(title: "Import and export reviews", subtitle: "Choose one Storebench CSV or JSON export, optionally gzipped. Preview additions and updates before saving. Previously saved reviews are kept.", help: "imports") {
+            Card(title: "Import and Export Reviews", subtitle: "Choose one Storebench CSV or JSON export, optionally gzipped. Preview additions and updates before saving. Previously saved reviews are kept.", help: "imports") {
                 Text("Exports include all saved review text and this app's identity. Keep them private.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
                 StorebenchActionGroup { fileActions }
                 StorebenchTextSlot(text: chosen?.lastPathComponent ?? "No file selected", height: 36, font: .sbCallout, color: nil)
@@ -36,7 +36,7 @@ import UniformTypeIdentifiers
                 }
             }
             if let review {
-                Card(title: "Review import changes", subtitle: "\(review.changes.added) added · \(review.changes.updated) updated · \(review.changes.unchanged) unchanged. No previously saved reviews are removed.") {
+                Card(title: "Review Import Changes", subtitle: "\(review.changes.added) added · \(review.changes.updated) updated · \(review.changes.unchanged) unchanged. No previously saved reviews are removed.") {
                     if stale { Text("Saved history or selected contents changed. Preview again to explicitly review the new baseline before saving.").foregroundStyle(StorebenchTheme.muted) }
                     StorebenchCollection(items: review.differences, title: { $0.label }, empty: "No review text changes.") { item in
                         VStack(alignment: .leading, spacing: 8) {

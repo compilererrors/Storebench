@@ -83,6 +83,33 @@ public enum AsoProgress {
         }
         return merge(segments)
     }
+    /// The same comparison for two panels side by side: each side keeps its own text exactly, the left marking words only it
+    /// has as removed and the right marking words only it has as added.
+    public static func sides(_ before: String, _ after: String) -> (before: [AsoTextSegment], after: [AsoTextSegment]) {
+        let a = tokens(before), b = tokens(after)
+        if a.count * b.count > 1_500_000 {
+            return (before.isEmpty ? [] : [AsoTextSegment(kind: .removed, text: before)], after.isEmpty ? [] : [AsoTextSegment(kind: .added, text: after)])
+        }
+        var table = Array(repeating: [Int](repeating: 0, count: b.count + 1), count: a.count + 1)
+        for i in stride(from: a.count - 1, through: 0, by: -1) { for j in stride(from: b.count - 1, through: 0, by: -1) { table[i][j] = TextSemantics.same(a[i], b[j]) ? table[i + 1][j + 1] + 1 : max(table[i + 1][j], table[i][j + 1]) } }
+        var left: [AsoTextSegment] = [], right: [AsoTextSegment] = [], i = 0, j = 0
+        while i < a.count || j < b.count {
+            if i < a.count && j < b.count && TextSemantics.same(a[i], b[j]) {
+                left.append(.init(kind: .same, text: a[i])); right.append(.init(kind: .same, text: b[j])); i += 1; j += 1
+            } else if i < a.count && (j >= b.count || table[i + 1][j] >= table[i][j + 1]) { left.append(.init(kind: .removed, text: a[i])); i += 1 }
+            else { right.append(.init(kind: .added, text: b[j])); j += 1 }
+        }
+        // Whitespace between two marked words belongs to the change, so a changed phrase reads as one marking.
+        func joined(_ segments: [AsoTextSegment]) -> [AsoTextSegment] {
+            var result = segments
+            for index in result.indices.dropFirst().dropLast() where result[index].kind == .same && result[index - 1].kind != .same && result[index + 1].kind == result[index - 1].kind
+                && result[index].text.unicodeScalars.allSatisfy({ TextSemantics.whitespace.contains($0) }) && !result[index].text.contains("\n") {
+                result[index] = AsoTextSegment(kind: result[index - 1].kind, text: result[index].text)
+            }
+            return merge(result)
+        }
+        return (joined(left), joined(right))
+    }
     static func merge(_ segments: [AsoTextSegment]) -> [AsoTextSegment] {
         var merged: [AsoTextSegment] = []
         for segment in segments { if let last = merged.last, last.kind == segment.kind { merged[merged.count - 1].text += segment.text } else { merged.append(segment) } }

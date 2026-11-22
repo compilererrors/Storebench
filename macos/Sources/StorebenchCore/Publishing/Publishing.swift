@@ -71,13 +71,20 @@ extension WorkspaceSession {
         }
     }
 
-    /// Reviews for one app, newest first.
+    /// Reviews for one app, newest first. Many screens ask for them when they open, so the parsed list is kept until a review is
+    /// saved here or another process writes the database; every review is then read and checked again.
     public func publishHistory(accountId: String, appId: String) throws -> [PublishReview] {
         try storeAccess { store in
-            try store.documents(namespace: "publish_reviews", prefix: "\(accountId):\(appId):").compactMap { document -> PublishReview? in
+            let scope = "\(accountId):\(appId):", stamp = try store.externalStamp() + ":" + String(publishReviewSaves)
+            if let kept = publishHistoryMemo.value(for: scope), kept.stamp == stamp { return kept.reviews }
+            var bytes = 0
+            let reviews = try store.documents(namespace: "publish_reviews", prefix: scope).compactMap { document -> PublishReview? in
+                bytes += document.payload.count
                 guard let review = PublishReview(try JSONText.parse(document.payload)), review.request.accountId == accountId, review.request.appId == appId, document.key == publishKey(accountId, appId, review.id) else { return nil }; return review
             }
                 .sorted { ($0.createdAt, $0.id) > ($1.createdAt, $1.id) }
+            publishHistoryMemo.insert((stamp, reviews), for: scope, cost: bytes * 3)
+            return reviews
         }
     }
 
@@ -85,6 +92,8 @@ extension WorkspaceSession {
         let key = publishKey(review.request.accountId, review.request.appId, review.id), data = review.json.data
         guard data.count <= 10_000_000 else { throw PublishFailure.invalid("Publishing review is too large.") }
         return try storeAccess { store in
+            // The count changes before the write, so a list read during or after it is never served from an earlier one.
+            publishReviewSaves += 1
             try store.transaction { current in
                 guard try current("publish_reviews", key)?.revision == expected else { throw PublishFailure.conflict }
                 return [.put(namespace: "publish_reviews", key: key, json: data)]
@@ -174,6 +183,7 @@ extension WorkspaceSession {
     func publishPlan(account: Account, request: PublishRequest, client: AppStoreConnectClient) async throws -> PublishPlan {
         guard client.readCache == nil else { throw PublishFailure.invalid("Publishing requires a fresh Apple read. Prepare a new review.") }
         let planner = Planner(client: client, request: request)
+        defer { planner.cancelAhead() }
         let title: String
         do {
             guard let app = try await planner.get("/v1/apps/\(request.appId)").first, app.type == "apps", app.id == request.appId else { throw PublishFailure.invalid("Apple returned a different app.") }
@@ -215,7 +225,8 @@ extension WorkspaceSession {
         case AppStoreConnectClient.Failure.unreadableResponse: return PublishFailure.invalid("App Store Connect's answer\(source) could not be read." + nothing)
         case let failure as AppStoreConnectClient.Failure: return PublishFailure.invalid("App Store Connect's answer\(source) was refused (\(failure))." + nothing)
         case let failure as URLError: return PublishFailure.invalid("App Store Connect could not be reached\(source) (\(failure.code.rawValue))." + nothing)
-        default: return PublishFailure.invalid("The review could not be prepared (\(String(describing: error)))." + nothing)
+        // Only the kind of failure is named; an unknown error's own text could carry details from another system.
+        default: return PublishFailure.invalid("The review could not be prepared (\(String(describing: type(of: error))))." + nothing)
         }
     }
 
@@ -292,7 +303,7 @@ extension WorkspaceSession {
         review.state = "running"; review.pid = getpid(); review.approvedAt = CustomerReview.isoString(now()); review.updatedAt = review.approvedAt!
         revision = try savePublishReview(review, expected: revision)
         if review.request.changesCountryPrices { try invalidatePricing(accountId: account.id, appId: appId) }
-        let grant = PublishGrant(accountId: account.id, appId: appId, reviewId: id)
+        let grant = PublishGrant(accountId: account.id, appId: appId, reviewId: id), proofs = OwnershipProofs()
         do {
             let startingReview = review, startingRevision = revision
             let outcome = await withTaskGroup(of: SentTogether.self, returning: (PublishReview, Int?, Error?).self) { group in
@@ -315,7 +326,7 @@ extension WorkspaceSession {
                                 let step = review.steps[item], resolvedIds = ids, reservedOperations = operations
                                 group.addTask { [self] in
                                     do {
-                                        let output = try await performPublishingStep(step, ids: resolvedIds, operations: reservedOperations, account: account, appId: appId, client: client, grant: grant)
+                                        let output = try await performPublishingStep(step, ids: resolvedIds, operations: reservedOperations, account: account, appId: appId, client: client, grant: grant, proofs: proofs)
                                         return SentTogether(item: item, output: output, error: nil)
                                     } catch { return SentTogether(item: item, output: nil, error: error) }
                                 }
@@ -359,6 +370,7 @@ extension WorkspaceSession {
         case AppStoreConnectClient.Failure.status(403): return "Apple did not allow this change for the API key's role. Completed steps remain applied."
         case AppStoreConnectClient.Failure.agreement: return ReportingMessages.appleAgreement + " Completed steps remain applied; prepare a new review after completing Apple setup."
         case AppStoreConnectClient.Failure.status(409): return "Apple refused the change because the item changed or is in a state that does not allow it. Completed steps remain applied; prepare a new review."
+        case AppStoreConnectClient.Failure.status(429): return "Apple's hourly request limit for this API key is used up. Completed steps remain applied; Resume in a few minutes to finish."
         case AppStoreConnectClient.Failure.status(let code): return "Apple returned an error (\(code)). Completed steps remain applied; prepare a new review to finish."
         case let error as URLError where error.code == .cancelled: return "The Save was cancelled. Completed steps remain applied; Resume to finish."
         case is URLError: return "The connection to App Store Connect was lost. Completed steps remain applied; Resume to finish."
@@ -448,11 +460,14 @@ extension WorkspaceSession {
         guard let item = try await client.get("/v1/\(type)/\(id.addingPercentEncoding(withAllowedCharacters: allowed) ?? id)\(include)").first, item.type == type, item.id == id else { throw PublishFailure.write("Apple publishing resource changed after review.") }
         if type == "appStoreVersions" || type == "appInfos" {
             guard Apple.owned(item, "app", "apps", appId) else { throw PublishFailure.ownership }
+            checked.proofs?.add(type, id, appId: appId)
         } else {
             guard let link = Self.parents[type] else { throw PublishFailure.ownership }
             if let owner = Apple.owner(item, link.relation) {
                 guard owner.type == link.type else { throw PublishFailure.ownership }
-                _ = try await ownedResource(link.type, owner.id, appId: appId, client: client, checked: checked)
+                if checked.proofs?.contains(link.type, owner.id, appId: appId) != true {
+                    _ = try await ownedResource(link.type, owner.id, appId: appId, client: client, checked: checked)
+                }
             } else {
                 // Missing linkage can be proved through the parent's path; malformed explicit linkage cannot.
                 if case .object(let relationship)? = item.relationships?[link.relation], let data = relationship["data"], data != .null { throw PublishFailure.ownership }
@@ -519,11 +534,11 @@ extension WorkspaceSession {
     }
 
     /// The write allowlist and ownership checks for the scopes this app publishes. Anything else is refused.
-    func verifyWrite(method: String, path: String, body: JSONText?, guardValue: JSONText?, appId: String, client: AppStoreConnectClient) async throws {
+    func verifyWrite(method: String, path: String, body: JSONText?, guardValue: JSONText?, appId: String, client: AppStoreConnectClient, proofs: OwnershipProofs? = nil) async throws {
         let parts = path.split(separator: "/").dropFirst().map { $0.removingPercentEncoding ?? String($0) }
         guard let root = parts.first else { throw PublishFailure.write("Unsupported Apple write.") }
         let data = body?["data"]
-        let checked = OwnershipCache()
+        let checked = OwnershipCache(proofs: proofs)
         func owned(_ type: String, _ id: String) async throws -> AppStoreConnectClient.Resource { try await ownedResource(type, id, appId: appId, client: client, checked: checked) }
         func versions() async throws -> [AppStoreConnectClient.Resource] {
             let items = try await client.list("/v1/apps/\(appId)/appStoreVersions?include=app&limit=200")

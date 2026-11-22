@@ -43,11 +43,15 @@ public struct VersionHistory: Sendable {
         let imports = revisions.filter { !$0.local }
         var seen: [String: Seen] = [:], order: [String] = []
         for revision in imports {
-            let shots = (try? LibraryChooser.images(revision)) ?? []
+            // Screenshots are listed only for a revision that is the newest of one of its versions; older imports are skipped.
+            var shots: [LibraryChooser.Shot]?
             var offset = 0
             for version in items(revision.value["versions"]) {
                 let key = text(version["fields"]?["platform"]) + "/" + text(version["fields"]?["versionString"])
-                if seen[key] == nil, !text(version["fields"]?["versionString"]).isEmpty { seen[key] = Seen(revision: revision, version: version, shots: shots, offset: offset); order.append(key) }
+                if seen[key] == nil, !text(version["fields"]?["versionString"]).isEmpty {
+                    if shots == nil { shots = (try? LibraryChooser.images(revision)) ?? [] }
+                    seen[key] = Seen(revision: revision, version: version, shots: shots ?? [], offset: offset); order.append(key)
+                }
                 offset += items(version["localizations"]).reduce(0) { total, locale in total + items(locale["screenshotSets"]).reduce(0) { $0 + items($1["screenshots"]).count } }
             }
         }

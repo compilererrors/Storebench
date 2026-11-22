@@ -62,6 +62,18 @@ public struct LanguageEditorState: Sendable {
         values[field.selection.id]?[field.key] = value; latest = nil
     }
     public mutating func restoreImport(_ field: Field) throws { try change(field, to: original(field)) }
+    /// The fields to show: a language's app name, subtitle and privacy fields once, even while App Store Connect keeps the live
+    /// App Information beside the one being prepared, each with this language.
+    public var shownFields: [Field] {
+        let first = selections.first { $0.scope == .appInfo }?.id
+        return fields.filter { $0.selection.scope != .appInfo || $0.selection.id == first }
+    }
+    /// Changes a shown field. An app information field changes in every App Information record of the language, as they are
+    /// saved and synced together.
+    public mutating func changeShown(_ field: Field, to value: String) throws {
+        guard field.selection.scope == .appInfo else { try change(field, to: value); return }
+        for sibling in fields where sibling.selection.scope == .appInfo && sibling.key == field.key { try change(sibling, to: value) }
+    }
     public func entries() throws -> [LanguageDrafts.Entry] {
         let entries = selections.filter { !TextDrafts.sameFields(values[$0.id] ?? [:], baseline[$0.id] ?? [:]) }.map {
             LanguageDrafts.Entry(id: $0.id, scope: $0.scope, fields: values[$0.id] ?? [:], fingerprint: fingerprints[$0.id] ?? "")

@@ -1,7 +1,7 @@
 import Foundation
 
 public enum ShortcutCommand: String, CaseIterable, Codable, Sendable {
-    case settings, help, save, refresh, syncApp, syncAll, retry, stop, chooseImages, nextSection, previousSection, back, forward
+    case settings, help, save, refresh, syncApp, syncAll, retry, stop, chooseImages, nextSection, previousSection, back, forward, previousStep, nextStep
     case overview, apps, appOverview, information, history, journal, transfer, release, quickRelease, localizations, keywords, media, assetLibrary, createMedia, pricing, reviewInfo, publish
     case builds, groups, testers, testInformation, sales, analytics, aso, asoDiff, finance, reviews
     case startTesting, setUpReports, pricingAvailability, appPrivacy, accessibility, inAppPurchases, subscriptions, feedback, externalTesting
@@ -60,12 +60,14 @@ public enum ShortcutCommand: String, CaseIterable, Codable, Sendable {
         case .previousSection: "Previous Section"
         case .back: "Back"
         case .forward: "Forward"
+        case .previousStep: "Previous Guide Step"
+        case .nextStep: "Next Guide Step"
         case .overview: "Workspace Overview"
         case .apps: "Connected Apps"
         default: rawValue
         }
     }
-    public var group: String { section != nil || [.overview, .apps, .nextSection, .previousSection, .back, .forward].contains(self) ? "Navigation" : "Actions" }
+    public var group: String { section != nil || [.overview, .apps, .nextSection, .previousSection, .back, .forward, .previousStep, .nextStep].contains(self) ? "Navigation" : "Actions" }
     public var defaultSpecification: String? {
         switch self {
         case .settings: "command+,"
@@ -81,6 +83,9 @@ public enum ShortcutCommand: String, CaseIterable, Codable, Sendable {
         case .previousSection: "control+shift+tab"
         case .back: "command+["
         case .forward: "command+]"
+        // Command-[ and Command-] already go Back and Forward in history; Option adds the guide's own steps.
+        case .previousStep: "command+option+["
+        case .nextStep: "command+option+]"
         case .overview: "command+1"
         case .apps: "command+2"
         case .release: "command+3"

@@ -120,7 +120,7 @@ extension WorkspaceSession {
             return ResolvedMedia(hash: item.sha256, name: item.fileName, ext: "", width: item.width ?? 0, height: item.height ?? 0, duration: nil)
         case .preview(let localizationId, let type):
             let key = try TextDrafts.key(accountId: source.accountId, appId: source.appId, revisionId: source.revisionId)
-            guard try storeAccess({ try $0.document(namespace: "revisions", key: key) }) != nil else { throw SavedMediaFailure.missing }
+            guard try storeAccess({ try $0.revision(namespace: "revisions", key: key) }) != nil else { throw SavedMediaFailure.missing }
             let set = try previewSet(accountId: source.accountId, appId: source.appId, revisionId: source.revisionId, localizationId: localizationId, type: type)
             guard let item = set.items.first(where: { $0.id == source.itemId }), ["mp4", "m4v", "mov"].contains(item.ext), item.duration.isFinite, item.duration > 0 else { throw SavedMediaFailure.missing }
             return ResolvedMedia(hash: item.sha256, name: item.fileName, ext: item.ext, width: item.width, height: item.height, duration: item.duration)

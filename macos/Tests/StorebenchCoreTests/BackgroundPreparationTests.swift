@@ -27,6 +27,21 @@ import Testing
         #expect(usage.ranked(apps, current: nil, limit: 0, now: start).isEmpty)
     }
 
+    /// Apps chosen under Always Prepare follow the open app and come on top of Apps to Prepare; Off still prepares nothing.
+    @Test func alwaysPreparedAppsFollowTheOpenAppOnTopOfTheLimit() throws {
+        var usage = AppUsage()
+        for _ in 0..<3 { usage = usage.recording(accountId: "synthetic-account", appId: "1003", now: start) }
+        let always = [BackgroundPreparation.App(accountId: "synthetic-account", appId: "1001")]
+        #expect(ids(usage.ranked(apps, current: nil, limit: 1, always: always, now: start)) == ["1001", "1003"])
+        #expect(ids(usage.ranked(apps, current: ("synthetic-account", "1002"), limit: 1, always: always, now: start)) == ["1002", "1001"])
+        #expect(usage.ranked(apps, current: nil, limit: 0, always: always, now: start).isEmpty)
+        let saved = try BackgroundPreparation(appLimit: 3, alwaysPrepared: always)
+        #expect(try BackgroundPreparation(saved.json) == saved)
+        // A choice saved before Always Prepare existed still reads, with no apps chosen.
+        #expect(try BackgroundPreparation(JSONText.object([("schemaVersion", .number(1)), ("appLimit", .number(5))])).alwaysPrepared.isEmpty)
+        #expect(throws: BackgroundPreparationFailure.self) { try BackgroundPreparation(appLimit: 3, alwaysPrepared: always + always) }
+    }
+
     @Test func olderOpeningsCountForLessAndUnknownAppsAreIgnored() {
         var usage = AppUsage()
         for _ in 0..<4 { usage = usage.recording(accountId: "synthetic-account", appId: "1001", now: start) }
@@ -149,5 +164,37 @@ import Testing
         #expect(editor.suggest(newer) && editor.inputs == newer && editor.baseline == newer && !editor.dirty)
         editor.inputs.targetVersion = "1.2"
         #expect(!editor.suggest(old) && editor.inputs.targetVersion == "1.2" && editor.inputs.sourceRevisionId == "synthetic-import-2")
+    }
+
+    /// Release and Quick Release open from the versions saved on this Mac while the current version is read from App Store Connect.
+    /// Until it arrives nothing can be created from the older material; once it does, the version starts from it and keeps what was typed.
+    @MainActor @Test func aNewVersionWaitsForTheCurrentMaterialAndKeepsWhatWasTypedMeanwhile() async throws {
+        let date = start
+        let saved = ReleasePlanInputs(start: .copy, sourceRevisionId: "synthetic-import-1", baseVersionId: "synthetic-version-1", targetVersion: "1.1", date: date)
+        let current = ReleasePlanInputs(start: .copy, sourceRevisionId: "synthetic-import-2", baseVersionId: "synthetic-version-2", targetVersion: "1.1", date: date)
+        var writes: [ReleasePlanInputs] = []
+        let editor = ReleasePlanEditor(accountId: "synthetic-account", appId: "1001", initial: saved, read: { nil },
+                                       save: { inputs, _ in writes.append(inputs); throw ReleaseFailure.sourceUnavailable }, remove: { _ in })
+        editor.awaitStart("Reading the current version from App Store Connect…")
+        await editor.load()
+        #expect(editor.loaded && !editor.ready && editor.waiting != nil)
+        // The page is open and the number can be typed, but nothing is created from the older material.
+        editor.inputs.targetVersion = "1.2"
+        #expect(await editor.save() == false && writes.isEmpty)
+        editor.startArrived(current)
+        #expect(editor.waiting == nil && editor.ready)
+        #expect(editor.inputs.targetVersion == "1.2" && editor.inputs.sourceRevisionId == "synthetic-import-2" && editor.baseline == current)
+        _ = await editor.save()
+        #expect(writes.map(\.sourceRevisionId) == ["synthetic-import-2"], "The version is created from the current material")
+    }
+
+    @MainActor @Test func endingTheWaitWithoutASuggestionLeavesTheInputsAsTheyAre() async throws {
+        let date = start
+        let inputs = ReleasePlanInputs(start: .copy, sourceRevisionId: "synthetic-import-1", baseVersionId: "synthetic-version-1", targetVersion: "1.1", date: date)
+        let editor = ReleasePlanEditor(accountId: "synthetic-account", appId: "1001", initial: inputs, read: { nil },
+                                       save: { _, _ in throw ReleaseFailure.sourceUnavailable }, remove: { _ in })
+        await editor.load()
+        editor.startArrived(nil)
+        #expect(editor.waiting == nil && editor.ready && editor.inputs == inputs)
     }
 }

@@ -70,7 +70,7 @@ struct AISetupDialog: View {
     @State private var dontAskAgain = false
     private var deferredChoice: AISetupPreferences.Choice { dontAskAgain ? .never : .later }
     var body: some View {
-        StorebenchDialog(title: "Use AI in Storebench?", height: 440, busy: working, close: { choose(deferredChoice) }) {
+        StorebenchDialog(title: "Use AI in Storebench?", kind: .question, busy: working, close: { choose(deferredChoice) }) {
             VStack(alignment: .leading, spacing: StorebenchTheme.space(3)) {
                 Text("Turn screenshots into editable App Store cards and translate your listing text.")
                     .font(.sbBody).fixedSize(horizontal: false, vertical: true)

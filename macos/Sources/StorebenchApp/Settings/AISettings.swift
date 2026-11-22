@@ -44,11 +44,12 @@ struct AISettings: View {
                 }
             }
             .settingsSearchAnchor("ai-default")
+            AICardDefaultsSettings().settingsSearchAnchor("ai-cards")
             ChatGPTSettings(model: model).settingsSearchAnchor("ai-chatgpt")
             APIServiceSettings(model: model, provider: .anthropic).settingsSearchAnchor("ai-claude")
             StorebenchFormSection("Apple Intelligence", icon: "display", description: "Apple models run on this Mac. Local AI uses no API credits.") {
                 StorebenchFormField(label: "Availability", hint: AppleLocalAI.available ? "Ready for local AI tasks." : "Requires a compatible Mac, macOS 26 or later and an enabled, downloaded model.") {
-                    StorebenchTextSlot(text: AppleLocalAI.available ? "Available on This Mac" : "Unavailable on This Mac", height: StorebenchTheme.controlHeight, font: .sbCallout, color: StorebenchTheme.muted, live: true)
+                    StorebenchTextSlot(text: AppleLocalAI.available ? "Available on This Mac" : "Unavailable on This Mac", height: StorebenchTheme.controlHeight, font: .sbCallout, color: StorebenchTheme.muted, centered: true, live: true)
                 }
                 Text("Apple Translation remains available for supported languages. Local card generation uses your brief and text extracted from screenshots.")
                     .font(.sbCaption).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)

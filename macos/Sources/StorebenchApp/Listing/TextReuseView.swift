@@ -23,7 +23,7 @@ struct TextReuseView: View {
     }
 
     var body: some View {
-        DisclosureGroup("Reuse saved text between languages") {
+        DisclosureGroup("Reuse Saved Text Between Languages") {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Copy saved version fields into other languages. Text is copied as written; translate it afterward. Empty source fields are skipped.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
                 Text(hasUnsaved ? "Save your open text edits before reusing saved text." : "Previewing does not change any drafts.")

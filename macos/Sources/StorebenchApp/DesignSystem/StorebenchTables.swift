@@ -225,7 +225,7 @@ struct StorebenchTableValue: View {
                     .lineLimit(lines).truncationMode(.tail).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                 StorebenchIcon(name: "info", size: 12).foregroundStyle(StorebenchTheme.muted).opacity(hovering || inspecting ? 1 : 0)
             }.padding(.horizontal, 12).frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
-        }.buttonStyle(StorebenchPressStyle()).onHover { hovering = $0 }
+        }.buttonStyle(StorebenchPressStyle()).storebenchHover { hovering = $0 }
             .help("Open " + title.lowercased() + " to read the complete value")
             .accessibilityLabel(title + ": " + text).accessibilityHint("Open the complete value")
             .popover(isPresented: $inspecting) {
@@ -289,7 +289,7 @@ struct StorebenchColumnHandle: View {
             .frame(width: active ? 2 : 1, height: 16)
             .frame(width: 9, height: DataTablePresentation.headerHeight - 1)
             .contentShape(Rectangle())
-            .onHover { inside in
+            .storebenchHover { inside in
                 guard inside != hovering else { return }
                 hovering = inside
                 if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }

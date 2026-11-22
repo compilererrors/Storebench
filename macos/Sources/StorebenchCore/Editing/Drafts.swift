@@ -80,7 +80,7 @@ extension WorkspaceSession {
     public func textDraft(accountId: String, appId: String, revisionId: String, localizationId: String, scope: TextDrafts.Scope) throws -> TextDraft {
         let key = try TextDrafts.key(accountId: accountId, appId: appId, revisionId: revisionId)
         return try storeAccess { store in
-            guard let source = try store.document(namespace: "revisions", key: key).map({ try JSONText.parse($0.payload) }) else { throw DraftFailure.sourceMissing }
+            guard let source = try draftSource(key: key, store: store)?.value else { throw DraftFailure.sourceMissing }
             let draft = try store.document(namespace: "drafts", key: key).map { try JSONText.parse($0.payload) }
             let saved = TextDrafts.strings(draft?["texts"]?[localizationId])
             var original: [String: String] = [:]
@@ -100,6 +100,17 @@ extension WorkspaceSession {
         return nil
     }
 
+    /// The saved revision a draft belongs to, as JSON with its document revision. It is parsed once and reused while no revision
+    /// is written or removed, so reading or saving a draft costs what the draft holds rather than what its whole source holds.
+    func draftSource(key: String, store: EncryptedDocumentStore) throws -> (revision: Int, value: JSONText)? {
+        let stamp = try store.namespaceStamp("revisions")
+        if let kept = parsedSources.value(for: key), kept.stamp == stamp { return (kept.revision, kept.value) }
+        guard let document = try store.document(namespace: "revisions", key: key) else { return nil }
+        let value = try JSONText.parse(document.payload)
+        parsedSources.insert((stamp, document.revision, value), for: key, cost: document.payload.count * 4)
+        return (document.revision, value)
+    }
+
     /// Changes one revision's draft under the draft mutex; the transaction checks that neither the source nor the draft moved.
     func mutateDraft<T>(accountId: String, appId: String, revisionId: String, check: () throws -> Void = {}, _ change: (_ draft: JSONText, _ source: JSONText) throws -> (JSONText, T)) throws -> T {
         let key = try TextDrafts.key(accountId: accountId, appId: appId, revisionId: revisionId)
@@ -107,8 +118,8 @@ extension WorkspaceSession {
         return try storeAccess { store in
             try FileMutex.withLock(store.directory.appendingPathComponent("\(mutex).mutex")) {
                 try check(); try Task.checkCancellation()
-                guard let sourceDocument = try store.document(namespace: "revisions", key: key) else { throw DraftFailure.sourceMissing }
-                let source = try JSONText.parse(sourceDocument.payload)
+                guard let saved = try draftSource(key: key, store: store) else { throw DraftFailure.sourceMissing }
+                let source = saved.value
                 let existing = try store.document(namespace: "drafts", key: key)
                 var draft = try existing.map { try JSONText.parse($0.payload) } ?? TextDrafts.empty(revisionId)
                 guard draft["schemaVersion"] == .number(1), draft["revisionId"]?.text == revisionId else { throw DraftFailure.invalid }
@@ -116,12 +127,16 @@ extension WorkspaceSession {
                 let (updated, result) = try change(draft, source)
                 let data = updated.data
                 guard data.count <= 20_000_000 else { throw DraftFailure.tooLarge }
+                // Earlier wording of every changed text field is kept with the save, so it can be found again.
+                let changes = DraftHistory.changes(before: draft, after: updated, source: source), at = CustomerReview.isoString(Date())
                 try store.transaction { current in
-                    guard let currentSource = try current("revisions", key) else { throw DraftFailure.sourceMissing }
-                    guard currentSource.revision == sourceDocument.revision else { throw DraftFailure.stale }
-                    guard try current("drafts", key)?.revision == existing?.revision else { throw DraftFailure.stale }
+                    // Only the revisions are compared, so neither document's payload is read again inside the transaction.
+                    guard let currentSource = try store.revision(namespace: "revisions", key: key) else { throw DraftFailure.sourceMissing }
+                    guard currentSource == saved.revision else { throw DraftFailure.stale }
+                    guard try store.revision(namespace: "drafts", key: key) == existing?.revision else { throw DraftFailure.stale }
                     try check(); try Task.checkCancellation()
                     return [.put(namespace: "drafts", key: key, json: data)]
+                        + (try DraftHistory.writes(changes, key: key, prefix: "\(accountId):\(appId):", at: at, current: current))
                 }
                 return result
             }

@@ -10,7 +10,8 @@ struct AppOverview: View {
     let switchApp: (String?) -> Void
     @State private var continueRequests = 0
     @State private var scrollReveal = StorebenchScrollReveal()
-    @State private var scrollInteraction: UInt64 = 0
+    @State private var interactions = StorebenchPageInteractions()
+    @State private var stepBar = StorebenchStepBarModel()
     @State private var languageSummaries = LanguageSummaries()
     @State private var salesRequest: ReportNavigation.SalesRequest?
     let initialRecovery: RecoveryIntent?
@@ -158,7 +159,7 @@ struct AppOverview: View {
         withTransaction(transaction) { scroll.scrollTo(id, anchor: anchor) }
     }
     private func interacted() {
-        scrollInteraction &+= 1
+        interactions.record()
         scrollReveal.cancel(); presentation?.store.keepScroll?()
     }
     /// Reveals after layout, then makes one bounded correction. Native text surfaces never animate through intermediate heights.
@@ -178,36 +179,39 @@ struct AppOverview: View {
                     .environment(\.pageScroll, { id, anchor in scrollReveal.cancel(); position(id, anchor: anchor, scroll: scroll) })
                     .environment(\.pageReveal, { id in reveal(id, scroll: scroll) })
                     .environment(\.pageDisclosureFocus, { id in
-                        scrollInteraction &+= 1
+                        interactions.record()
                         presentation?.store.keepScroll?()
                         scrollReveal.reveal(id, anchor: .top) { id, anchor in position(id, anchor: anchor, scroll: scroll) }
                     })
             }
             .modifier(StorebenchPageContent())
             .environment(\.pageFocusInteraction, interacted)
+            .environment(\.stepBar, stepBar)
             .id("app-workspace-top")
         }
+        // A guide's Back and Next stay reachable at the bottom on long steps; the page leaves room for the bar.
+        .safeAreaInset(edge: .bottom, spacing: 0) { StorebenchStepBar(model: stepBar) }
         .onChange(of: recoveryIntent?.id, initial: true) {
-            guard let intent = recoveryIntent else { return }; let target = intent.action.target, interaction = scrollInteraction
+            guard let intent = recoveryIntent else { return }; let target = intent.action.target, interaction = interactions.count
             Task { @MainActor in
                 await Task.yield()
-                guard recoveryIntent?.id == intent.id, scrollInteraction == interaction else { return }
+                guard recoveryIntent?.id == intent.id, interactions.count == interaction else { return }
                 if ReportNavigation.Tools.requested(intent.action, current: recoveryScope, area: target.area) { scroll.scrollTo("report-tools-\(target.area.rawValue)", anchor: .top) }
                 else if let anchor = target.anchor {
                     // The page restores its saved position and finishes loading after a section change; the card is scrolled to again
                     // until it settles, and its position is then kept for Back and Forward.
                     for wait in [0, 300, 700, 1_200] {
                         if wait > 0 { try? await Task.sleep(for: .milliseconds(wait)) }
-                        guard recoveryIntent?.id == intent.id, scrollInteraction == interaction else { return }
+                        guard recoveryIntent?.id == intent.id, interactions.count == interaction else { return }
                         presentation?.store.keepScroll?(); scroll.scrollTo(anchor, anchor: .top)
                     }
                 }
             }
         }
         .onChange(of: readinessFocus?.id) {
-            guard let focus = readinessFocus else { return }; let interaction = scrollInteraction
+            guard let focus = readinessFocus else { return }; let interaction = interactions.count
             Task { @MainActor in
-                await Task.yield(); guard readinessFocus?.id == focus.id, scrollInteraction == interaction else { return }; scroll.scrollTo(focus.anchor, anchor: .top)
+                await Task.yield(); guard readinessFocus?.id == focus.id, interactions.count == interaction else { return }; scroll.scrollTo(focus.anchor, anchor: .top)
             }
         }
         }
@@ -230,8 +234,8 @@ struct AppOverview: View {
             if let scope = recoveryScope { editorContext = editorContext?.forSection(new, scope: scope) }
         }
         .task(id: section.key + (editDraft ? "/draft" : "/imported")) { await reload() }
-        .onDisappear { scrollInteraction &+= 1; scrollReveal.cancel() }
-        // A plan whose version Apple has already released is closed in the background, so Continue Version never offers a finished release.
+        .onDisappear { interactions.record(); scrollReveal.cancel() }
+        // A plan whose version Apple has already released is closed in the background, so Continue Release never offers a finished release.
         .task(id: plan?.token) {
             guard let plan, let session, section != .release, await session.checkReleasePlan(account: account, plan: plan)?.released == true, !Task.isCancelled else { return }
             await reload()

@@ -72,7 +72,8 @@ import UniformTypeIdentifiers
             downloadJob = nil; downloadIssue = nil; jobReadFailed = false; refreshedJobId = nil
             await periods.load(session, scope: try? PeriodScope(accountId: account.id, appId: app.id)); if !Task.isCancelled { await load() }
             if contextId == context { working = false }
-            await StorebenchPolling.repeating(every: .milliseconds(500), while: { contextId == context }) { await readDownloadJob(context: context) }
+            await StorebenchPolling.repeating(every: .milliseconds(500), stamp: { try? await session?.savedStateToken() }, working: { jobReadFailed || downloadRunning },
+                                              while: { contextId == context }) { await readDownloadJob(context: context) }
         }
         .onDisappear { contextId = UUID(); operationId = nil; operation?.cancel(); operation = nil }
         .onChange(of: kind) { constrain(); invalidate() }
@@ -94,9 +95,9 @@ import UniformTypeIdentifiers
     private func invalidate() { guard !working else { return }; review = nil; stale = false; issueCode = nil; status = "" }
     private var reportFields: some View {
         StorebenchFormGrid(maximumColumns: 3) {
-            StorebenchPicker("Apple report", selection: $kind) { SelectionOption("App Store Downloads", value: "downloads"); SelectionOption("Discovery and Engagement", value: "engagement") }
+            StorebenchPicker("Apple Report", selection: $kind) { SelectionOption("App Store Downloads", value: "downloads"); SelectionOption("Discovery and Engagement", value: "engagement") }
                 .reportFocus("analytics-download-report", available: !unavailable && review == nil, focused: $reportFocused)
-            StorebenchPicker("Detail level", selection: $level) { SelectionOption("Standard", value: "standard"); SelectionOption("Detailed", value: "detailed") }
+            StorebenchPicker("Detail Level", selection: $level) { SelectionOption("Standard", value: "standard"); SelectionOption("Detailed", value: "detailed") }
             StorebenchPicker("Granularity", selection: $granularity) {
                 SelectionOption("Daily", value: "DAILY")
                 if !standardDownloads { SelectionOption("Weekly", value: "WEEKLY"); SelectionOption("Monthly", value: "MONTHLY") }
@@ -106,10 +107,10 @@ import UniformTypeIdentifiers
     private var downloadCard: some View {
         Card(title: "Download Analytics reports", subtitle: "Downloads existing report instances. Missing reports and privacy-limited rows are not zero activity.", help: "analytics") {
             if review == nil {
-            StorebenchCardSection(title: "Report type") { reportFields }
-            StorebenchCardSection(title: "Generation and reporting dates") {
+            StorebenchCardSection(title: "Report Type") { reportFields }
+            StorebenchCardSection(title: "Generation and Reporting Dates") {
             StorebenchFormGrid {
-            StorebenchPicker("Generation request", selection: $requestId) {
+            StorebenchPicker("Generation Request", selection: $requestId) {
                 SelectionOption("Automatic selection", value: "")
                 selectionOptions(catalog?.requests ?? []) { request in
                     SelectionOption("\(request.stopped ? "Stopped" : request.accessType == "ONGOING" ? "Ongoing" : "Historical snapshot") · \(String(request.id.prefix(32)))\(request.id.count > 32 ? "…" : "")", value: request.id).help(request.id)
@@ -188,18 +189,18 @@ import UniformTypeIdentifiers
     }
     private var importCard: some View {
         Card(title: "Import Analytics reports", subtitle: "Select every segment from one Apple report instance. Preview all replacements before saving locally.", help: "imports") {
-            StorebenchPicker("Import format", selection: $mode) { SelectionOption("Apple report segments", value: "apple"); SelectionOption("Storebench Analytics JSON", value: "json") }.storebenchWorking(unavailable)
+            StorebenchPicker("Import Format", selection: $mode) { SelectionOption("Apple report segments", value: "apple"); SelectionOption("Storebench Analytics JSON", value: "json") }.storebenchWorking(unavailable)
             StorebenchActionGroup { fileActions }
             if chosen.isEmpty { Text("No files selected").font(.sbCallout).frame(height: 44) }
             ForEach(Array(chosen.enumerated()), id: \.offset) { index, url in
                 StorebenchTextSlot(text: url.lastPathComponent, height: 44, font: .sbCallout, color: nil).accessibilityLabel("Selected Analytics file \(index + 1)")
             }
             if mode == "apple" {
-                StorebenchCardSection(title: "Report type for these files", description: "These choices describe the selected files. Download and saved-analysis selections are separate.") {
+                StorebenchCardSection(title: "Report Type for These Files", description: "These choices describe the selected files. Download and saved-analysis selections are separate.") {
                     StorebenchFormGrid(maximumColumns: 3) {
-                        StorebenchPicker("File report", selection: $fileKind) { SelectionOption("App Store Downloads", value: "downloads"); SelectionOption("Discovery and Engagement", value: "engagement") }
-                        StorebenchPicker("File detail level", selection: $fileLevel) { SelectionOption("Standard", value: "standard"); SelectionOption("Detailed", value: "detailed") }
-                        StorebenchPicker("File granularity", selection: $fileGranularity) {
+                        StorebenchPicker("File Report", selection: $fileKind) { SelectionOption("App Store Downloads", value: "downloads"); SelectionOption("Discovery and Engagement", value: "engagement") }
+                        StorebenchPicker("File Detail Level", selection: $fileLevel) { SelectionOption("Standard", value: "standard"); SelectionOption("Detailed", value: "detailed") }
+                        StorebenchPicker("File Granularity", selection: $fileGranularity) {
                             SelectionOption("Daily", value: "DAILY")
                             if fileKind != "downloads" || fileLevel != "standard" { SelectionOption("Weekly", value: "WEEKLY"); SelectionOption("Monthly", value: "MONTHLY") }
                         }

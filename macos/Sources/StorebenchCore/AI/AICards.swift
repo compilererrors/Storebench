@@ -4,10 +4,13 @@ import ImageIO
 import Vision
 
 public enum AICards {
-    public static func generationIssue(name: String, brief: String, screenshots: Int, provider: String, connections: [AIConnection], localAvailable: Bool) -> String? {
+    /// The longest part of the app's description sent with a card request.
+    public static let listingDescriptionLimit = 1500
+    /// `usesListing`: the app's own App Store text goes with the request, so the brief may be left empty.
+    public static func generationIssue(name: String, brief: String, screenshots: Int, provider: String, connections: [AIConnection], localAvailable: Bool, usesListing: Bool = false) -> String? {
         guard !TextSemantics.trim(name).isEmpty else { return "Add a card set name before generating." }
         guard MediaCards.validText(name, MediaCards.nameLimit), !name.contains("\n") else { return "Use a card set name of up to \(MediaCards.nameLimit) characters on one line." }
-        guard !TextSemantics.trim(brief).isEmpty else { return "Describe what the cards should convey before generating." }
+        guard usesListing || !TextSemantics.trim(brief).isEmpty else { return "Describe what the cards should convey before generating, or use the app's App Store text." }
         guard brief.utf16.count <= 2000, TextSemantics.validControlText(brief) else { return "Keep the brief within 2000 characters." }
         guard (1...10).contains(screenshots) else { return "Choose between 1 and 10 screenshots before generating." }
         guard let service = AIProvider(rawValue: provider) else { return "Choose an AI service before generating." }
@@ -45,8 +48,9 @@ public enum AICards {
         let ordered = lines.filter { main($0.bounds) } + lines.filter { !main($0.bounds) }
         return String(ordered.map(\.text).joined(separator: "\n").prefix(max(0, min(6000, limit))))
     }
-    public static func request(brief: String, language: String, target: ScreenshotEditing.Target, images: [AIImage], directions: [AICardDirection] = AICardDirection.defaults, cardDraft: JSONText? = nil, variationID: String? = nil, customInstructions: String? = nil) throws -> AIRequest {
-        guard !TextSemantics.trim(brief).isEmpty, brief.utf16.count <= 2000, StoreLocales.codes.contains(language), (1...10).contains(images.count) else { throw AIFailure.configuration }
+    /// `listing` is the app's own App Store text, from `aiCardListing`; with it the brief may be empty.
+    public static func request(brief: String, language: String, target: ScreenshotEditing.Target, images: [AIImage], directions: [AICardDirection] = AICardDirection.defaults, cardDraft: JSONText? = nil, variationID: String? = nil, customInstructions: String? = nil, listing: JSONText? = nil) throws -> AIRequest {
+        guard listing != nil || !TextSemantics.trim(brief).isEmpty, brief.utf16.count <= 2000, StoreLocales.codes.contains(language), (1...10).contains(images.count) else { throw AIFailure.configuration }
         let custom = try customInstructions ?? Self.customInstructions(in: cardDraft ?? .null)
         guard customInstructionIssue(custom) == nil else { throw AIFailure.configuration }
         let savedDraft = custom.map { (cardDraft ?? .object([])).setting("customInstructions", .string($0)) } ?? cardDraft
@@ -55,8 +59,9 @@ public enum AICards {
             ("screenshotIndex", .object([("type", .string("integer"))])), ("title", AIRequest.stringSchema), ("subtitle", AIRequest.stringSchema),
             ("layout", .object([("type", .string("string")), ("enum", .array(MediaCard.Layout.allCases.filter { $0.usesScreenshot && (directions.contains(.allowCropping) || [.textAbove, .textBelow].contains($0)) }.map { .string($0.rawValue) }))])),
             ("color", AIRequest.stringSchema), ("secondColor", AIRequest.stringSchema), ("titleColor", AIRequest.stringSchema)]
-        return .init(purpose: "cards", instructions: instructions(language: language, directions: directions, customInstructions: custom) + "\n\n" + outputContract(language: language, directions: directions) + "\nUse each screenshotIndex exactly once, ordered by marketing importance. Return only the requested JSON structure. Each color is a #RRGGBB string.",
-            input: JSONText.object([("brief", .string(brief)), ("language", .string(language)), ("width", .number(Double(target.width))), ("height", .number(Double(target.height))), ("screenshotCount", .number(Double(images.count))), ("directions", .array(directions.map { .string($0.rawValue) })), ("previousCard", cardDraft?["previousCard"] ?? .null),
+        let listingNote = listing == nil ? "" : "\nappListing is this app's own App Store text. Keep every card about this app: its real features, benefits and audience as the listing and screenshots show them. Never invent features."
+        return .init(purpose: "cards", instructions: instructions(language: language, directions: directions, customInstructions: custom) + "\n\n" + outputContract(language: language, directions: directions) + "\nUse each screenshotIndex exactly once, ordered by marketing importance. Return only the requested JSON structure. Each color is a #RRGGBB string." + listingNote,
+            input: JSONText.object([("brief", .string(brief)), ("appListing", listing ?? .null), ("language", .string(language)), ("width", .number(Double(target.width))), ("height", .number(Double(target.height))), ("screenshotCount", .number(Double(images.count))), ("directions", .array(directions.map { .string($0.rawValue) })), ("previousCard", cardDraft?["previousCard"] ?? .null),
                 ("cardInstructions", guidance["cardInstructions"] ?? .array([])), ("palette", guidance["palette"] ?? .null)]).stringify(),
             schema: AIRequest.objectSchema([("cards", .object([("type", .string("array")), ("items", AIRequest.objectSchema(fields))]))]), images: images, language: language, cardDraft: savedDraft, variationID: variationID)
     }
@@ -96,5 +101,28 @@ public enum AICards {
             card.style.subtitleColor = card.style.titleColor; card.style.bodyColor = card.style.titleColor; return card
         }
         try MediaCards.validate(set); return set
+    }
+}
+
+extension WorkspaceSession {
+    /// The app's own App Store text for AI cards: name, subtitle, description, keywords and promotional text from its newest saved
+    /// listing, in `language` when the app has it, else in its primary language or the first saved one. Nil without a saved listing.
+    public func aiCardListing(accountId: String, appId: String, language: String) throws -> JSONText? {
+        try requireHistoryScope(accountId: accountId, appId: appId)
+        guard let revision = try revisions(accountId: accountId, appId: appId).first(where: { !$0.versions.isEmpty }) else { return nil }
+        func locale(_ fields: Fields) -> String? { if case .text(let value)? = fields["locale"] { return value }; return nil }
+        func text(_ fields: Fields?, _ key: String) -> String? { if case .text(let value)? = fields?[key], !TextSemantics.trim(value).isEmpty { return value }; return nil }
+        let localizations = revision.versions.first?.localizations ?? []
+        let saved = localizations.compactMap { locale($0.fields) }
+        guard let chosen = [language, revision.app.primaryLocale, "en-US"].first(where: saved.contains) ?? saved.first else { return nil }
+        let version = localizations.first { locale($0.fields) == chosen }?.fields
+        let info = revision.appInfos.first?.localizations.first { locale($0.fields) == chosen }?.fields
+        var fields: [(String, JSONText)] = [("locale", .string(chosen))]
+        for (key, value) in [("name", text(info, "name")), ("subtitle", text(info, "subtitle")),
+                             ("description", text(version, "description").map { String($0.prefix(AICards.listingDescriptionLimit)) }),
+                             ("keywords", text(version, "keywords")), ("promotionalText", text(version, "promotionalText"))] {
+            if let value { fields.append((key, .string(value))) }
+        }
+        return .object(fields)
     }
 }

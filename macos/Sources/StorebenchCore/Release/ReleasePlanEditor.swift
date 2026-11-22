@@ -68,7 +68,10 @@ public struct ReleasePlanInputs: Sendable, Equatable {
     @ObservationIgnored private let write: @MainActor (ReleasePlanInputs, String) async throws -> ReleasePlan
     @ObservationIgnored private let delete: @MainActor (String) async throws -> Void
     public var dirty: Bool { inputs != baseline }
-    public var ready: Bool { active && loaded && !busy && !needsComparison }
+    /// What a new version still waits for before it can be created, such as the current version from App Store Connect; nil when nothing.
+    /// The inputs stay editable meanwhile.
+    public private(set) var waiting: String? = nil { didSet { notifyChange() } }
+    public var ready: Bool { active && loaded && !busy && !needsComparison && waiting == nil }
     public var expected: String? { loaded ? plan?.token ?? "null" : nil }
     public var latestInputs: ReleasePlanInputs? {
         latestRead ? latest.map { .init($0, fallbackDate: initial.date) } ?? initial : nil
@@ -83,7 +86,11 @@ public struct ReleasePlanInputs: Sendable, Equatable {
     }
     public convenience init(account: Account, appId: String, initial: ReleasePlanInputs, session: WorkspaceSession) {
         self.init(accountId: account.id, appId: appId, initial: initial,
-                  read: { try await session.releasePlan(accountId: account.id, appId: appId) },
+                  // Opening Release follows a version still in progress at Apple, as the overview does.
+                  read: {
+                      if let plan = try await session.releasePlan(accountId: account.id, appId: appId) { return plan }
+                      return try await session.continueReleaseInProgress(account: account, appId: appId)
+                  },
                   save: { input, expected in
             let saved = try await session.saveReleasePlan(account: account, appId: appId, start: input.start,
                 sourceRevisionId: input.sourceRevisionId, baseVersionId: input.baseVersionId, targetVersion: input.targetVersion,
@@ -91,7 +98,7 @@ public struct ReleasePlanInputs: Sendable, Equatable {
             // The app's next version starts with the option saved here. The plan is saved even if this preference cannot be.
             try? await session.saveReleasePreference(accountId: account.id, appId: appId, releaseType: saved.releaseType ?? "MANUAL")
             return saved
-        }, remove: { try await session.removeReleasePlan(accountId: account.id, appId: appId, expected: $0) })
+        }, remove: { try await session.dismissReleasePlan(accountId: account.id, appId: appId, expected: $0) })
     }
     public func retire() { active = false; operation = nil; busy = false; notifyChange() }
     @discardableResult public func observe(_ observer: @escaping @MainActor () -> Void) -> UUID {
@@ -155,6 +162,19 @@ public struct ReleasePlanInputs: Sendable, Equatable {
             if case ReleaseFailure.conflict = error { needsComparison = true }
             status = Self.message(error); return false
         }
+    }
+    /// Holds creating a new version until its starting material arrives, so a version is never created from older material.
+    public func awaitStart(_ reason: String) {
+        guard active, plan == nil else { return }
+        waiting = reason
+    }
+    /// The starting material arrived: the editor starts from its suggestion, keeping whatever was typed meanwhile, and can create the version.
+    /// Nil only ends the wait, such as when the editor already has a saved plan.
+    public func startArrived(_ next: ReleasePlanInputs?) {
+        defer { waiting = nil }
+        guard active, let next, plan == nil, !busy, !needsComparison else { return }
+        let edited = dirty ? inputs.keepingEdits(from: baseline, on: next, hasPlan: false) : next
+        initial = next; baseline = next; inputs = edited
     }
     /// A newer starting suggestion, such as from an import that finished after the editor opened, while no plan is saved and nothing was edited.
     /// Returns true when it replaced the inputs.

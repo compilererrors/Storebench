@@ -210,3 +210,19 @@ public enum AssetLibrary {
     }
     static func diagnostics(_ value: JSONText?) -> String { items(value).prefix(10).map { detail in [detail["code"]?.text, detail["description"]?.text ?? detail["detail"]?.text].compactMap { $0 }.joined(separator: ": ") }.joined(separator: "\n") }
 }
+
+extension AssetLibrary {
+    /// The longest description of a screenshot for AI cards, and how many tags of what length it keeps.
+    public static let descriptionLimit = 500, tagLimit = 10, tagLength = 30
+    /// Tags from a comma-separated list: trimmed, each at most `tagLength` characters, the first of any repeated tag kept, at most `tagLimit`.
+    public static func tags(from text: String) -> [String] {
+        var seen = Set<String>(), result: [String] = []
+        for part in text.split(separator: ",") {
+            let tag = String(TextSemantics.trim(String(part)).prefix(tagLength))
+            guard !tag.isEmpty, TextSemantics.validControlText(tag), !tag.contains("\n"), seen.insert(tag.lowercased()).inserted else { continue }
+            result.append(tag)
+            if result.count == tagLimit { break }
+        }
+        return result
+    }
+}

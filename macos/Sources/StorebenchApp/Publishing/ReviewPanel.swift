@@ -25,12 +25,14 @@ struct ReviewPanel: View {
     var resume: (() -> Void)? = nil
     /// Checks the saved selections again for a new review once this one is done.
     var recheck: (() -> Void)? = nil
+    /// Prepares the same change again once its review has expired: Apple is read again and the new review waits for approval.
+    var prepareAgain: (() -> Void)? = nil
     var actionsBusy = false
     /// Changes when the page's own command asks to send this review; a review waiting for approval then asks for confirmation.
     var approveRequests = 0
-    /// Whether a newly prepared review scrolls to its Send to Apple; a review a page prepared by itself on opening stays where it is.
+    /// Whether a newly prepared review scrolls to its send command; a review a page prepared by itself on opening stays where it is.
     var reveals = true
-    /// Editors use one sync command followed by this concrete approval sheet.
+    /// Editors use one sync command followed by this concrete approval sheet, whose send command uses App Store Connect's name.
     var syncConfirmation = false
     var syncTitle = "Sync to Apple"
     var localDraft: LocalEditorDraftEditor? = nil
@@ -48,31 +50,22 @@ struct ReviewPanel: View {
     /// The scroll anchor of a review's command row, unique per review so the window bar reaches the right one.
     static func sendAnchor(_ id: String) -> String { "publish-review-send-" + id }
 
-    /// The one command that sends a review to Apple, whatever App Store Connect calls the change it makes.
-    static let sendTitle = "Send to Apple"
-
-    /// App Store Connect's own button for the change being sent, named in the send command's help.
-    static func approveTitle(_ scope: PublishRequest.Scope) -> String {
-        switch scope {
-        case .release, .metadata, .versionCopyright, .reviewInfo, .appInformation, .ageRating, .accessibility, .availability, .taxCategory, .pricingSetup, .productPricing: "Save"
-        case .submit: "Add for Review"
-        case .releaseVersion: "Release This Version"
-        case .cancelSubmission: "Remove from Review"
-        default: "Approve and Publish"
-        }
-    }
-    /// App Store Connect's Upload, for a review that only uploads files to Asset Library.
-    static func approveTitle(_ request: PublishRequest) -> String {
-        if request.mediaStage == PublishRequest.uploadStage { return "Upload" }
-        // Export Compliance is saved in App Store Connect, so its review uses the same word.
-        if request.scope == .exportCompliance || request.testflightAction == "set-encryption-use" { return "Save" }
-        return approveTitle(request.scope)
-    }
     static func stateLabel(_ state: String) -> String {
         ["prepared": "Ready for approval", "running": "Publishing", "complete": "Published", "failed": "Stopped", "conflict": "Changed since review"][state] ?? state
     }
 
     var body: some View {
+        if let close = dialogOnly {
+            if let review { syncDialog(review, close: close) }
+        } else { page }
+    }
+    /// Set when another view presents the sync dialog, such as a step that opens it while the review is still being prepared:
+    /// this panel then shows only the dialog's content.
+    var dialogOnly: (() -> Void)? = nil
+    /// False when the view holding this panel presents the sync dialog itself.
+    var presentsDialog = true
+
+    @ViewBuilder private var page: some View {
         ZStack {
             Color.clear.frame(height: 0).accessibilityHidden(true)
             if !syncConfirmation || review?.state != "prepared" { panel }
@@ -84,46 +77,64 @@ struct ReviewPanel: View {
                     if review.steps.isEmpty {
                         let snapshot = draftSnapshot
                         Task { if let snapshot { await localDraft?.acknowledge(snapshot) }; done() }
-                    } else { syncPresented = true }
+                    } else if reveals && presentsDialog { syncPresented = true }
                 }
             }
         }
-        .sheet(isPresented: Binding(get: { syncPresented && review?.state == "prepared" }, set: { syncPresented = $0 })) {
-            if let review {
-                StorebenchDialog(title: syncTitle, wide: true, height: 720, subtitle: review.title, busy: working) {
-                    Text("Review the changes below, then approve them.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
-                    let removals = PublishingReviewPresentation.removals(review)
-                    if !removals.isEmpty {
-                        StorebenchAttention(title: "Remove \(removals.count) Items") {
-                            DisclosureGroup("Items to Remove") {
-                                ForEach(removals, id: \.key) { step in
-                                    StorebenchFact(label: step.before ?? step.label, value: step.after ?? step.detail)
-                                }
-                            }
+        // A review prepared ahead, such as Add for Review on Quick Release's last step, opens when its command is pressed.
+        .onChange(of: approveRequests) { if syncConfirmation, presentsDialog, review?.state == "prepared", !working { syncPresented = true } }
+        // The dialog stays open while its changes are sent, showing their progress. Run in Background closes it and the sync
+        // goes on, with its progress in the window's bottom bar; a sync that stopped shows why on this page.
+        .sheet(isPresented: Binding(get: { syncPresented && (review?.state == "prepared" || review?.state == "running") }, set: { syncPresented = $0 })) {
+            if let review { syncDialog(review) { syncPresented = false } }
+        }
+    }
+
+    /// The sync dialog: the changes, then their progress once approved. `close` dismisses whatever presents it.
+    @ViewBuilder func syncDialog(_ review: PublishReview, close: @escaping () -> Void) -> some View {
+        let sending = working || review.state == "running"
+        let expired = Self.expired(review, now: now)
+        StorebenchDialog(title: syncTitle, kind: .content, subtitle: review.title, busy: working) {
+            Text(sending ? "Sending to App Store Connect. Run in Background keeps it going while you work; its progress stays at the bottom of the window."
+                 : expired ? Self.expiredText : "Review the changes below, then approve them.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
+            let removals = PublishingReviewPresentation.removals(review)
+            if !removals.isEmpty {
+                StorebenchAttention(title: "Remove \(removals.count) Items") {
+                    DisclosureGroup("Items to Remove") {
+                        ForEach(removals, id: \.key) { step in
+                            StorebenchFact(label: step.before ?? step.label, value: step.after ?? step.detail)
                         }
                     }
-                    content(review)
-                } actions: {
-                    StorebenchActionGroup(alignment: .trailing) {
-                        Button("Cancel", role: .cancel) { syncPresented = false; self.review = nil }
-                            .storebenchControlID("publish.sync.cancel")
-                        StorebenchBusyButton(title: syncTitle, loadingTitle: "Sending…", busy: working,
-                            variant: PublishingReviewPresentation.hasDestructiveChanges(review) ? .danger : .primary) {
-                            syncPresented = false
-                            Task { await approve(review) }
-                        }.storebenchWorking(actionsBusy || !PublishingReviewPresentation.canApprove(review, now: now))
-                            .storebenchControlID("publish.sync.approve")
-                    }.storebenchWorking(working)
                 }
-                .interactiveDismissDisabled(working)
-                .task { await StorebenchPolling.repeating(every: .seconds(1), while: { true }) { now = Date() } }
+            }
+            content(review)
+        } actions: {
+            StorebenchActionGroup(alignment: .trailing) {
+                Button(sending ? "Run in Background" : "Cancel", role: .cancel) {
+                    close()
+                    if !sending { self.review = nil }
+                }
+                .help(sending ? "Close this dialog; the sync keeps running and its progress stays at the bottom of the window" : "Close without sending anything")
+                .storebenchControlID("publish.sync.cancel")
+                if expired, let prepareAgain {
+                    StorebenchBusyButton(title: "Prepare Again", loadingTitle: "Preparing…", busy: actionsBusy) { prepareAgain() }
+                        .help("Read App Store Connect again and show the changes in a new review. Nothing is sent until you approve it.")
+                        .storebenchControlID("publish.sync.prepare-again")
+                } else {
+                    StorebenchBusyButton(title: PublishCommandName.of(review).confirmation, loadingTitle: "Sending…", busy: sending,
+                        variant: PublishingReviewPresentation.hasDestructiveChanges(review) ? .danger : .primary) {
+                        Task { await approve(review) }
+                    }.storebenchWorking(!sending && (actionsBusy || !PublishingReviewPresentation.canApprove(review, now: now)))
+                        .storebenchControlID("publish.sync.approve")
+                }
             }
         }
+        .task { await StorebenchPolling.repeating(every: .seconds(1), while: { true }) { now = Date() } }
     }
 
     /// Reviews already brought into view, so a page opened again keeps its own scroll position.
     @MainActor private static var revealed: Set<String> = []
-    /// A newly prepared review brings its send command into view and focus, so the next click after Save is Send to Apple.
+    /// A newly prepared review brings its send command into view and focus, so the next click after Save is the review's send command.
     /// It runs on the panel itself: modifiers on an empty view never see the review arrive.
     private func reveal(_ id: String) {
         guard !syncConfirmation, reveals, review?.state == "prepared", Self.revealed.insert(id).inserted else { return }
@@ -134,7 +145,7 @@ struct ReviewPanel: View {
         }
     }
 
-    /// Scrolls to this review's Send to Apple until the page settles, then focuses it, so Return or Space sends after reading.
+    /// Scrolls to this review's send command until the page settles, then focuses it, so Return or Space sends after reading.
     private func showSend(_ id: String) {
         if let pageReveal { pageReveal(Self.sendAnchor(id)) } else { pageScroll?(Self.sendAnchor(id), .center) }
         Task { @MainActor in try? await Task.sleep(for: .milliseconds(700)); if review?.id == id { sendFocused = true } }
@@ -145,13 +156,13 @@ struct ReviewPanel: View {
             Group {
                 if embedded { VStack(alignment: .leading, spacing: StorebenchTheme.gap) { content(review) } }
                 else {
-                    Card(title: review.title, subtitle: review.state == "prepared" ? "\(Self.sendTitle) sends these changes to App Store Connect, in this order." : Self.stateLabel(review.state)) { content(review) }
+                    Card(title: review.title, subtitle: review.state == "prepared" ? "\(PublishCommandName.of(review).confirmation) sends these changes to App Store Connect, in this order." : Self.stateLabel(review.state)) { content(review) }
                 }
             }.id("publish-review").trackUnsavedChanges(false, busy: working || review.state == "running")
-                .onChange(of: review.id) { old, id in opened = []; readyReviews?.remove(old); reveal(id) }
-                .onAppear { reveal(review.id); if !syncConfirmation { readyReviews?.update(review) } }
-                .onChange(of: "\(review.id):\(review.state):\(review.title)") { if !syncConfirmation { readyReviews?.update(review) } }
-                .onDisappear { readyReviews?.remove(review.id) }
+                .onChange(of: review.id) { old, id in opened = []; readyReviews?.leave(old); reveal(id) }
+                .onAppear { reveal(review.id); readyReviews?.arrive(review.id); readyReviews?.update(review, listed: !syncConfirmation) }
+                .onChange(of: "\(review.id):\(review.state):\(review.title)") { readyReviews?.update(review, listed: !syncConfirmation) }
+                .onDisappear { readyReviews?.leave(review.id) }
                 .onChange(of: readyReviews?.shown?.request) {
                     guard let shown = readyReviews?.shown, shown.id == review.id else { return }
                     showSend(review.id)
@@ -220,12 +231,20 @@ struct ReviewPanel: View {
             }
         }
         if let media = ReleaseMediaProgress(review), !media.files.isEmpty { ReleaseMediaFiles(progress: media) }
-        ForEach(shown(review), id: \.key) { step in change(step, open: review.steps.count == 1 || opened.contains(step.key)) }
+        // One entry per language, holding that language's changes; other changes stand on their own.
+        let steps = shown(review)
+        ForEach(PublishingReviewPresentation.changeGroups(steps.map(\.label)), id: \.id) { group in
+            if group.indices.count == 1, let index = group.indices.first {
+                change(steps[index], title: group.title, open: review.steps.count == 1 || opened.contains(steps[index].key))
+            } else {
+                changeGroup(group, steps: group.indices.map { steps[$0] }, open: opened.contains(group.id))
+            }
+        }
         DisclosureGroup {
             ForEach(review.notes, id: \.self) { Text($0).fixedSize(horizontal: false, vertical: true) }
             if review.state == "prepared" { Text("Review expires \(review.expiresAt.prefix(16).replacingOccurrences(of: "T", with: " ")) UTC.") }
             ForEach(review.steps, id: \.key) { step in StorebenchFact(label: Self.stepState(step), value: step.label, problem: step.state == "failed") }
-        } label: { Text("Details · \(review.steps.count) steps") }
+        } label: { Text("Details · \(review.steps.count) \(review.steps.count == 1 ? "step" : "steps")") }
         StorebenchFeedback(text: statusText, height: 34)
         if !syncConfirmation { footer(review, stopped: stopped) }
     }
@@ -242,25 +261,33 @@ struct ReviewPanel: View {
                 } else {
                     Button("Discard") { self.review = nil }.storebenchWorking(working || review.state != "prepared")
                         .help(review.state == "prepared" ? "Discard this review; nothing was sent" : "Only a review waiting for approval can be discarded")
-                    approveButton(review)
+                    if Self.expired(review, now: now), let again = prepareAgain ?? resume {
+                        Button("Prepare Again") { again() }.buttonStyle(StorebenchButtonStyle(.primary)).storebenchWorking(actionsBusy)
+                            .help(Self.expiredText).storebenchControlID("publish.prepare-again")
+                    } else { approveButton(review) }
                 }
             }
             .id(Self.sendAnchor(review.id))
             .confirmationDialog("Send \(review.steps.count) changes to App Store Connect?", isPresented: $confirming) { confirmation(review) } message: { confirmationMessage }
         }
     }
+    /// A prepared review past its approval time: it can no longer be sent, only prepared again.
+    nonisolated static func expired(_ review: PublishReview, now: Date) -> Bool {
+        review.state == "prepared" && !review.steps.isEmpty && !PublishingReviewPresentation.canApprove(review, now: now)
+    }
+    static let expiredText = "This review expired 15 minutes after it was prepared, so nothing was sent. Prepare Again reads App Store Connect again and shows the changes in a new review."
     private func approveButton(_ review: PublishReview) -> some View {
-        let sending = working || review.state == "running"
+        let sending = working || review.state == "running", name = PublishCommandName.of(review)
         return Button(role: PublishingReviewPresentation.hasDestructiveChanges(review) ? .destructive : nil) { if !sending { confirming = true } } label: {
-            StorebenchBusyLabel(Self.sendTitle, loading: "Sending…", busy: sending)
+            StorebenchBusyLabel(name.command, loading: "Sending…", busy: sending)
         }.buttonStyle(StorebenchButtonStyle(.primary)).environment(\.actionBusy, sending)
             .focused($sendFocused)
-            .help("\(Self.approveTitle(review.request)) in App Store Connect: sends \(review.steps.count == 1 ? "this change" : "these \(review.steps.count) changes") after one confirmation")
+            .help("As in App Store Connect: \(name.command) asks once, then \(name.confirmation) sends \(review.steps.count == 1 ? "this change" : "these \(review.steps.count) changes")")
             .storebenchWorking(!sending && !PublishingReviewPresentation.canApprove(review, now: now))
     }
     @ViewBuilder private func confirmation(_ review: PublishReview) -> some View {
         if PublishingReviewPresentation.canApprove(review, now: now) {
-            Button(Self.sendTitle, role: PublishingReviewPresentation.hasDestructiveChanges(review) ? .destructive : nil) { Task { await approve(review) } }
+            Button(PublishCommandName.of(review).confirmation, role: PublishingReviewPresentation.hasDestructiveChanges(review) ? .destructive : nil) { Task { await approve(review) } }
         }
         Button("Cancel", role: .cancel) {}
     }
@@ -323,19 +350,37 @@ struct ReviewPanel: View {
         return review.state == "complete" ? "All steps done" : "Not started"
     }
     /// One change with its before and after.
-    private func change(_ step: PublishStep, open: Bool) -> some View {
+    /// A language's changes in one entry: its name and how many changes, each change inside with its own state and values.
+    private func changeGroup(_ group: PublishingReviewPresentation.ChangeGroup, steps: [PublishStep], open: Bool) -> some View {
+        let failed = steps.contains { $0.state == "failed" }, running = steps.contains { $0.state == "running" }
+        let done = steps.allSatisfy { $0.state == "done" }
+        return DisclosureGroup(isExpanded: Binding(get: { open }, set: { value in
+            if value { opened.insert(group.id) } else { opened.remove(group.id) }
+        })) {
+            VStack(alignment: .leading, spacing: StorebenchTheme.space(1)) {
+                ForEach(steps, id: \.key) { step in change(step, title: PublishingReviewPresentation.changeTitle(step.label, grouped: true), open: opened.contains(step.key)) }
+            }.padding(.top, 6)
+        } label: {
+            HStack {
+                Text(group.title).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+                StorebenchStepState(text: failed ? "Failed" : running ? "Sending" : done ? "Done" : "", running: running, problem: failed)
+            }
+        }
+    }
+    private func change(_ step: PublishStep, title: String? = nil, open: Bool) -> some View {
         DisclosureGroup(isExpanded: Binding(get: { open }, set: { value in
             if value { opened.insert(step.key) } else { opened.remove(step.key) }
         })) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(step.detail).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
                 if step.before != nil || step.after != nil {
-                    AsoSavedValues(beforeLabel: "Now", afterLabel: "After", before: step.before ?? "", after: step.after ?? "")
+                    if let rows = ReviewComparisonTable.rows(before: step.before ?? "", after: step.after ?? "") { ReviewComparisonTable(rows: rows) }
+                    else { AsoSavedValues(beforeLabel: "Now", afterLabel: "After", before: step.before ?? "", after: step.after ?? "") }
                 }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 6)
         } label: {
             HStack {
-                Text(step.label).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
+                Text(title ?? step.label).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: .leading)
                 StorebenchStepState(text: Self.stepState(step, pending: ""), running: step.state == "running", problem: step.state == "failed")
             }
         }
@@ -363,25 +408,36 @@ struct ReviewPanel: View {
     private func approve(_ prepared: PublishReview) async {
         guard !working, PublishingReviewPresentation.canApprove(prepared, now: Date()), let session else { return }
         working = true; issueCode = nil; busyChanged(true); defer { working = false; busyChanged(false) }
-        let progress = Task { await follow(prepared.id, session: session) }; defer { progress.cancel() }
+        // The window's list follows the send, not this view, so its progress and how it ended stay visible on any page.
+        let reviews = readyReviews, listed = !syncConfirmation
+        reviews?.sending(prepared)
+        let progress = Task { await follow(prepared.id, session: session, reviews: reviews, listed: listed) }; defer { progress.cancel() }
         do {
             let completed = try await session.approvePublishing(account: account, appId: app.id, id: prepared.id, fingerprint: prepared.fingerprint, client: try await session.client(for: account))
-            progress.cancel(); review = completed
+            progress.cancel(); review = completed; reviews?.update(completed, listed: listed)
             if completed.state == "complete", draftReviewId == prepared.id, let draftSnapshot { await localDraft?.acknowledge(draftSnapshot) }
             statusText = review?.state == "complete" ? "Published." : ""
         } catch let failure as PublishFailure {
             progress.cancel()
             issueCode = failure.recoveryCode ?? "SB-PUBLISH-APPROVAL"
             statusText = failure.message
-            review = try? await session.publishReview(accountId: account.id, appId: app.id, id: prepared.id)
-        } catch { progress.cancel(); issueCode = RecoveryIssue.apple(error) ?? "SB-PUBLISH-APPROVAL"; statusText = ReportingMessages.message(issueCode!) }
+            let stopped = try? await session.publishReview(accountId: account.id, appId: app.id, id: prepared.id)
+            review = stopped
+            if let stopped { reviews?.update(stopped, listed: listed) } else { reviews?.update(id: prepared.id, title: prepared.title, state: "failed") }
+        } catch {
+            progress.cancel(); issueCode = RecoveryIssue.apple(error) ?? "SB-PUBLISH-APPROVAL"; statusText = ReportingMessages.message(issueCode!)
+            reviews?.update(id: prepared.id, title: prepared.title, state: "failed")
+        }
         done()
     }
-    private func follow(_ id: String, session: WorkspaceSession) async {
-        while !Task.isCancelled, review?.id == id {
+    /// Reads the review's progress while it is sent. With `reviews` it reports to the window, also after this view is gone.
+    private func follow(_ id: String, session: WorkspaceSession, reviews: ReadyReviews? = nil, listed: Bool = true) async {
+        while !Task.isCancelled, reviews != nil || review?.id == id {
             do {
                 let current = try await session.publishStatus(accountId: account.id, appId: app.id, id: id)
-                guard !Task.isCancelled, review?.id == id else { return }; review = current
+                guard !Task.isCancelled else { return }
+                if current.state == "running" { reviews?.update(current, listed: listed) }
+                if review?.id == id { review = current } else if reviews == nil { return }
                 if !["prepared", "running"].contains(current.state) { return }
                 try await Task.sleep(for: .milliseconds(600))
             } catch is CancellationError { return }

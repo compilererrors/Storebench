@@ -42,14 +42,14 @@ struct HistoryView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
-            Card(title: "Version history", subtitle: "What each version said on the App Store, from the imports saved on this Mac. Open a version to read its text and screenshots in each language; fields that changed from the version before are marked.", help: "versions", actions: AnyView(
+            Card(title: "Version History", subtitle: "What each version said on the App Store, from the imports saved on this Mac. Open a version to read its text and screenshots in each language; fields that changed from the version before are marked.", help: "versions", actions: AnyView(
                 Button(working ? "Reading…" : "Refresh History") { Task { await load() } }.storebenchWorking(busy)
             )) {
                 StorebenchFeedback(text: status, height: 40)
                 VersionHistoryList(history: versions, session: session, available: loaded, showGallery: { openGallery($0, initial: $1) })
             }
             if !versions.names.isEmpty {
-                Card(title: "App name and subtitle", subtitle: "Each change of the name and subtitle in the primary language, newest first, as the imports saw it.") {
+                Card(title: "App Name and Subtitle", subtitle: "Each change of the name and subtitle in the primary language, newest first, as the imports saw it.") {
                     ForEach(Array(versions.names.enumerated()), id: \.element.id) { index, change in
                         if index > 0 { StorebenchDivider() }
                         VStack(alignment: .leading, spacing: StorebenchTheme.space(1)) {
@@ -61,10 +61,10 @@ struct HistoryView: View {
                 }
             }
             if revisions.count >= 2 {
-                Card(title: "Compare imports", subtitle: "Pick two saved imports to see every field and screenshot set that changed between them. Unsaved drafts are not included.") {
+                Card(title: "Compare Imports", subtitle: "Pick two saved imports to see every field and screenshot set that changed between them. Unsaved drafts are not included.") {
                     StorebenchFormGrid {
-                        StorebenchPicker("Earlier import", selection: $beforeId) { selectionOptions(revisions) { SelectionOption(timestamp($0.importedAt) + " · " + $0.versionTitles.joined(separator: " · "), value: $0.id) } }
-                        StorebenchPicker("Later import", selection: $afterId) { selectionOptions(revisions) { SelectionOption(timestamp($0.importedAt) + " · " + $0.versionTitles.joined(separator: " · "), value: $0.id) } }
+                        StorebenchPicker("Earlier Import", selection: $beforeId) { selectionOptions(revisions) { SelectionOption(timestamp($0.importedAt) + " · " + $0.versionTitles.joined(separator: " · "), value: $0.id) } }
+                        StorebenchPicker("Later Import", selection: $afterId) { selectionOptions(revisions) { SelectionOption(timestamp($0.importedAt) + " · " + $0.versionTitles.joined(separator: " · "), value: $0.id) } }
                     }
                     if !beforeId.isEmpty && !afterId.isEmpty {
                         StorebenchFormFooter {
@@ -93,16 +93,16 @@ struct HistoryView: View {
                     }
                 }
             }
-            Card(title: "Saved imports", subtitle: "Each import keeps every version's text and screenshots as App Store Connect had them. Deleting one also removes its draft; screenshots used by another saved import stay available.") {
+            Card(title: "Saved Imports", subtitle: "Each import keeps every version's text and screenshots as App Store Connect had them. Deleting one also removes its draft; screenshots used by another saved import stay available.") {
                 SavedRevisionList(account: account, app: app, session: session, revisions: revisions, planSourceId: plan?.sourceRevisionId,
                     available: loaded, busy: working || publishing, busyChanged: { deleting = $0 }, removed: { message in
                         status = message; changed(); Task { await load(preserveStatus: true) }
                     })
             }
-            Card(title: "Publishing history", subtitle: "Reopen a prepared review to see its exact changes and completed steps.") {
+            Card(title: "Publishing History", subtitle: "Reopen a prepared review to see its exact changes and completed steps.") {
                 StorebenchFeedback(text: publicationStatus, height: 40)
                 StorebenchCollection(items: publications, title: { $0.title }, subtitle: { publicationState($0) }, sorts: [.init(id: "date", label: "Created", less: { $0.createdAt < $1.createdAt })], empty: publicationsLoaded ? "No publishing reviews yet. Reviews you prepare appear here." : "Reading publishing history…") { item in
-                    StorebenchStatusRow(title: item.title, detail: "\(timestamp(item.createdAt)) · \(item.steps.filter { $0.state == "done" }.count) of \(item.steps.count) steps completed", separator: false) {
+                    StorebenchStatusRow(title: item.title, detail: "\(timestamp(item.createdAt)) · \(item.steps.filter { $0.state == "done" }.count) of \(item.steps.count) \(item.steps.count == 1 ? "step" : "steps") completed", separator: false) {
                         StorebenchTextSlot(text: publicationState(item), height: StorebenchTheme.controlHeight, font: .sbCaption, color: StorebenchTheme.muted, centered: true)
                     } action: {
                         if publicationsLoaded { Button("Open Review") { Task { await open(item) } }.storebenchWorking(busy) }
@@ -179,7 +179,9 @@ struct HistoryView: View {
                 [value.before, value.after].contains { saved in latest.first(where: { $0.id == saved.id })?.documentRevision != saved.documentRevision }
             } ?? false
             if comparedSourcesChanged { comparison = nil; gallery = nil }
-            revisions = latest; plan = currentPlan; loaded = true; versions = VersionHistory(latest)
+            let built = await Task.detached(priority: .userInitiated) { VersionHistory(latest) }.value
+            try Task.checkCancellation()
+            revisions = latest; plan = currentPlan; loaded = true; versions = built
             if !preserveStatus { status = "" }
             if !revisions.contains(where: { $0.id == afterId }) { afterId = revisions.first?.id ?? "" }
             if !revisions.contains(where: { $0.id == beforeId }) { beforeId = revisions.dropFirst().first?.id ?? revisions.first?.id ?? "" }

@@ -9,10 +9,10 @@ struct ReviewsDashboardView: View {
 
     private func country(_ code: String) -> String { code == "UNKNOWN" ? "Unknown territory" : WorkspaceSession.countryName(code) }
     private var filtersCard: some View {
-        Card(title: "Find reviews", subtitle: "Search written feedback and filter its UTC creation dates. All statistics below follow these filters.", accessory: AnyView(
+        Card(title: "Find Reviews", subtitle: "Search written feedback and filter its UTC creation dates. All statistics below follow these filters.", accessory: AnyView(
             StorebenchIconButton(title: "Reset Review Filters", icon: "refresh") { filters = .init() }
         )) {
-            StorebenchTextField("Search title and review text", text: $filters.query)
+            StorebenchTextField("Search Title and Review Text", text: $filters.query)
             StorebenchFormGrid(maximumColumns: 3, minimumWidth: 180) { ratingField; territoryField; orderField }
             StorebenchFormGrid { dateFields }
             Text(filters.validDates ? "Dates are inclusive. Leave either date empty for an open range." : "Use valid YYYY-MM-DD dates with the start no later than the end.")
@@ -45,7 +45,7 @@ struct ReviewsDashboardView: View {
         let rows = ReviewsPresentation.filter(reviews, filters), summary = ReviewsPresentation.summarize(rows)
         VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             filtersCard
-            Card(title: "Written review sample", subtitle: "Written reviews are a sample of feedback. These averages are not the overall App Store rating, and review counts do not measure sales.") {
+            Card(title: "Written Review Sample", subtitle: "Written reviews are a sample of feedback. These averages are not the overall App Store rating, and review counts do not measure sales.") {
                 StorebenchMetricGrid { facts(summary) }
                 ForEach(1...5, id: \.self) { rating in
                     HStack { Text("\(rating) / 5").frame(width: 52, alignment: .leading); Text(filters.validDates ? "\(summary.ratings[rating - 1]) reviews" : "Unknown").monospacedDigit(); Spacer() }
@@ -59,7 +59,7 @@ struct ReviewsDashboardView: View {
                     }
                 }
             }
-            Card(title: "Reviews by territory", subtitle: "Counts, written-review averages and low ratings in this filtered sample.") {
+            Card(title: "Reviews by Territory", subtitle: "Counts, written-review averages and low ratings in this filtered sample.") {
                 StorebenchCollection(items: summary.territories, title: { country($0.territory) }, subtitle: { "\($0.count) reviews · \($0.average.formatted(.number.precision(.fractionLength(1)))) / 5" }, sorts: [
                     .init(id: "count", label: "Review count", less: { $0.count < $1.count }),
                     .init(id: "average", label: "Sample average", less: { $0.average < $1.average }),
@@ -69,7 +69,7 @@ struct ReviewsDashboardView: View {
                 }
             }
             if rows.isEmpty { Card(title: "No reviews match", subtitle: "Adjust the search, rating, territory or date range.") { EmptyView() } }
-            Card(title: "Customer review text", subtitle: "View options remember your sort, page size and default expansion. All matching reviews remain available through pages.") {
+            Card(title: "Customer Review Text", subtitle: "View options remember your sort, page size and default expansion. All matching reviews remain available through pages.") {
                 StorebenchCollection(items: rows, title: { $0.title.isEmpty ? "Untitled review" : $0.title }, subtitle: { "\($0.rating) / 5 · \(country($0.territory)) · " + (AppStoreNames.date($0.createdDate) ?? String($0.createdDate.prefix(10)) + " UTC") }, sorts: [
                     .init(id: "date", label: "Created", less: { $0.createdDate < $1.createdDate }),
                     .init(id: "rating", label: "Rating", less: { $0.rating < $1.rating }),
@@ -85,9 +85,9 @@ struct ReviewsDashboardView: View {
         .historyValue("reviews-dashboard", $filters)
     }
     @ViewBuilder private func facts(_ summary: ReviewsPresentation.Summary) -> some View {
-        Fact(title: "Written reviews", value: filters.validDates ? String(summary.count) : "Unknown")
-        Fact(title: "Sample average", value: summary.average.map { $0.formatted(.number.precision(.fractionLength(1))) + " / 5" } ?? "Unknown", info: "The average rating of the written reviews shown here, not the app's overall rating.")
-        Fact(title: "Low ratings (1–2)", value: filters.validDates ? String(summary.low) : "Unknown")
-        Fact(title: "Known territories", value: filters.validDates ? String(summary.territories.filter { $0.territory != "UNKNOWN" }.count) : "Unknown")
+        Fact(title: "Written Reviews", value: filters.validDates ? String(summary.count) : "Unknown")
+        Fact(title: "Sample Average", value: summary.average.map { $0.formatted(.number.precision(.fractionLength(1))) + " / 5" } ?? "Unknown", info: "The average rating of the written reviews shown here, not the app's overall rating.")
+        Fact(title: "Low Ratings (1–2)", value: filters.validDates ? String(summary.low) : "Unknown")
+        Fact(title: "Known Territories", value: filters.validDates ? String(summary.territories.filter { $0.territory != "UNKNOWN" }.count) : "Unknown")
     }
 }

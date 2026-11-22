@@ -16,6 +16,8 @@ struct VersionPlanCard: View {
     private typealias Base = ReleaseSetup.Candidate
     @State private var latestReading = false
     @State private var operation: Task<Void, Never>?
+    /// A Save Draft or Sync to Apple pressed while the current version was still read from App Store Connect.
+    @State private var queued: Queued?
     @Environment(\.editorProtection) private var protection
     @Environment(\.confirmDestructive) private var confirm
 
@@ -36,29 +38,31 @@ struct VersionPlanCard: View {
                 if !quick { Text("App Store Version Release").font(.sbCallout.weight(.semibold)) }
                 releaseFields(model)
             }
-            StorebenchTextSlot(text: model.status, height: 40, font: .sbCallout, color: StorebenchTheme.muted, live: true)
+            StorebenchTextSlot(text: model.waiting.map { queued == nil ? $0 : "Saved as soon as the current version arrives from App Store Connect. You can keep editing meanwhile." } ?? model.status, height: 40, font: .sbCallout, color: StorebenchTheme.muted, live: true)
             if case .available(let submitted?) = availability {
                 Text("\(submitted) has been submitted in App Store Connect. You can remove this version and start a new one.").font(.sbCallout).fixedSize(horizontal: false, vertical: true)
             }
             if model.loaded && !model.needsComparison {
                 StorebenchFormFooter {
-                    StorebenchBusyButton(title: model.plan == nil ? createTitle : "Save Draft", loadingTitle: "Saving…", busy: model.busy, variant: sync == nil ? .primary : .secondary) { run(model, removing: false) }
+                    // While the current version is still read from App Store Connect, a press is kept and carried out once it arrives.
+                    StorebenchBusyButton(title: model.plan == nil ? createTitle : "Save Draft", loadingTitle: "Saving…", busy: model.busy || queued == .save, variant: sync == nil ? .primary : .secondary) {
+                        if model.waiting != nil { queued = .save } else { run(model, removing: false) }
+                    }
                             .help(model.plan == nil ? "Create the new version on this Mac and continue" : "Save the version on this Mac")
-                            .storebenchWorking(model.plan != nil && !model.dirty)
+                            .storebenchWorking(model.plan != nil && !model.dirty || queued == .sync)
                             .storebenchControlID("version-plan.save")
                     if let sync {
-                        StorebenchBusyButton(title: syncTitle, loadingTitle: "Preparing…", busy: model.busy, variant: .primary) {
-                            operation = Task {
-                                guard await model.save(), model.active, !model.dirty, !Task.isCancelled else { return }
-                                await didSave(false); sync()
-                            }
+                        StorebenchBusyButton(title: syncTitle, loadingTitle: "Preparing…", busy: model.busy || queued == .sync, variant: .primary) {
+                            if model.waiting != nil { queued = .sync } else { syncNow(model, sync) }
                         }
+                        .storebenchWorking(queued == .save)
                         .storebenchControlID("version-plan.sync")
                     }
                 }
             }
         }
-        .onDisappear { operation?.cancel() }
+        .onDisappear { operation?.cancel(); queued = nil }
+        .onChange(of: model.waiting) { runQueued(model) }
         .pageRefreshParticipant("version-plan/" + String(describing: ObjectIdentifier(model)), priority: -20,
             state: { .init(dirty: model.dirty, busy: model.busy || !model.loaded, signature: model.inputs.signature) },
             save: { await model.save() }, discard: { model.revert(); return !model.dirty }, refresh: {
@@ -200,7 +204,7 @@ struct VersionPlanCard: View {
     }
     @ViewBuilder private func numberField(_ model: ReleasePlanEditor) -> some View {
         @Bindable var model = model
-        StorebenchTextField("Version number", text: $model.inputs.targetVersion, placeholder: suggestion(model).isEmpty ? "2.0" : suggestion(model)).labelsHidden().storebenchFormColumn()
+        StorebenchTextField("Version Number", text: $model.inputs.targetVersion, placeholder: suggestion(model).isEmpty ? "2.0" : suggestion(model)).labelsHidden().storebenchFormColumn()
             .accessibilityLabel("Version number").storebenchWorking(model.busy)
         if let conflict = numberConflict(model) {
             Text(conflict).font(.sbCallout).foregroundStyle(StorebenchTheme.color("color-danger")).fixedSize(horizontal: false, vertical: true)
@@ -217,7 +221,7 @@ struct VersionPlanCard: View {
             StorebenchChoicePicker("Version Release", selection: $model.inputs.releaseType, options: Releases.releaseTypes, style: .radio).labelsHidden().storebenchWorking(model.busy)
         }
         if model.inputs.releaseType == "SCHEDULED" {
-            StorebenchDateField("Earliest release", selection: $model.inputs.date, in: Date()...).storebenchFormColumn().storebenchWorking(model.busy)
+            StorebenchDateField("Earliest Release", selection: $model.inputs.date, in: Date()...).storebenchFormColumn().storebenchWorking(model.busy)
         }
     }
     @ViewBuilder private func comparison(_ model: ReleasePlanEditor) -> some View {
@@ -240,6 +244,22 @@ struct VersionPlanCard: View {
             guard protection?.allowLeaving(excluding: protectionId) != false else { return }
         }
         model.acceptLatest(keepEdits: keep)
+    }
+    private enum Queued { case save, sync }
+    private func syncNow(_ model: ReleasePlanEditor, _ sync: @escaping () -> Void) {
+        operation = Task {
+            guard await model.save(), model.active, !model.dirty, !Task.isCancelled else { return }
+            await didSave(false); sync()
+        }
+    }
+    /// Carries out a press made while the current version was still being read, once it has arrived.
+    private func runQueued(_ model: ReleasePlanEditor) {
+        guard model.waiting == nil, let next = queued else { return }
+        queued = nil
+        switch next {
+        case .save: run(model, removing: false)
+        case .sync: if let sync { syncNow(model, sync) }
+        }
     }
     private func run(_ model: ReleasePlanEditor, removing: Bool) {
         guard model.ready else { return }

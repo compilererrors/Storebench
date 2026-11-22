@@ -404,4 +404,27 @@ import Testing
         }
         #expect(ComponentLayout.dialog(viewportWidth: 10, viewportHeight: 10) == .zero)
     }
+
+    @Test func everyDialogKindHasItsOwnSizeInsideTheWindow() {
+        // A dialog that only reports progress or asks a short question is smaller than one showing lists or media.
+        let large = Dictionary(uniqueKeysWithValues: DialogKind.allCases.map { ($0, ComponentLayout.dialog(viewportWidth: 1920, viewportHeight: 1200, kind: $0)) })
+        #expect(large[.status] == CGSize(width: 680, height: 260) && large[.confirmation] == CGSize(width: 680, height: 280))
+        #expect(large[.question] == CGSize(width: 480, height: 440) && large[.form] == CGSize(width: 480, height: 640))
+        #expect(large[.content] == CGSize(width: 1040, height: 760) && large[.media] == CGSize(width: 1040, height: 780))
+        // In a window of the default size the largest kinds leave the window visible above and below; a small window keeps a narrow rim.
+        #expect(ComponentLayout.dialog(viewportWidth: 1280, viewportHeight: 840, kind: .content) == CGSize(width: 1040, height: 708))
+        #expect(ComponentLayout.dialog(viewportWidth: 1280, viewportHeight: 840, kind: .form) == CGSize(width: 480, height: 640))
+        #expect(ComponentLayout.dialog(viewportWidth: 760, viewportHeight: 520, kind: .content) == CGSize(width: 728, height: 472))
+        // Three commands of the shared width fit side by side in the smallest dialog.
+        #expect(large[.status]!.width >= 3 * 192 + 2 * 12 + 32)
+        for kind in DialogKind.allCases {
+            for width in [390.0, 760.0, 1280.0] {
+                for height in [480.0, 840.0] {
+                    let dialog = ComponentLayout.dialog(viewportWidth: width, viewportHeight: height, kind: kind)
+                    #expect(dialog.width <= width - 32 && dialog.height <= height - 48 && dialog.width > 0 && dialog.height > 0)
+                }
+            }
+            #expect(ComponentLayout.dialog(viewportWidth: 10, viewportHeight: 10, kind: kind) == .zero)
+        }
+    }
 }

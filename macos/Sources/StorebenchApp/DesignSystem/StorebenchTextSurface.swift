@@ -23,8 +23,7 @@ struct StorebenchTextSurface<Content: View>: View {
                 let gap = min(8, max(0, (available - handleWidth) / 2))
                 let sideWidth = max(0, (available - handleWidth) / 2 - gap)
                 HStack(spacing: gap) {
-                    Text("\(Int(height)) pt").font(.sbCaption).monospacedDigit().foregroundStyle(StorebenchTheme.muted)
-                        .lineLimit(1).frame(width: sideWidth, alignment: .leading)
+                    Color.clear.frame(width: sideWidth, height: 1).accessibilityHidden(true)
                     resizeHandle.frame(width: handleWidth)
                     Button("Reset") { adjustedHeight = nil }.buttonStyle(StorebenchPressStyle()).font(.sbCaption)
                         .foregroundStyle(StorebenchTheme.color("color-accent-muted")).lineLimit(1)
@@ -41,7 +40,7 @@ struct StorebenchTextSurface<Content: View>: View {
     private var resizeHandle: some View {
         StorebenchIcon(name: "resize", size: 16).foregroundStyle(StorebenchTheme.muted)
             .frame(maxWidth: .infinity).frame(height: 28)
-            .background(handleHovered || dragging ? StorebenchTheme.color("color-surface-accent") : .clear, in: Capsule())
+            .background(StorebenchTheme.hoverColor(handleHovered || dragging), in: Capsule())
             .contentShape(Capsule())
             .overlay(StorebenchControlOutline(border: .clear, radius: 14, focusedOverride: handleFocused && !dragging))
             .overlay {
@@ -54,7 +53,7 @@ struct StorebenchTextSurface<Content: View>: View {
                     else { finishDrag() }
                 }, focus: { handleFocused = $0 })
             }
-            .onHover { handleHovered = $0 }
+            .storebenchHover { handleHovered = $0 }
             .help("Drag vertically to resize " + label.lowercased())
     }
     private func finishDrag() {

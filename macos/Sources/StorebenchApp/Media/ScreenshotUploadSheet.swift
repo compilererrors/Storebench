@@ -9,7 +9,7 @@ struct ScreenshotUploadSheet: View {
     @Environment(\.draftWorkflowBusy) private var inheritedBusy
     private var busy: Bool { model.busy || editing != nil }
     var body: some View {
-        StorebenchDialog(title: "Fix Screenshots", wide: true, height: 760, busy: busy, close: close) {
+        StorebenchDialog(title: "Fix Screenshots", kind: .content, busy: busy, close: close) {
             Text("Edit an image to crop, rotate or resize it. Add Screenshots saves them to this version on this Mac. Close keeps them in the Screenshots section to fix later.")
                 .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
             Group {

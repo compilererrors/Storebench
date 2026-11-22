@@ -346,11 +346,9 @@ extension AppStoreConnectClient {
         var request = URLRequest(url: url)
         request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
         request.httpShouldHandleCookies = false
-        let configuration = session.configuration
-        configuration.httpAdditionalHeaders = [:]; configuration.httpCookieStorage = nil; configuration.urlCache = nil
         let data: Data
         do {
-            data = try await BoundedResponse.read(request, configuration: configuration, maximumBytes: size) { http in
+            data = try await files.read(request, maximumBytes: size) { http in
                 guard http.statusCode == 200 else { throw AnalyticsFailure.download }
                 if let length = http.value(forHTTPHeaderField: "Content-Length"), Int(length) != size { throw AnalyticsFailure.integrity }
             }.data

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Presentation only, owned by this unlocked window and bounded by its history entries.
@@ -216,13 +217,22 @@ extension WorkspaceSession {
     /// Saves one screen's last read in the encrypted database; an unchanged read is not written again, and nothing is saved
     /// for an `epoch` before the last Clear Cache. A small record beside it holds the read time and size, so cleanup and
     /// the next launch choose what to keep without reading every saved value.
-    public func saveViewRead(key: String, data: Data, readAt: Date, epoch: Int) {
-        guard epoch == viewReadEpoch, data.count <= Self.viewReadLimit, key.utf16.count <= 1_024, (try? requireSessionAccess()) != nil else { return }
-        let digest = JSONText.string(key + "\u{0}" + data.base64EncodedString()).rawSHA256
-        guard viewReadDigests[key] != digest else { return }
+    /// The read is fingerprinted and encoded for the database away from the session; only the write itself occupies it.
+    public nonisolated func saveViewRead(key: String, data: Data, readAt: Date, epoch: Int) async {
+        guard data.count <= Self.viewReadLimit, key.utf16.count <= 1_024 else { return }
+        var hash = SHA256(); hash.update(data: Data(key.utf8)); hash.update(data: Data([0])); hash.update(data: data)
+        let digest = hash.finalize().map { String(format: "%02x", $0) }.joined()
+        guard await viewReadChanged(key: key, digest: digest, epoch: epoch) else { return }
         let at = ReportTimestamps.isoUtcText(readAt)
-        let value = JSONText.object([("readAt", .string(at)), ("value", .string(data.base64EncodedString()))])
-        let meta = JSONText.object([("readAt", .string(at)), ("bytes", .number(Double(data.count)))])
+        let value = JSONText.object([("readAt", .string(at)), ("value", .string(data.base64EncodedString()))]).data
+        let meta = JSONText.object([("readAt", .string(at)), ("bytes", .number(Double(data.count)))]).data
+        await commitViewRead(key: key, digest: digest, value: value, meta: meta, readAt: readAt, epoch: epoch)
+    }
+    private func viewReadChanged(key: String, digest: String, epoch: Int) -> Bool {
+        epoch == viewReadEpoch && (try? requireSessionAccess()) != nil && viewReadDigests[key] != digest
+    }
+    private func commitViewRead(key: String, digest: String, value: Data, meta: Data, readAt: Date, epoch: Int) {
+        guard viewReadChanged(key: key, digest: digest, epoch: epoch) else { return }
         var added = false, newer = true
         let saved = try? storeAccess { store in
             try store.withoutChangeStamp { try store.transaction { current in
@@ -230,7 +240,7 @@ extension WorkspaceSession {
                 added = existing == nil
                 // A read from another window that was taken later stays; this older one is not written over it.
                 if let existing, let at = (try? JSONText.parse(existing.payload))?["readAt"]?.text.flatMap(ReportTimestamps.date), at > readAt { newer = false; return [] }
-                return [.put(namespace: Self.viewReadsNamespace, key: key, json: value.data), .put(namespace: Self.viewReadMetaNamespace, key: key, json: meta.data)]
+                return [.put(namespace: Self.viewReadsNamespace, key: key, json: value), .put(namespace: Self.viewReadMetaNamespace, key: key, json: meta)]
             } }
         }
         guard saved != nil, newer else { return }
@@ -284,31 +294,41 @@ extension WorkspaceSession {
     /// Screen reads saved by earlier launches, newest first, within the Performance setting's count and bytes, for the window to show
     /// while it reads again. Only the chosen values are read from the database.
     /// With `containing`, only reads whose key names it, such as the open app's ID, are read; the rest can follow separately.
-    public func savedViewReads(containing part: String? = nil) -> [String: (data: Data, readAt: Date)] {
-        guard (try? requireSessionAccess()) != nil else { return [:] }
-        var bytes = 0, kept: [String: (data: Data, readAt: Date)] = [:]
-        for summary in cleanViewReads() where (part.map { summary.key.contains($0) } ?? true) && kept.count < cacheBudget.savedReads.count && bytes + summary.bytes <= cacheBudget.savedReads.bytes {
-            guard let document = try? storeAccess({ try $0.document(namespace: Self.viewReadsNamespace, key: summary.key) }),
+    /// The session only chooses which reads to load; their values are read, decrypted and decoded away from it, on the second connection.
+    public nonisolated func savedViewReads(containing part: String? = nil) async -> [String: (data: Data, readAt: Date)] {
+        var kept: [String: (data: Data, readAt: Date)] = [:]
+        let start = ContinuousClock.now; defer { Diagnostics.note("Saved screen reads", since: start) }
+        for summary in await chosenViewReads(containing: part) {
+            guard !Task.isCancelled else { break }
+            guard let document = try? await documentAwayFromSession(namespace: Self.viewReadsNamespace, key: summary.key),
                   let value = try? JSONText.parse(document.payload), let at = value["readAt"]?.text.flatMap(ReportTimestamps.date),
                   let data = value["value"]?.text.flatMap({ Data(base64Encoded: $0) }), data.count == summary.bytes else { continue }
-            bytes += data.count; kept[summary.key] = (data, at)
+            kept[summary.key] = (data, at)
         }
         return kept
     }
+    private func chosenViewReads(containing part: String?) -> [ViewReadSummary] {
+        guard (try? requireSessionAccess()) != nil else { return [] }
+        var bytes = 0, chosen: [ViewReadSummary] = []
+        for summary in cleanViewReads() where (part.map { summary.key.contains($0) } ?? true) && chosen.count < cacheBudget.savedReads.count && bytes + summary.bytes <= cacheBudget.savedReads.bytes {
+            bytes += summary.bytes; chosen.append(summary)
+        }
+        return chosen
+    }
+    private func viewReadEpochIs(_ epoch: Int) -> Bool { epoch == viewReadEpoch }
     /// Reads exactly one saved screen result from encrypted SQL after a window evicts it. Metadata is checked before loading
     /// the value; no full cache scan or cleanup blocks the requested screen.
-    public func savedViewRead(key: String, epoch: Int) -> (data: Data, readAt: Date)? {
-        guard epoch == viewReadEpoch, !Task.isCancelled, key.utf16.count <= 1_024, (try? requireSessionAccess()) != nil else { return nil }
-        return try? storeAccess { store in
-            guard let record = try store.document(namespace: Self.viewReadMetaNamespace, key: key),
-                  let meta = try? JSONText.parse(record.payload), let at = meta["readAt"]?.text.flatMap(ReportTimestamps.date),
-                  at >= Date().addingTimeInterval(-Self.viewReadAge), case .number(let bytes)? = meta["bytes"],
-                  bytes >= 0, bytes <= Double(Self.viewReadLimit), bytes.rounded() == bytes,
-                  let document = try store.document(namespace: Self.viewReadsNamespace, key: key),
-                  let value = try? JSONText.parse(document.payload), value["readAt"] == meta["readAt"],
-                  let data = value["value"]?.text.flatMap({ Data(base64Encoded: $0) }), data.count == Int(bytes) else { return nil }
-            return (data, at)
-        }
+    public nonisolated func savedViewRead(key: String, epoch: Int) async -> (data: Data, readAt: Date)? {
+        guard await viewReadEpochIs(epoch), !Task.isCancelled, key.utf16.count <= 1_024 else { return nil }
+        guard let record = try? await documentAwayFromSession(namespace: Self.viewReadMetaNamespace, key: key),
+              let meta = try? JSONText.parse(record.payload), let at = meta["readAt"]?.text.flatMap(ReportTimestamps.date),
+              at >= Date().addingTimeInterval(-Self.viewReadAge), case .number(let bytes)? = meta["bytes"],
+              bytes >= 0, bytes <= Double(Self.viewReadLimit), bytes.rounded() == bytes,
+              let document = try? await documentAwayFromSession(namespace: Self.viewReadsNamespace, key: key),
+              let value = try? JSONText.parse(document.payload), value["readAt"] == meta["readAt"],
+              let data = value["value"]?.text.flatMap({ Data(base64Encoded: $0) }), data.count == Int(bytes),
+              await viewReadEpochIs(epoch) else { return nil }
+        return (data, at)
     }
     /// Clear Cache: removes every saved screen read and starts a new epoch, so reads captured before it are not saved again.
     func clearViewReads() {

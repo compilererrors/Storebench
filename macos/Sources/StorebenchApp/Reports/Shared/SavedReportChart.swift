@@ -119,11 +119,9 @@ struct SavedReportChart: View {
                 .chartOverlay { proxy in
                     GeometryReader { geometry in
                         Rectangle().fill(.clear).contentShape(Rectangle())
-                            .onContinuousHover { phase in
-                                switch phase {
-                                case .active(let location): inspect(location.x, proxy: proxy, geometry: geometry, layout: layout)
-                                case .ended: if !focused { active = nil }
-                                }
+                            .storebenchPointer { location in
+                                if let location { inspect(location.x, proxy: proxy, geometry: geometry, layout: layout) }
+                                else if !focused { active = nil }
                             }
                             .gesture(DragGesture(minimumDistance: 0).onChanged { gesture in
                                 focused = true; inspect(gesture.location.x, proxy: proxy, geometry: geometry, layout: layout)

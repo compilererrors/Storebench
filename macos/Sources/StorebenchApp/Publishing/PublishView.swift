@@ -20,13 +20,13 @@ struct PublishView: View {
         VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             PublishActionPanel(account: account, app: app, session: session, actions: PublishingWorkspace.Action.allCases, initialRequest: initialRequest, initialReview: initialReview,
                                history: .init(opening: $opening, reading: historyReading, busyChanged: { panelBusy = $0 }, changed: { await loadHistory() }))
-            Card(title: "Publishing history", subtitle: "Reopen a review to inspect its exact changes and completed steps. An expired or used review is never replayed.", actions: AnyView(
+            Card(title: "Publishing History", subtitle: "Reopen a review to inspect its exact changes and completed steps. An expired or used review is never replayed.", actions: AnyView(
                 Button("Refresh History") { Task { await loadHistory() } }.storebenchWorking(busy)
             )) {
                 Text(historyIssue).font(.sbCallout).foregroundStyle(StorebenchTheme.muted).frame(minHeight: 20, alignment: .leading)
                 if let history {
                     StorebenchCollection(items: history, title: { $0.title }, sorts: [.init(id: "date", label: "Created", less: { $0.createdAt < $1.createdAt })], empty: "No publishing reviews yet. Reviews you prepare appear here.") { item in
-                        StorebenchStatusRow(title: item.title, detail: "\(item.createdAt.prefix(16).replacingOccurrences(of: "T", with: " ")) UTC · \(item.steps.filter { $0.state == "done" }.count) of \(item.steps.count) steps", separator: false) {
+                        StorebenchStatusRow(title: item.title, detail: "\(item.createdAt.prefix(16).replacingOccurrences(of: "T", with: " ")) UTC · \(item.steps.filter { $0.state == "done" }.count) of \(item.steps.count) \(item.steps.count == 1 ? "step" : "steps")", separator: false) {
                             StorebenchTextSlot(text: PublishingReviewPresentation.label(item, now: Date()), height: StorebenchTheme.controlHeight, font: .sbCaption, color: StorebenchTheme.muted, centered: true)
                         } action: {
                             Button("Open Review") { opening = item.id }.storebenchWorking(busy)

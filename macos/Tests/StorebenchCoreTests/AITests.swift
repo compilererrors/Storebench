@@ -130,8 +130,8 @@ import Testing
         await #expect(throws: TranslationLengthFailure.self) { try await session.translateWithAI(accountId: account, appId: app, provider: .openai, texts: ["Synthetic subtitle"], source: "en-US", target: "sv", fields: ["subtitle"]) }
         #expect(try await session.aiJobs(accountId: account, appId: app).first?.result == nil)
         #expect(try await session.aiJobs(accountId: account, appId: app).first?.failure == .translationLength)
-        #expect(try await session.aiJobs(accountId: account, appId: app).first?.failureDetail?.contains("Subtitle still uses 31 of 30") == true)
-        #expect(StubProtocol.requests("api.openai.com").count == 4)
+        #expect(try await session.aiJobs(accountId: account, appId: app).first?.failureDetail?.contains("Subtitle is 31 characters and App Store Connect allows 30") == true)
+        #expect(StubProtocol.requests("api.openai.com").count == 1 + TranslationFitting.repairRounds)
     }
 
     @Test func lengthRepairsUseTheSelectedModelAndCompletedFittingIsCached() async throws {

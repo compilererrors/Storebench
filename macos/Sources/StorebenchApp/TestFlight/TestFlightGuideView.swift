@@ -24,9 +24,12 @@ struct TestFlightGuideView: View {
                     content(TestFlightFlow.StepId(rawValue: id) ?? .build, facts: facts)
                 }
             } else {
+                let waiting = problem.isEmpty ? (session == nil ? "Connect the workspace to read TestFlight from App Store Connect." : "Reading TestFlight…") : problem
                 Card(title: "Start Testing", subtitle: AppNavigation.Section.startTesting.purpose, actions: AnyView(refresh)) {
-                    StorebenchTextSlot(text: problem.isEmpty ? (session == nil ? "Connect the workspace to read TestFlight from App Store Connect." : "Reading TestFlight…") : problem, height: 36, font: .sbCallout, color: StorebenchTheme.muted, live: true)
+                    StorebenchTextSlot(text: waiting, height: 36, font: .sbCallout, color: StorebenchTheme.muted, live: true)
                 }
+                // The bar is in place before the first check, with Next waiting for it.
+                StorebenchStepCommands(state: Self.readingBar(waiting))
             }
         }
         .task {
@@ -43,6 +46,13 @@ struct TestFlightGuideView: View {
     static func refreshStatus(problem: String, reading: Bool) -> String {
         if !problem.isEmpty { return "The latest refresh failed, so the steps show the last check. " + problem }
         return reading ? "Checking App Store Connect for changes…" : ""
+    }
+
+    /// The step bar while TestFlight is read: the steps are not known yet, so Back and Next are dimmed with the reason.
+    static func readingBar(_ waiting: String) -> StorebenchStepBarState {
+        .init(id: "guide/Start Testing steps/reading", title: "Start Testing", detail: waiting,
+              back: .init(title: "Back", unavailable: "This is the first step.", primary: false) {},
+              next: [.init(title: "Next", unavailable: "Wait until TestFlight has been read from App Store Connect.") {}])
     }
 
     private var refresh: some View {

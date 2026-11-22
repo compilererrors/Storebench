@@ -26,7 +26,7 @@ struct AppSyncCard: View {
 
     var body: some View {
         let stoppingJob = activeSyncId
-        return Card(title: "Sync app data", subtitle: "Downloads into local history. Financial reports keep their local review; app changes are approved in App Store changes.", help: "sync", actions: AnyView(
+        return Card(title: "Sync App Data", subtitle: "Downloads into local history. Financial reports keep their local review; app changes are approved in App Store changes.", help: "sync", actions: AnyView(
             StorebenchReadButton("Refresh Status") { await load(expected: context) }.storebenchWorking(working || session == nil).help("Read the latest saved progress. Does not start another download or contact Apple.")
         )) {
             if let steps = SyncSetupGuide.steps(job?.items) { setupGuide(steps) }
@@ -54,7 +54,8 @@ struct AppSyncCard: View {
             }
             let expected = context
             guard visible else { return }
-            await StorebenchPolling.repeating(every: .milliseconds(750), while: { context == expected }) { await load(expected: expected) }
+            await StorebenchPolling.repeating(every: .milliseconds(750), stamp: { try? await session?.savedStateToken() }, working: { unreadable || active || aggregateActive },
+                                              while: { context == expected }) { await load(expected: expected) }
         }
         .onDisappear { context = UUID() }
         .shortcutAction(.syncApp, enabled: !working && !aggregateActive && !unreadable && session != nil, identity: account.id + "/" + app.id) { await start(.all) }
@@ -85,7 +86,7 @@ struct AppSyncCard: View {
     }
     @ViewBuilder private func setupGuide(_ steps: [SyncSetupGuide.Step]) -> some View {
         let first = steps.first { $0.state == .todo }?.id
-        StorebenchCardSection(title: "Set up report sync") {
+        StorebenchCardSection(title: "Set Up Report Sync") {
             ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
                 StorebenchSetupStep(number: index + 1, title: step.title, detail: step.detail, done: step.state == .done) {
                     if step.state == .todo {
@@ -173,7 +174,9 @@ struct AllAppsSyncButton: View {
             .task(id: session.map { ObjectIdentifier($0) }) {
                 context = UUID(); let expected = context
                 working = false; status = ""; activity = nil; readFailed = false
-                await StorebenchPolling.repeating(every: .seconds(1), while: { context == expected }) { await loadActivity(expected: expected) }
+                await StorebenchPolling.repeating(every: .seconds(1), stamp: { try? await session?.savedStateToken() },
+                                                  working: { readFailed || activity.map { $0.activeApps > 0 || $0.sources.running > 0 || $0.unavailableApps > 0 } != false },
+                                                  while: { context == expected }) { await loadActivity(expected: expected) }
             }
             .onDisappear { context = UUID() }
             .shortcutAction(.syncAll, enabled: !working && !active && session != nil) { await start() }

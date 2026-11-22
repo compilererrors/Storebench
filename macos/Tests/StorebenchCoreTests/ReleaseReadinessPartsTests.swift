@@ -100,6 +100,9 @@ import Testing
         // A remembered status keeps its observations for a later partial read.
         let saved = try ReleaseReadinessSnapshot.saved(merged.json(checkedAt: Date()), accountId: account.id, appId: appId, planToken: plan.token).snapshot
         #expect(saved.parts == .all)
+        // Which fields differ is kept too, so a restored status shows the same rows before Apple is read again.
+        func issues(_ value: ReleaseReadinessSnapshot) -> [String] { value.steps.flatMap { step in step.issues.map { step.id + ":" + $0.field + ":" + $0.section } } }
+        #expect(!issues(merged).isEmpty && issues(saved) == issues(merged))
         let resumed = try await read([.accessibility]).merging(saved)
         #expect(resumed.steps.map(\.json) == full.steps.map(\.json))
         // Version-scoped parts never carry to another target version; app-level parts do.
@@ -110,6 +113,29 @@ import Testing
         #expect(try state(moved, "territories") == .ready && state(moved, "accessibility") == .review)
         #expect(synthetic.lock.withLock { synthetic.writes.isEmpty })
     }
+    /// A read Apple answers with errors, as can happen right after a sync, keeps what the earlier read saw instead of turning
+    /// the version, its build and the app's settings back into unknown checks.
+    @Test func aReadAppleCannotAnswerKeepsTheEarlierChecks() async throws {
+        let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
+        let account = try #require(try await session.accounts().first), plan = try await plan(session, account: account), synthetic = apple()
+        let host = "readiness-parts-known.appstoreconnect.test", failing = "readiness-parts-failing.appstoreconnect.test"
+        StubProtocol.handle(host) { response($0, apple: synthetic) }
+        StubProtocol.handle(failing) { _ in (404, ["Content-Type": "application/json"], Data(#"{"errors":[{"status":"404","code":"NOT_FOUND"}]}"#.utf8)) }
+        let earlier = try await session.releaseReadiness(account: account, appId: appId, revisionId: revisionId, planToken: plan.token, client: PublishingTests().client(account, host: host), parts: .all)
+        let failed = try await session.releaseReadiness(account: account, appId: appId, revisionId: revisionId, planToken: plan.token, client: PublishingTests().client(account, host: failing), parts: .all)
+        let failedBuild = try state(failed, "build")
+        #expect(failed.targetVersionId == nil && failedBuild == .unknown, "The failed read alone knows nothing")
+        let merged = failed.merging(earlier)
+        #expect(merged.targetVersionId == earlier.targetVersionId)
+        for id in ["build", "territories", "accessibility", "review-info", "apple-text:en-US"] {
+            let now = try state(merged, id), before = try state(earlier, id)
+            #expect(now == before, "\(id) kept its earlier check")
+        }
+        // Without any earlier read, the version stays Not Checked rather than missing.
+        let phases = QuickRelease.progress(plan: plan, snapshot: failed)
+        #expect(phases[0].check.label != "Sync Needed" && phases[2].check.label != "Build Is Missing", "\(phases.map(\.check.label))")
+    }
+
     @Test func savedMediaStatusesDoNotCarryToChangedMaterial() async throws {
         let (session, root) = try DraftTests().session(); defer { try? FileManager.default.removeItem(at: root) }
         let account = try #require(try await session.accounts().first), plan = try await plan(session, account: account), synthetic = apple(), host = "readiness-parts-material.appstoreconnect.test"

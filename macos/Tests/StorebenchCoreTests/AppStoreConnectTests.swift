@@ -109,4 +109,57 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         await #expect(throws: AppStoreConnectClient.Failure.status(401)) { try await client.get("/v1/apps/1000000001") }
         await #expect(throws: AppStoreConnectClient.Failure.invalidPath) { try await client.get("https://example.invalid/v1/apps") }
     }
+
+    @Test func oneAnswerIsReadTheSameAsDecodingItMemberByMember() throws {
+        func resources(_ page: AppStoreConnectClient.Page) throws -> [String] {
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+            return try (page.data.resources + (page.included ?? [])).map { String(decoding: try encoder.encode($0), as: UTF8.self) }
+        }
+        let answers = [
+            #"{"data":[{"type":"apps","id":"1","attributes":{"name":"Synthetic","count":3,"ratio":0.5,"big":9007199254740993,"flag":true,"off":false,"none":null,"list":[1,"two",null,{"k":[]}],"nested":{"a":{"b":"c"}}},"relationships":{"owner":{"data":{"type":"apps","id":"1"}}}},{"type":"apps","id":"2"}],"included":[{"type":"builds","id":"b","attributes":null}],"links":{"next":"https://synthetic.test/v1/apps?cursor=x","self":"s"},"meta":{"paging":{"total":2}}}"#,
+            #"{"data":{"type":"apps","id":"only","relationships":null},"links":{"self":"s"}}"#,
+            #"{"data":null}"#,
+            #"{"data":[],"included":null,"links":null}"#,
+        ]
+        for answer in answers {
+            let data = Data(answer.utf8)
+            let fast = try AppStoreConnectClient.Page(response: data), slow = try JSONDecoder().decode(AppStoreConnectClient.Page.self, from: data)
+            #expect(try resources(fast) == resources(slow))
+            #expect(fast.links?.next == slow.links?.next && (fast.links == nil) == (slow.links == nil) && (fast.included == nil) == (slow.included == nil))
+        }
+        let refused = [
+            #"{"included":[]}"#, #"[]"#, #"{"data":"text"}"#, #"{"data":[{"type":"apps"}]}"#, #"{"data":[{"type":"apps","id":1}]}"#,
+            #"{"data":{"type":"apps","id":"1","attributes":[]}}"#, #"{"data":[],"included":{}}"#, #"{"data":[],"links":{"next":1}}"#,
+            #"{"data":[],"links":[]}"#, #"{"data":[{"type":"apps","id":"1"},3]}"#, "", "not json",
+        ]
+        for answer in refused {
+            let data = Data(answer.utf8)
+            #expect(throws: AppStoreConnectClient.Failure.unreadableResponse) { try AppStoreConnectClient.Page(response: data) }
+            #expect((try? JSONDecoder().decode(AppStoreConnectClient.Page.self, from: data)) == nil)
+        }
+    }
+
+    /// A review's fingerprint covers what was read and in which order, so lists started ahead must be recorded as planning reaches them.
+    @Test func listsStartedAheadAreRecordedInTheOrderPlanningReadsThem() async throws {
+        let client = try client()
+        StubProtocol.handle("client.appstoreconnect.test") { request in
+            (200, [:], json(["data": [["type": "apps", "id": request.url!.lastPathComponent]]]))
+        }
+        let request = PublishRequest(accountId: team.id, appId: "1000000001", scope: .versionCopyright, versionId: "version-1", copyright: "2026 Synthetic Studio")
+        let paths = (1...6).map { "/v1/apps/100000000\($0)" }
+        let inTurn = Planner(client: client, request: request)
+        for path in paths { #expect(try await inTurn.list(path).map(\.id) == [String(path.split(separator: "/").last!)]) }
+        let ahead = Planner(client: client, request: request)
+        ahead.prefetch(lists: paths.reversed() + ["/v1/apps/1000000009"])
+        ahead.prefetch(lists: paths)
+        for path in paths { _ = try await ahead.list(path) }
+        ahead.cancelAhead()
+        #expect(ahead.evidence == inTurn.evidence && ahead.evidence.count == 6)
+        // Each list planning read was asked for once, however often it was started ahead.
+        let asked = StubProtocol.requests("client.appstoreconnect.test").compactMap { $0.url?.path }.filter { $0 != "/v1/apps/1000000009" }
+        #expect(asked.count == 12 && Set(asked) == Set(paths))
+        // A list read again after its answer was used is asked for again.
+        _ = try await ahead.list(paths[0])
+        #expect(StubProtocol.requests("client.appstoreconnect.test").compactMap { $0.url?.path }.filter { $0 == paths[0] }.count == 3)
+    }
 }

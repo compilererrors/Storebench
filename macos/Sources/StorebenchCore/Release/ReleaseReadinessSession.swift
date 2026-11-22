@@ -30,8 +30,15 @@ public struct ReleaseReadinessSnapshot: Sendable {
     public func merging(_ earlier: ReleaseReadinessSnapshot?) -> ReleaseReadinessSnapshot {
         guard let earlier, let local, earlier.scope.accountId == scope.accountId, earlier.scope.appId == scope.appId, TextSemantics.same(earlier.plan.token, plan.token) else { return self }
         var held = parts, values = observations
+        // A part this read could not verify keeps what the earlier read saw, so one failed request, such as right after a sync,
+        // never turns known checks back into unknown ones. Media is left out: an empty media status is a real answer.
+        func unverified(_ part: ReleaseReadiness.Parts) -> Bool {
+            let entries = ReleaseReadiness.Parts.keys.filter { $0.part == part }
+            return part != .media && parts.contains(part) && entries.allSatisfy { (values[$0.key] ?? $0.unknown) == $0.unknown }
+                && entries.contains { entry in earlier.observations[entry.key].map { $0 != entry.unknown } ?? false }
+        }
         func carry(_ part: ReleaseReadiness.Parts) {
-            guard !parts.contains(part), earlier.parts.contains(part) else { return }
+            guard !parts.contains(part) || unverified(part), earlier.parts.contains(part) else { return }
             for entry in ReleaseReadiness.Parts.keys where entry.part == part { values = values.setting(entry.key, earlier.observations[entry.key] ?? entry.unknown) }
             held.insert(part)
         }
@@ -136,9 +143,25 @@ extension WorkspaceSession {
             }
             let related: [(String, TextDrafts.Scope)] = [(id, .version)] + candidates.compactMap { $0["id"]?.text.map { ($0, .appInfo) } }
             let reviews = related.flatMap { id, scope in TextDrafts.fields(scope).compactMap { CopiedText.review(source: material.source, draft: material.draft, scope: scope, versionId: material.plan.baseVersionId, targetId: id, field: $0) } }.filter(\.needsReview)
-            var result = JSONText.object([("material", summary.json), ("fields", fields(locale)), ("sourceReview", .object([
+            // The import's own text, the draft's own values and the Apple text the person chose to overwrite tell a change made at
+            // App Store Connect apart from one made on this Mac.
+            func origin(_ record: JSONText) -> JSONText {
+                let id = record["id"]?.text ?? ""
+                return .object([("id", .string(id)), ("base", record["fields"] ?? .object([])), ("draft", material.draft["texts"]?[id] ?? .object([])), ("kept", material.draft["keptAppleText"]?[id] ?? .object([]))])
+            }
+            var result = JSONText.object([("material", summary.json), ("fields", fields(locale)), ("origin", origin(locale)), ("sourceReview", .object([
                 ("stale", .number(Double(reviews.filter { !$0.sourceLocale.isEmpty }.count))), ("unavailable", .number(Double(reviews.filter { $0.sourceLocale.isEmpty }.count)))]))])
-            if candidates.count == 1 { result = result.setting("appInfoFields", fields(candidates[0])) }
+            // App Store Connect keeps the live App Information beside the one being prepared, each with this language. Records that
+            // agree are one language; when they differ, the one being prepared is the one checked.
+            let agreed = candidates.dropFirst().allSatisfy { other in TextDrafts.appInfoFields.allSatisfy { TextSemantics.sameStoreText(fields(other)[$0]?.text ?? "", fields(candidates[0])[$0]?.text ?? "") } }
+            let picked = candidates.count == 1 || (!candidates.isEmpty && agreed) ? candidates.first
+                : { () -> JSONText? in
+                    let records = Self.items(Self.overlayJSON(material.raw, draft: material.draft)["appInfos"])
+                    let current = Set(AppInfoChoice.current(records).flatMap { Self.items($0["localizations"]) }.compactMap { $0["id"]?.text })
+                    let preparing = candidates.filter { current.contains($0["id"]?.text ?? "") }
+                    return preparing.count == 1 ? preparing[0] : nil
+                }()
+            if let picked { result = result.setting("appInfoFields", fields(picked)).setting("appInfoOrigin", origin(picked)) }
             return result
         }
         return .object([("root", .string(material.scope.root)), ("target", .object([("platform", .string(material.plan.platform)), ("number", .string(material.plan.targetVersion))])),
@@ -170,7 +193,9 @@ extension WorkspaceSession {
             guard infos.allSatisfy({ $0.type == "appInfos" && AppOverviewMaterial.identifier($0.id) && seen.insert(Data($0.id.utf8)).inserted && Apple.owned($0, "app", "apps", appId) }) else { throw ReleaseReadiness.Failure.invalid }
         } catch { try Task.checkCancellation(); return [] }
         let editable = infos.filter { Apple.editable.contains(Apple.state($0)) }, selected = editable.count == 1 ? editable[0] : infos.count == 1 ? infos[0] : nil
-        async let locales: [(String, JSONText)] = parts.contains(.appInfoText) ? [("appleAppInfoLocales", readinessInfoLocales(infos, client: client))] : []
+        // While a version is prepared, Apple keeps the live record beside the one being prepared, and Sync to Apple writes only the
+        // editable one, so that is the one compared. Several records without one editable record must agree.
+        async let locales: [(String, JSONText)] = parts.contains(.appInfoText) ? [("appleAppInfoLocales", readinessInfoLocales(editable.count == 1 ? editable : infos, client: client))] : []
         async let configuration: [(String, JSONText)] = parts.contains(.appConfiguration) ? [("appConfiguration", readinessConfiguration(appId: appId, info: selected, empty: infos.isEmpty, client: client))] : []
         async let rating: [(String, JSONText)] = parts.contains(.ageRating) ? [("ageRating", readinessAgeRating(info: selected, empty: infos.isEmpty, client: client))] : []
         return try await locales + configuration + rating
@@ -247,6 +272,7 @@ extension WorkspaceSession {
         let key = Self.releaseStatusKey(snapshot.scope.accountId, snapshot.scope.appId, snapshot.plan.token)
         if let current = releaseStatusMemory.value(for: key), current.checkedAt > checkedAt { return }
         releaseStatusMemory.insert((snapshot, checkedAt), for: key, cost: Self.releaseStatusCost(snapshot))
+        presentationChanges &+= 1
         saveReleaseReadiness(snapshot, checkedAt: checkedAt)
     }
     /// This session's newest status for the plan, else the one saved by an earlier session.

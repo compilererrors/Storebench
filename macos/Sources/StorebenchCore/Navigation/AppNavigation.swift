@@ -58,7 +58,17 @@ public enum AppNavigation {
         }
         public var usesVersion: Bool { self == .localizations || self == .media }
         /// The name shown in the sidebar and page title. Keys stay stable for saved links.
-        public var title: String { self == .release ? "Release" : self == .pricing ? "Set Up Pricing" : rawValue }
+        /// The name shown in the sidebar, page headings and breadcrumbs, in title-style capitalization like every other label.
+        public var title: String {
+            switch self {
+            case .release: "Release"
+            case .pricing: "Set Up Pricing"
+            case .overview: "App Overview"
+            case .publish: "App Store Changes"
+            case .journal: "Change Journal"
+            default: rawValue
+            }
+        }
         /// Where a guide continues once its last step is reached: the page the finished task leads to.
         public var afterGuide: Section? {
             switch self {

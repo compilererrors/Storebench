@@ -42,6 +42,27 @@ public enum ReleaseSetup {
         return ReleasePlanInputs(start: .empty(platform: "IOS", locale: "en-US"), targetVersion: "1.0", date: date)
     }
 
+    /// Quick Release always prepares the next version. It continues only a version Apple still lets you edit, such as one in
+    /// Prepare for Submission; a version already submitted, in review or released becomes the base of the next number instead.
+    /// `known` adds version numbers Apple is known to have, such as the one a plan just released, so a copy never suggests a
+    /// number that is already used when the last import is older than that release.
+    public static func quickSuggestion(_ history: [Revision], date: Date, known: Set<String> = [], apple: [String: Set<String>] = [:]) -> ReleasePlanInputs {
+        let candidates = candidates(history)
+        let platform = candidates.first { !$0.revision.isLocalDraft }?.version.platform ?? candidates.first?.version.platform ?? ""
+        // `apple` holds every number Apple reported, including a version still being prepared, so it only keeps a copy from reusing
+        // a number; `known` also stops an imported version from being continued, as the plan that released it knows it is done.
+        let taken = known.union(apple[platform] ?? [])
+        let latest = candidates.first { !$0.revision.isLocalDraft }?.revision.id
+        let all = candidates.filter { $0.revision.id == latest || (latest == nil && $0.revision.isLocalDraft) }
+        if let current = all.first(where: \.inProgress), !known.contains(current.version.number) { return inputs(.reuse, current, history: history, date: date) }
+        if let newest = all.first {
+            var value = inputs(.copy, newest, history: history, date: date)
+            if !taken.isEmpty { value.targetVersion = nextNumber(after: newest.version.number, taken: Self.taken(history, platform: newest.version.platform).union(taken)) }
+            return value
+        }
+        return ReleasePlanInputs(start: .empty(platform: "IOS", locale: "en-US"), targetVersion: "1.0", date: date)
+    }
+
     /// Inputs for a start and a base version, with the version number and release method filled in.
     public static func inputs(_ start: ReleaseStart, _ base: Candidate, history: [Revision], date: Date) -> ReleasePlanInputs {
         let fields = base.version.fields, type = fields["releaseType"]?.text.flatMap { value in Releases.releaseTypes.contains { $0.0 == value } ? value : nil } ?? "MANUAL"
@@ -105,9 +126,20 @@ public enum ReleaseSetup {
 
     public static func readableDate(_ iso: String, locale: Locale = .current, timeZone: TimeZone = .current) -> String {
         guard let date = Releases.parsedDate(iso) ?? ISO8601DateFormatter().date(from: iso) else { return iso }
-        let format = DateFormatter(); format.locale = locale; format.timeZone = timeZone; format.dateStyle = .medium; format.timeStyle = .short
-        return format.string(from: date)
+        return readableFormatter(locale: locale, timeZone: timeZone).string(from: date)
     }
+    /// One formatter per language and time zone: making a formatter is costly, and version lists format a date for every row they draw.
+    private static func readableFormatter(locale: Locale, timeZone: TimeZone) -> DateFormatter {
+        let key = locale.identifier + "|" + timeZone.identifier
+        return formatterLock.withLock {
+            if let format = formatters[key] { return format }
+            let format = DateFormatter(); format.locale = locale; format.timeZone = timeZone; format.dateStyle = .medium; format.timeStyle = .short
+            if formatters.count >= 16 { formatters.removeAll() }
+            formatters[key] = format; return format
+        }
+    }
+    private static let formatterLock = NSLock()
+    nonisolated(unsafe) private static var formatters: [String: DateFormatter] = [:]
 }
 
 extension WorkspaceSession {
@@ -115,7 +147,7 @@ extension WorkspaceSession {
     /// Explicit Sync App Material still downloads fresh observations; existing plans keep their baseline.
     public func releaseStartingHistory(account: Account, appId: String, client: AppStoreConnectClient? = nil, now: Date = Date()) async throws -> [Revision] {
         try importScope(account, appId: appId, client: client)
-        if try releaseStartNeedsImport(account: account, appId: appId, now: now) {
+        if try releaseStartNeedsImport(account: account, appId: appId, now: now), await !releaseStartIsCurrent(account: account, appId: appId, client: client) {
             var job = try await startImport(account: account, appId: appId, client: client)
             while job.isActive {
                 try await Task.sleep(for: .milliseconds(250)); try Task.checkCancellation()
@@ -126,6 +158,30 @@ extension WorkspaceSession {
         }
         try Task.checkCancellation()
         return try revisions(accountId: account.id, appId: appId)
+    }
+    /// Whether the newest import still matches Apple's version list: the same versions, with the same numbers, platforms and states.
+    /// One small read decides it, so a new plan starts from the saved import at once. Text App Store Connect changed since, in a version
+    /// Apple still lets you edit, is found by the release status, which compares every field with Apple. Anything unreadable or different
+    /// means a fresh download.
+    public func releaseStartIsCurrent(account: Account, appId: String, client: AppStoreConnectClient? = nil) async -> Bool {
+        guard let latest = try? revisions(accountId: account.id, appId: appId).first(where: { !$0.isLocalDraft }), !latest.versions.isEmpty,
+              let reader = client ?? (try? readClient(for: account)),
+              let apple = try? await currentAppVersions(account: account, appId: appId, client: reader) else { return false }
+        rememberAppReleaseStatus(account: account, appId: appId, versions: apple, at: Date())
+        return Self.sameVersions(latest.versions, apple)
+    }
+    /// The version numbers Apple last reported for each platform, saved on this Mac; no Apple request.
+    public func appleVersionNumbers(account: Account, appId: String) -> [String: Set<String>] {
+        Dictionary(grouping: appReleaseStatus(account: account, appId: appId)?.versions ?? [], by: \.platform).mapValues { Set($0.map(\.number)) }
+    }
+    static func sameVersions(_ saved: [Revision.Version], _ apple: [PublishingWorkspace.Version]) -> Bool {
+        let local = Dictionary(saved.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        guard local.count == saved.count, local.count == apple.count else { return false }
+        return apple.allSatisfy { version in
+            guard let mine = local[version.id] else { return false }
+            let state = [mine.fields["appVersionState"]?.text, mine.fields["appStoreState"]?.text].compactMap { $0 }.first { !$0.isEmpty } ?? ""
+            return mine.number == version.number && mine.platform == version.platform && state == version.state
+        }
     }
     /// True when a new plan must first download the app's current material: there is no saved plan and no import completed in the last five minutes.
     public func releaseStartNeedsImport(account: Account, appId: String, now: Date = Date()) throws -> Bool {

@@ -31,7 +31,7 @@ import SwiftUI
     private var dirty: Bool { review != nil || original.map { $0 != input } ?? !evidence.isEmpty }
 
     var body: some View {
-        Card(title: "Feedback follow-up", subtitle: "Optional local notes that group saved reviews with an intended action and a release. These notes do not affect ratings or reports.") {
+        Card(title: "Feedback Follow-up", subtitle: "Optional local notes that group saved reviews with an intended action and a release. These notes do not affect ratings or reports.") {
             StorebenchDisclosureButton(isExpanded: $expanded) { Text(expanded ? "Hide feedback planning" : "Open feedback planning") }
             VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
             savedThemes
@@ -102,7 +102,7 @@ import SwiftUI
         let rows = ReviewsPresentation.filter(state?.snapshot?.reviews ?? reviews, .init(query: evidenceQuery))
         return VStack(alignment: .leading, spacing: 8) {
             Text("\(evidence.count) reviews selected (up to 50)").font(.sbHeadline)
-            StorebenchTextField("Search all saved feedback", text: $evidenceQuery).storebenchWorking(unavailable)
+            StorebenchTextField("Search All Saved Feedback", text: $evidenceQuery).storebenchWorking(unavailable)
             StorebenchCollection(items: rows, title: { $0.title.isEmpty ? "Review evidence" : $0.title }, subtitle: { "\($0.rating) / 5 · \($0.territory)" }, preferenceID: "evidence-chooser", empty: "No saved feedback matches. Change or clear the search.") { row in
                 evidenceDetails(row)
                 StorebenchToggle("Use as theme evidence", isOn: Binding(get: { evidence.contains(row.id) }, set: { selected in

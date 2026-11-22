@@ -110,7 +110,7 @@ struct ReviewInformationView: View {
                     }
                 }
                 if editor.snapshot?.version?.platform == "MAC_OS" {
-                    DisclosureGroup("Sandbox exceptions", isExpanded: layoutBinding(.sandbox)) {
+                    DisclosureGroup("Sandbox Exceptions", isExpanded: layoutBinding(.sandbox)) {
                         VStack(alignment: .leading, spacing: 10) {
                             HStack(alignment: .top, spacing: StorebenchTheme.space(1)) {
     Text("Temporary entitlement explanations stay in this local draft. Copy each explanation to the matching macOS version in App Store Connect: click Apps, select the app and click the macOS version in the sidebar.").font(.sbCallout).foregroundStyle(StorebenchTheme.muted)
@@ -119,7 +119,7 @@ struct ReviewInformationView: View {
                             ForEach(editor.sandbox.indices, id: \.self) { index in
                                 VStack(alignment: .leading, spacing: 8) {
                                     StorebenchTextField("Entitlement key (up to 200 characters)", text: $editor.sandbox[index].key)
-                                    StorebenchTextArea(title: "Usage information", text: $editor.sandbox[index].usage, height: StorebenchTheme.textarea()).accessibilityLabel("Usage information (up to 4,000 characters)")
+                                    StorebenchTextArea(title: "Usage Information", text: $editor.sandbox[index].usage, height: StorebenchTheme.textarea()).accessibilityLabel("Usage information (up to 4,000 characters)")
                                     StorebenchActionGroup {
                                         Button("Copy Explanation") { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(editor.sandbox[index].clipboardText, forType: .string); status = "Sandbox explanation copied." }
                                         Button("Remove Exception", role: .destructive) { editor.sandbox.remove(at: index); review = nil }
@@ -154,7 +154,9 @@ struct ReviewInformationView: View {
             }
         }
         .onChange(of: editor.loaded) { _, loaded in
-            guard loaded, let anchor = fieldFocus?.anchor, anchor.hasPrefix("review-information.") else { return }
+            // Once per request: a later reload, as after a save, leaves the page where the user scrolled it.
+            guard loaded, let anchor = fieldFocus?.anchor, anchor.hasPrefix("review-information."), let ticket = fieldFocus?.ticket, !StorebenchFocusRequests.applied(ticket, .page) else { return }
+            StorebenchFocusRequests.record(ticket, .page)
             Task { @MainActor in await Task.yield(); pageReveal?(anchor) }
         }
         .historyValue("app-review", Binding(get: { editor.snapshot?.versionId ?? restoredVersion ?? "" }, set: { restoredVersion = $0.isEmpty ? nil : $0 }))
@@ -218,7 +220,7 @@ struct ReviewInformationView: View {
             let client = try await session.client(for: account)
             if prepare {
                 let result = try await session.saveAndPrepareReviewInformation(account: account, appId: app.id, versionId: snapshot.versionId, fields: editor.fields, sandbox: editor.sandbox, attachment: editor.upload, keepAttachment: editor.attachment != nil, expectedRevision: editor.revision, inheritedAttachment: editor.inheritedAttachmentFrom == nil ? nil : editor.attachment, inheritFromVersionId: editor.inheritedAttachmentFrom, client: client)
-                try editor.acknowledge(result.saved); review = result.review; status = result.issue ?? "Saved on this Mac. Read the changes below, then choose Send to Apple there to send them to App Store Connect."
+                try editor.acknowledge(result.saved); review = result.review; status = result.issue ?? "Saved on this Mac. Read the changes below, then choose Save in the review to send them to App Store Connect."
                 if let id = result.review?.id { Task { @MainActor in try? await Task.sleep(for: .milliseconds(150)); if let pageReveal { pageReveal(ReviewPanel.sendAnchor(id)) } else { pageScroll?(ReviewPanel.sendAnchor(id), .center) } } }
             } else {
                 let saved = try await session.saveReviewInformationLocally(account: account, appId: app.id, versionId: snapshot.versionId, fields: editor.fields, sandbox: editor.sandbox, attachment: editor.upload, keepAttachment: editor.attachment != nil, expectedRevision: editor.revision, inheritedAttachment: editor.inheritedAttachmentFrom == nil ? nil : editor.attachment, inheritFromVersionId: editor.inheritedAttachmentFrom, client: client)

@@ -325,16 +325,29 @@ extension WorkspaceSession {
     }
 
     /// One scheduled backup poll; `force` creates a backup now even when none is due. Disabled backups run only when forced.
-    public func runBackups(writer: VaultWriter, force: Bool = false, folderAccess: BackupFolderAccess = .system, expectedRevision: String? = nil) throws -> BackupStatus {
+    /// The poll and any backup it creates run away from the session, so screens keep reading meanwhile; closing the session waits for it.
+    public func runBackups(writer: VaultWriter, force: Bool = false, folderAccess: BackupFolderAccess = .system, expectedRevision: String? = nil) async throws -> BackupStatus {
         try requireOwnWorkspace()
         try requireSessionAccess()
-        let root = self.root
+        let lease = try lifetime.admit(.transfer); defer { lease.finish() }
+        let root = self.root, key = databaseKey, access = sessionRequestCheck()
+        return try await detachedWork(lease, priority: force ? .userInitiated : .utility) {
+            try Self.runBackups(root: root, key: key, access: access, writer: writer, force: force, folderAccess: folderAccess, expectedRevision: expectedRevision)
+        }
+    }
+
+    private static func runBackups(root: URL, key: Data, access: @Sendable () throws -> Void, writer: VaultWriter, force: Bool, folderAccess: BackupFolderAccess, expectedRevision: String?) throws -> BackupStatus {
+        // Each passphrase is read once per poll, so a backup is verified with the passphrase it was written with
+        // even when the settings change while it is being written.
+        var known: [String: String] = [:]
         func passphrase(_ secret: String?) throws -> String {
-            guard let secret, let value = try writer.value(BackupSchedule.vaultKey(root: root, secretId: secret)) else { throw BackupFailure.authentication }
-            return value
+            guard let secret else { throw BackupFailure.authentication }
+            if let value = known[secret] { return value }
+            guard let value = try writer.value(BackupSchedule.vaultKey(root: root, secretId: secret)) else { throw BackupFailure.authentication }
+            known[secret] = value; return value
         }
         return try BackupSchedule.withDestination(root: root, access: folderAccess, check: { settings in
-            try self.requireSessionAccess(); try Task.checkCancellation()
+            try access(); try Task.checkCancellation()
             if let expectedRevision { guard settings.revision == expectedRevision, settings.enabled else { throw BackupSettingsFailure.conflict } }
         }) { settings, lease in
             guard lease != nil else { return BackupStatus(state: .disabled, lastVerifiedAt: nil, nextDueAt: nil, generations: 0, error: nil) }
@@ -343,7 +356,7 @@ extension WorkspaceSession {
                 let status = scheduler.readStatus()
                 return BackupStatus(state: .disabled, lastVerifiedAt: status.lastVerifiedAt, nextDueAt: nil, generations: status.generations, error: status.error)
             }
-            return scheduler.tick(force: force, create: { url, secret in _ = try createBackup(destination: url, password: try passphrase(secret)) },
+            return scheduler.tick(force: force, create: { url, secret in _ = try Backups.create(root: root, key: key, destination: url, password: try passphrase(secret), check: access) },
                                   verify: { url, secret in try Backups.verify(url, password: try passphrase(secret)) })
         }
     }

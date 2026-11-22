@@ -3121,6 +3121,7 @@
     "tableHeader": 32,
     "tableHeaderFont": 11,
     "dialogWidth": 480,
+    "dialogCompact": 680,
     "dialogWide": 1040,
     "dialogRadius": 14,
     "dialogBodyPadding": 16,

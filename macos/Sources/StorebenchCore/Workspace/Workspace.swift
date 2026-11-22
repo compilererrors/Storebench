@@ -82,9 +82,24 @@ public struct Workspace: Sendable {
     }
 }
 
+/// A read-only connection used from any thread, one read at a time. Closing it ends every later read.
+final class ReadConnection: @unchecked Sendable {
+    private let lock = NSLock()
+    private var store: EncryptedDocumentStore?
+    init(_ store: EncryptedDocumentStore?) { self.store = store }
+    var isOpen: Bool { lock.withLock { store != nil } }
+    func read<T>(_ body: (EncryptedDocumentStore) throws -> T) throws -> T {
+        try lock.withLock { guard let store else { throw SessionFailure.closed }; return try body(store) }
+    }
+    func close() { lock.withLock { store?.close(); store = nil } }
+}
+
 /// Keeps the opened store on one actor, so views can read while it stays open.
 public actor WorkspaceSession {
     private let store: EncryptedDocumentStore
+    /// A second, read-only connection to the same database. Large saved values are read on it away from the session, while the
+    /// session's own connection keeps every write and the reads that belong with one.
+    nonisolated let reads: ReadConnection
     private var accountCatalogCache: (document: EncryptedDocumentStore.Document?, value: [Account])?
     let appleReadCache = AppStoreReadCache()
     let media: EncryptedMediaStore
@@ -132,6 +147,7 @@ public actor WorkspaceSession {
         }
         guard let current = opened.1?.vault ?? vault else { throw Workspace.Failure.notSetUp }
         (store, media, databaseKey) = opened.0
+        reads = ReadConnection(try? EncryptedDocumentStore(url: EncryptedDocumentStore.databaseURL(root: workspace.root), key: opened.0.2))
         self.vault = current; root = workspace.root; self.credentialWriter = writer; credentialSnapshot = opened.1
         accessGeneration = opened.2
         accessMarker = opened.0.0.directory.appendingPathComponent("access-generation")
@@ -140,7 +156,9 @@ public actor WorkspaceSession {
     /// Setup already owns the bootstrap mutex; do not acquire it recursively while constructing the actor.
     init(unlocked workspace: Workspace, snapshot: VaultWriter.Snapshot, password: String?, writer: VaultWriter) throws {
         isSample = false
-        (store, media, databaseKey) = try workspace.openWithKey(vault: snapshot.vault, password: password)
+        let opened = try workspace.openWithKey(vault: snapshot.vault, password: password)
+        (store, media, databaseKey) = opened
+        reads = ReadConnection(try? EncryptedDocumentStore(url: EncryptedDocumentStore.databaseURL(root: workspace.root), key: opened.2))
         vault = snapshot.vault; root = workspace.root; credentialWriter = writer; credentialSnapshot = snapshot
         accessGeneration = try VaultWriter.markerVersion(store.directory.appendingPathComponent("access-generation"))
         accessMarker = store.directory.appendingPathComponent("access-generation")
@@ -168,6 +186,14 @@ public actor WorkspaceSession {
     var libraryMetadataStamp: String?
     var libraryMetadataCache = BoundedMemoryCache<String, ConnectedApps.Metadata>(capacity: 64, byteLimit: 256 * 1_024)
     var iconCache = AppIcons.Cache()
+    /// Asset Library previews downloaded in this session, by app, asset and the asset's own values.
+    var libraryThumbnails = BoundedMemoryCache<String, Data>(CachePolicy.standardBudget.thumbnails)
+    var libraryThumbnailRefreshed: [String: ContinuousClock.Instant] = [:]
+    /// Each app's saved publishing reviews as last read, reused until a review is saved here or another process writes the database.
+    var publishHistoryMemo = BoundedMemoryCache<String, (stamp: String, reviews: [PublishReview])>(capacity: 8, byteLimit: 48 * 1_048_576)
+    var publishReviewSaves = 0
+    /// Each running import's announcement that its first screenshot is about to be downloaded, made once by whichever language reaches it first.
+    var importFirstScreenshot: [String: () throws -> Void] = [:]
     /// The last screen read saved per key in this session, so an unchanged read is not written again.
     var viewReadDigests: [String: String] = [:]
     /// Changes when Clear Cache removes the saved screen reads, so a read a window captured before that is not saved afterwards.
@@ -177,17 +203,38 @@ public actor WorkspaceSession {
     var viewReadCleanedAt: ContinuousClock.Instant?
     /// Saved revisions decoded in this session, reused while a document's payload is byte for byte the same.
     var decodedRevisions = BoundedMemoryCache<String, (payload: Data, revision: Revision)>(CachePolicy.standardBudget.decodedRevisions)
+    /// Which decoded revisions each list read returned, and the `revisions` stamp it was read under. While the stamp is the same
+    /// and the decoded revisions are still kept, the list is put together again without reading the database.
+    var revisionLists = SavedListMemo()
+    var archivedLists = SavedListMemo()
+    /// The `revisions` stamp under which a saved import was last checked as committed, by its document key.
+    var committedImports: [String: String] = [:]
+    /// Saved revisions a draft is read or saved against, parsed once and reused while no revision is written or removed.
+    var parsedSources = BoundedMemoryCache<String, (stamp: String, revision: Int, value: JSONText)>(CachePolicy.standardBudget.draftSources)
     var archivedRevisions = BoundedMemoryCache<String, (payload: Data, value: ArchivedRevision)>(CachePolicy.standardBudget.archivedRevisions)
     var releaseStatusMemory = BoundedMemoryCache<String, (snapshot: ReleaseReadinessSnapshot, checkedAt: Date)>(CachePolicy.standardBudget.releaseStatus)
     var appReleaseReads: Set<String> = []
-    var appReleaseChecking: Set<String> = []
+    var appReleaseChecking: Set<String> = [] { didSet { presentationChanges &+= 1 } }
+    /// Counts changes to what library views show from this session's memory rather than the database, such as a release check
+    /// starting or a newer release status being remembered.
+    var presentationChanges = 0
+    /// Changes whenever saved data, or what library views show beside it from memory, changed. A view that repeats a read of
+    /// saved state compares it first and skips the read while it is the same.
+    public func savedStateToken() throws -> String {
+        try storeAccess { try $0.changeStamp() } + ":" + String(presentationChanges)
+    }
     /// The budget the session caches follow, from the Performance setting.
     var cacheBudget = CachePolicy.standardBudget
+    /// How much the session reads ahead, from the Performance setting.
+    var workPlan = WorkPolicy.Plan.full
     var iconTasks: [String: (id: UUID, task: Task<AppIcons.Image?, Error>)] = [:]
     var reportTasks: [String: (id: String, cancel: @Sendable () -> Void)] = [:]
     var reportTaskFailures: Set<String> = []
     /// Reviews prepared before their step opens, so the step shows them at once. Each is used once.
     var reviewsAhead: [ReviewAhead] = []
+    /// How long an approved step waits before it is sent again after Apple refused it for its rate limit without naming a wait:
+    /// one entry per further attempt.
+    var rateLimitPauses: [Duration] = [.seconds(5), .seconds(20)]
     func vaultEntry(_ key: String) throws -> String? { try credentialCapture(key) }
 
     /// A client scoped to one connected account and signed with its stored private key.
@@ -242,7 +289,22 @@ public actor WorkspaceSession {
         for key in keys { _ = try writer.snapshot(migrating: key) }
     }
 
-    func storeAccess<T>(_ read: (EncryptedDocumentStore) throws -> T) throws -> T { try requireSessionAccess(); return try read(store) }
+    func storeAccess<T>(_ read: (EncryptedDocumentStore) throws -> T) throws -> T {
+        try requireSessionAccess()
+        // Every screen's read waits while the session is busy, so a long turn here is worth finding.
+        let start = ContinuousClock.now; defer { Diagnostics.note("Session store access", since: start) }
+        return try read(store)
+    }
+    /// One saved document read away from the session, so a large value is fetched and decrypted without holding up other reads.
+    /// Without a second connection it is read on the session's own.
+    nonisolated func documentAwayFromSession(namespace: String, key: String) async throws -> EncryptedDocumentStore.Document? {
+        try requireSessionAccess()
+        if reads.isOpen { return try reads.read { try $0.document(namespace: namespace, key: key) } }
+        return try await sessionDocument(namespace: namespace, key: key)
+    }
+    private func sessionDocument(namespace: String, key: String) throws -> EncryptedDocumentStore.Document? {
+        try storeAccess { try $0.document(namespace: namespace, key: key) }
+    }
 
     /// Saved imports and local drafts for one app, newest first; unreadable entries are skipped.
     /// The revision a saved document holds. A payload equal to the one decoded before reuses that result; anything else decodes again.
@@ -258,11 +320,22 @@ public actor WorkspaceSession {
     }
     public func revisions(accountId: String, appId: String) throws -> [Revision] {
         try requireSessionAccess()
+        let prefix = "\(accountId):\(appId):", stamp = try store.namespaceStamp("revisions")
+        if let keys = revisionLists.keys(prefix, stamp: stamp) {
+            var kept: [Revision] = []
+            for key in keys { guard let cached = decodedRevisions.value(for: key) else { break }; kept.append(cached.revision) }
+            if kept.count == keys.count { return kept }
+        }
         let decoder = JSONDecoder()
-        return try store.documents(namespace: "revisions", prefix: "\(accountId):\(appId):")
-            .compactMap { document in try? decodedRevision(document, cacheKey: "direct/" + document.key) { try decoder.decode(Revision.self, from: document.payload) } }
-            .filter { $0.schemaVersion == 1 }
-            .sorted { $0.importedAt > $1.importedAt }
+        let read = try store.documents(namespace: "revisions", prefix: prefix)
+            .compactMap { document -> (key: String, revision: Revision)? in
+                let key = "direct/" + document.key
+                return (try? decodedRevision(document, cacheKey: key) { try decoder.decode(Revision.self, from: document.payload) }).map { (key, $0) }
+            }
+            .filter { $0.revision.schemaVersion == 1 }
+            .sorted { $0.revision.importedAt > $1.revision.importedAt }
+        revisionLists.keep(read.map(\.key), for: prefix, stamp: stamp)
+        return read.map(\.revision)
     }
 
     /// Stops new work, cancels only owned report tasks, drains admitted work and closes this session.
@@ -271,6 +344,8 @@ public actor WorkspaceSession {
         try await closeSession(change: nil)
     }
     public nonisolated func validateAccess() throws { try requireSessionAccess() }
+    /// What the session still waits for before it can close, one line per kind of work; empty when nothing is running.
+    public nonisolated var unfinishedWork: [String] { lifetime.activeKinds.map(\.waitingFor) }
     struct ProtectionChange { let writer: VaultWriter; let previous: String; let currentPassword, newPassword: String? }
     /// A rejected current password leaves the session and its background work open.
     public func changeLock(writer: VaultWriter, currentPassword: String?, newPassword: String?) async throws {
@@ -323,7 +398,7 @@ public actor WorkspaceSession {
                 else { try Setup.replaceGeneration(store.directory) }
             }
         } catch { failure = error as? SessionFailure ?? .revocation }
-        store.close()
+        store.close(); reads.close()
         media.discardKey()
         databaseKey.resetBytes(in: 0..<databaseKey.count); databaseKey.removeAll()
         vault = .empty
@@ -334,7 +409,9 @@ public actor WorkspaceSession {
         credentialWriter = nil; credentialSnapshot = nil
         credentialFailures.removeAll(); credentialVersions.removeAll()
         iconCache = .init(); iconTasks.removeAll()
+        libraryThumbnails.removeAll(); libraryThumbnailRefreshed.removeAll(); publishHistoryMemo.removeAll()
         decodedRevisions.removeAll(); archivedRevisions.removeAll(); viewReadDigests.removeAll()
+        revisionLists.removeAll(); archivedLists.removeAll(); committedImports.removeAll(); parsedSources.removeAll()
         reportTasks.removeAll(); reportTaskFailures.removeAll()
         lifetime.finishClosing(failure: failure)
         if let failure { throw failure }

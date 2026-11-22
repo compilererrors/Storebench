@@ -3,21 +3,43 @@ import Foundation
 /// How many connected apps Storebench reads ahead in the background, so Release and Quick Release open with material and status already saved.
 /// With more connected apps than the limit, the apps opened most often and most recently are prepared. Zero turns preparation off.
 public struct BackgroundPreparation: Equatable, Sendable {
+    /// A connected app chosen to be prepared every time.
+    public struct App: Hashable, Sendable {
+        public let accountId: String, appId: String
+        public init(accountId: String, appId: String) { self.accountId = accountId; self.appId = appId }
+    }
     public static let limits = [0, 1, 3, 5, 10, 20]
     public static let standard = 3
+    /// How many apps can be chosen to be prepared every time.
+    public static let alwaysLimit = 20
     public let appLimit: Int
+    /// Apps prepared right after the open one, whatever their use ranks them, such as the ones worked on every day.
+    /// They come on top of `appLimit`; preparation that is off prepares none.
+    public let alwaysPrepared: [App]
 
-    public init(appLimit: Int = BackgroundPreparation.standard) throws {
-        guard Self.limits.contains(appLimit) else { throw BackgroundPreparationFailure.invalid }
-        self.appLimit = appLimit
+    public init(appLimit: Int = BackgroundPreparation.standard, alwaysPrepared: [App] = []) throws {
+        guard Self.limits.contains(appLimit), alwaysPrepared.count <= Self.alwaysLimit, Set(alwaysPrepared).count == alwaysPrepared.count,
+              alwaysPrepared.allSatisfy({ !$0.accountId.isEmpty && !$0.appId.isEmpty }) else { throw BackgroundPreparationFailure.invalid }
+        self.appLimit = appLimit; self.alwaysPrepared = alwaysPrepared
     }
 
     public init(_ value: JSONText) throws {
         guard value["schemaVersion"] == .number(1), case .number(let limit)? = value["appLimit"], limit.rounded() == limit, abs(limit) <= 1_000 else { throw BackgroundPreparationFailure.invalid }
-        try self.init(appLimit: Int(limit))
+        var always: [App] = []
+        if let list = value["alwaysPrepared"], list != .null {
+            guard case .array(let rows) = list, rows.count <= Self.alwaysLimit else { throw BackgroundPreparationFailure.invalid }
+            always = try rows.map { row in
+                guard let accountId = row["accountId"]?.text, let appId = row["appId"]?.text else { throw BackgroundPreparationFailure.invalid }
+                return App(accountId: accountId, appId: appId)
+            }
+        }
+        try self.init(appLimit: Int(limit), alwaysPrepared: always)
     }
 
-    public var json: JSONText { .object([("schemaVersion", .number(1)), ("appLimit", .number(Double(appLimit)))]) }
+    public var json: JSONText {
+        .object([("schemaVersion", .number(1)), ("appLimit", .number(Double(appLimit))),
+                 ("alwaysPrepared", .array(alwaysPrepared.map { .object([("accountId", .string($0.accountId)), ("appId", .string($0.appId))]) }))])
+    }
 
     static func stored(_ document: EncryptedDocumentStore.Document?) throws -> Self {
         let value = try document.map { try JSONText.parse($0.payload) }
@@ -100,10 +122,23 @@ public struct AppUsage: Equatable, Sendable {
         return now.timeIntervalSince(opened) < Self.releaseMemory
     }
 
-    /// The apps to prepare, at most `limit`: the open app first, then the others by score, then by their last opening and their connected order.
-    /// With no more connected apps than the limit, every app is prepared.
-    public func ranked(_ apps: [(accountId: String, appId: String)], current: (accountId: String, appId: String)?, limit: Int, now: Date = Date()) -> [(accountId: String, appId: String)] {
+    /// The apps to prepare: the open app first, then the apps chosen to be prepared every time, then up to `limit` in all of the
+    /// others by score, then by their last opening and their connected order. With no more connected apps than the limit, every app is prepared.
+    public func ranked(_ apps: [(accountId: String, appId: String)], current: (accountId: String, appId: String)?, limit: Int,
+                       always: [BackgroundPreparation.App] = [], now: Date = Date()) -> [(accountId: String, appId: String)] {
         guard limit > 0 else { return [] }
+        // Apps chosen to be prepared every time follow the open app and come on top of the limit.
+        let chosen = Set(always.map { Self.key($0.accountId, $0.appId) })
+        let ranked = rankedByUse(apps, current: current, now: now)
+        func isCurrent(_ app: (accountId: String, appId: String)) -> Bool { current.map { $0.accountId == app.accountId && $0.appId == app.appId } ?? false }
+        let first = ranked.filter { isCurrent($0) || chosen.contains(Self.key($0.accountId, $0.appId)) }
+        let others = ranked.filter { !isCurrent($0) && !chosen.contains(Self.key($0.accountId, $0.appId)) }
+        let open = first.filter(isCurrent), pinned = first.filter { !isCurrent($0) }
+        return open + pinned + others.prefix(max(0, limit - open.count))
+    }
+
+    /// Every connected app, the open app first, then by score, then by their last opening and their connected order.
+    private func rankedByUse(_ apps: [(accountId: String, appId: String)], current: (accountId: String, appId: String)?, now: Date) -> [(accountId: String, appId: String)] {
         let byKey = Dictionary(entries.map { (Self.key($0.accountId, $0.appId), $0) }, uniquingKeysWith: { first, _ in first })
         var seen = Set<String>()
         let connected = apps.enumerated().filter { seen.insert(Self.key($0.element.accountId, $0.element.appId)).inserted }
@@ -117,7 +152,7 @@ public struct AppUsage: Equatable, Sendable {
             if leftOpened != rightOpened { return leftOpened > rightOpened }
             return lhs.offset < rhs.offset
         }
-        return ordered.prefix(limit).map(\.element)
+        return ordered.map(\.element)
     }
 }
 
@@ -165,10 +200,14 @@ extension WorkspaceSession {
     /// as a full status check would. Stops when cancelled.
     public func prepareApps(current: (accountId: String, appId: String)?, now: @Sendable () -> Date = Date.init,
                             prepared: @escaping @MainActor @Sendable (PreparedApp) -> Void = { _ in }) async {
-        guard let limit = try? backgroundPreparation().appLimit, limit > 0, let accounts = try? accounts() else { return }
+        guard let preparation = try? backgroundPreparation(), preparation.appLimit > 0, let accounts = try? accounts() else { return }
         let connected = accounts.flatMap { account in account.apps.map { (accountId: account.id, appId: $0.id) } }
         let usage = (try? appUsage()) ?? AppUsage()
-        let targets = usage.ranked(connected, current: current, limit: limit, now: now())
+        // A lower activity level prepares fewer apps than the setting allows; the lowest prepares the open app alone.
+        let limit = workPlan.preparedApps.map { min($0, preparation.appLimit) } ?? preparation.appLimit
+        let pinned = workPlan.preparedApps == 1 ? [] : preparation.alwaysPrepared
+        let targets = usage.ranked(connected, current: current, limit: limit, always: pinned, now: now())
+        let always = Set(pinned)
         for target in targets.prefix(PreparedApp.presentedLimit) {
             guard !Task.isCancelled else { return }
             guard let history = try? revisions(accountId: target.accountId, appId: target.appId) else { continue }
@@ -180,7 +219,10 @@ extension WorkspaceSession {
             guard let account = accounts.first(where: { $0.id == target.accountId }) else { continue }
             let open = current.map { $0.accountId == target.accountId && $0.appId == target.appId } ?? false
             do {
-                let importing = open && usage.preparesRelease(accountId: target.accountId, appId: target.appId, now: now())
+                // Every prepared app whose release was opened lately, and every app chosen to be prepared every time, has its material
+                // checked against Apple at startup and downloaded when Apple has changed, so Release and Quick Release open at once.
+                let chosen = always.contains(.init(accountId: target.accountId, appId: target.appId))
+                let importing = chosen || usage.preparesRelease(accountId: target.accountId, appId: target.appId, now: now())
                 // The open app's reads are likely next; other apps fill in behind every screen's own reads.
                 try await AppleReadPriority.$current.withValue(open ? .next : .background) {
                     try await prepare(account: account, appId: target.appId, open: open, importing: importing, presented: index < PreparedApp.presentedLimit, now: now, prepared: prepared)
@@ -194,6 +236,13 @@ extension WorkspaceSession {
         try Task.checkCancellation()
         guard AppleRequestBudget.allowsReadingAhead(keyId: account.keyId) else { return }
         let client = try readClient(for: account)
+        // The open app's material download is what Release and Quick Release wait for, so it starts first and runs on its own while the
+        // other reads follow. Release follows the same job.
+        if importing, try releasePlan(accountId: account.id, appId: appId) == nil, try releaseStartNeedsImport(account: account, appId: appId, now: now()),
+           await !releaseStartIsCurrent(account: account, appId: appId, client: client) {
+            _ = try await startImport(account: account, appId: appId)
+            try Task.checkCancellation()
+        }
         // Deliver the build list before pricing and the fuller TestFlight check, which also reads group memberships.
         // The later check reuses these build responses instead of downloading them again.
         if presented {
@@ -220,9 +269,6 @@ extension WorkspaceSession {
                 try Task.checkCancellation()
                 rememberReleaseReadiness(snapshot, checkedAt: now())
             }
-        } else if importing, try releaseStartNeedsImport(account: account, appId: appId, now: now()) {
-            // A new plan starts from an import of the last few minutes; the job runs on its own and Release follows the same job.
-            _ = try await startImport(account: account, appId: appId)
         }
     }
 }

@@ -39,7 +39,7 @@ struct ChatGPTSettings: View {
         StorebenchFormSection("ChatGPT Plan", icon: "users", description: "Use your ChatGPT plan for cards and translations. Your plan's usage limits apply.") {
             VStack(alignment: .leading, spacing: StorebenchTheme.gap) {
                 StorebenchFormField(label: "Connection", hideHint: true) {
-                    StorebenchTextSlot(text: connectionStatus, height: StorebenchTheme.controlHeight, font: .sbCallout, color: active ? StorebenchTheme.color("color-success") : StorebenchTheme.muted, live: true)
+                    StorebenchTextSlot(text: connectionStatus, height: StorebenchTheme.controlHeight, font: .sbCallout, color: active ? StorebenchTheme.color("color-success") : StorebenchTheme.muted, centered: true, live: true)
                 }.help("Connection status for the selected ChatGPT account")
                 if !profiles.isEmpty {
                     StorebenchPicker("Account", selection: Binding(get: { selected }, set: choose), hint: active ? "Connected · Used for ChatGPT tasks" : "Choose a saved account or add another from its options menu.", accessory: AnyView(accountOptions)) {

@@ -57,6 +57,12 @@ public struct Revision: Codable, Identifiable, Sendable {
     public let importedAt: String
     public let app: AppIdentity
     public let appInfos: [AppInfo]
+    /// The App Information records to show, check and change. While a new version is being prepared, App Store Connect keeps the
+    /// live record beside an editable one, each with the same languages; only the editable one is current then.
+    public var currentAppInfos: [AppInfo] {
+        let keep = AppInfoChoice.current(appInfos.map { ($0.fields["appStoreState"]?.text ?? "", $0.fields["state"]?.text ?? "") })
+        return appInfos.enumerated().filter { keep.contains($0.offset) }.map(\.element)
+    }
     public let versions: [Version]
 
     public var isLocalDraft: Bool { origin == "local" }
@@ -117,6 +123,12 @@ public enum AppStoreNames {
         return value.formatted(style)
     }
     public static func date(_ iso: String?, timeZone: TimeZone = .current) -> String? { iso.flatMap(ISODateParser.date).map { date($0, timeZone: timeZone) } }
+    /// A day and 24-hour time, such as "Nov 20, 2026 14:32", for when something happened on that day, such as a build's upload.
+    public static func dateTime(_ value: Date, timeZone: TimeZone = .current) -> String {
+        let time = DateFormatter(); time.locale = Locale(identifier: "en_US_POSIX"); time.calendar = Calendar(identifier: .gregorian); time.timeZone = timeZone; time.dateFormat = "HH:mm"
+        return date(value, timeZone: timeZone) + " " + time.string(from: value)
+    }
+    public static func dateTime(_ iso: String?, timeZone: TimeZone = .current) -> String? { iso.flatMap(ISODateParser.date).map { dateTime($0, timeZone: timeZone) } }
     public static func state(_ code: String) -> String {
         if let label = states[code] { return label }
         guard !code.isEmpty else { return "Unknown state" }
@@ -131,5 +143,28 @@ extension Revision.AppInfo {
     /// The same App Information record with more localizations, such as languages added in a local draft.
     public func adding(_ localizations: [Revision.AppInfoLocalization]) -> Revision.AppInfo {
         Revision.AppInfo(id: id, fields: fields, localizations: self.localizations + localizations)
+    }
+}
+
+
+/// Chooses the App Information record a version works with when App Store Connect has several.
+public enum AppInfoChoice {
+    /// States of the live record, which App Store Connect keeps while another one is being prepared.
+    static let live: Set<String> = ["READY_FOR_DISTRIBUTION", "READY_FOR_SALE"]
+    /// The positions of the records to use: the only record; else the one App Store Connect lets you edit; else the one that
+    /// is not live; else every record, which must then agree.
+    public static func current(_ states: [(appStoreState: String, state: String)]) -> [Int] {
+        guard states.count > 1 else { return Array(states.indices) }
+        func has(_ index: Int, _ set: Set<String>) -> Bool { set.contains(states[index].state) || set.contains(states[index].appStoreState) }
+        let editable = states.indices.filter { has($0, Apple.editable) }
+        if editable.count == 1 { return editable }
+        let preparing = states.indices.filter { !has($0, live) }
+        if preparing.count == 1 { return preparing }
+        return Array(states.indices)
+    }
+    /// The records to use from a revision's JSON.
+    public static func current(_ infos: [JSONText]) -> [JSONText] {
+        let keep = current(infos.map { ($0["fields"]?["appStoreState"]?.text ?? "", $0["fields"]?["state"]?.text ?? "") })
+        return infos.enumerated().filter { keep.contains($0.offset) }.map(\.element)
     }
 }

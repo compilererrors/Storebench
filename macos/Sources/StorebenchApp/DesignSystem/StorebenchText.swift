@@ -61,7 +61,8 @@ struct StorebenchHugWidth: Layout {
         return CGSize(width: hug ? size.width : (width ?? size.width), height: size.height)
     }
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        subviews.place(0, at: bounds.origin, proposal: ProposedViewSize(bounds.size))
+        let width = hug ? min(bounds.width, subviews.size(0, .unspecified).width) : bounds.width
+        subviews.place(0, at: bounds.origin, proposal: ProposedViewSize(width: width, height: bounds.height))
     }
 }
 
@@ -103,10 +104,23 @@ struct StorebenchTextSlot: View {
     var color: Color? = StorebenchTheme.ink
     var centered = false
     var live = false
+    /// Whether the text can be selected and copied; nil chooses by the font. Copy, values and feedback can be selected.
+    /// A heading is a label, which macOS does not let you select.
+    var selectable: Bool? = nil
+    private static let headingFonts: Set<Font> = [.sbHeadline, .sbTitle3, .sbTitle2, .sbLargeTitle, .sbMetric]
+    private var selects: Bool { selectable ?? font.map { !Self.headingFonts.contains($0) } ?? true }
     var body: some View {
         StorebenchTextTrack(height: height, centered: centered, live: live) {
-            Text(text).font(font).tracking(tracking).foregroundStyle(color.map(AnyShapeStyle.init) ?? AnyShapeStyle(.foreground)).textSelection(.enabled)
+            Text(text).font(font).tracking(tracking).foregroundStyle(color.map(AnyShapeStyle.init) ?? AnyShapeStyle(.foreground))
+                .modifier(StorebenchTextSelection(enabled: selects))
         }.accessibilityLabel(text).accessibilityHidden(text.isEmpty)
+    }
+}
+
+private struct StorebenchTextSelection: ViewModifier {
+    let enabled: Bool
+    func body(content: Content) -> some View {
+        if enabled { content.textSelection(.enabled) } else { content.textSelection(.disabled) }
     }
 }
 

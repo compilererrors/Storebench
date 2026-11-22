@@ -20,7 +20,7 @@ struct UnlockView: View {
     var body: some View {
         StorebenchAuthScreen {
             StorebenchAuthCard(title: "Unlock Storebench", message: model.requiresDeviceAuthentication ? "Use Touch ID or your Mac login password to open Keychain-backed storage." : model.lockMode == .device ? "Open saved data with the encryption key in your Mac Keychain." : "Enter the password that protects your encrypted local data.") {
-                if model.lockMode != .device { StorebenchSecureField("Storebench password", text: $password).onSubmit(unlock) }
+                if model.lockMode != .device { StorebenchSecureField("Storebench Password", text: $password).onSubmit(unlock) }
                 StorebenchFeedback(text: model.lastError, error: true)
                 if model.lockMode == .device || password.utf16.count >= 12 {
                     StorebenchActionGroup { Button(model.requiresDeviceAuthentication ? "Unlock with Your Mac" : model.lockMode == .device ? "Open Saved Data" : "Unlock", action: unlock).buttonStyle(StorebenchButtonStyle(.primary)) }

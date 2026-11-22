@@ -70,4 +70,27 @@ import Testing
             #expect(f.apple.writes.isEmpty)
         }
     }
+
+    /// Many screens ask for an app's reviews when they open; the parsed list is kept until a review changes.
+    @Test func theReviewListIsKeptUntilAReviewIsSavedHereOrWrittenByAnotherProcess() async throws {
+        let f = try await fixture(); defer { try? FileManager.default.removeItem(at: f.root) }
+        func history() async throws -> [PublishReview] { try await f.session.publishHistory(accountId: f.account.id, appId: "1000000001") }
+        #expect(try await history().map(\.state) == ["running"])
+        #expect(await f.session.cachedMemoryBytes() > 0)
+        #expect(try await history().map(\.id) == [f.review.id])
+        // A review saved in this session is never served from the earlier list.
+        var changed = f.review; changed.state = "failed"
+        #expect(try await f.session.savePublishReview(changed, expected: 2) == 3)
+        #expect(try await history().map(\.state) == ["failed"])
+        // Neither is one written by another process.
+        changed.state = "complete"
+        let other = try EncryptedDocumentStore(url: EncryptedDocumentStore.databaseURL(root: f.root), key: await f.session.databaseKey, writable: true)
+        try other.transaction { _ in [.put(namespace: "publish_reviews", key: "\(f.account.id):1000000001:\(f.review.id)", json: changed.json.data)] }
+        other.close()
+        #expect(try await history().map(\.state) == ["complete"])
+        // Memory pressure drops the kept list; the next read parses the saved reviews again.
+        await f.session.trimCachedMemory()
+        #expect(await f.session.cachedMemoryBytes() == 0)
+        #expect(try await history().map(\.state) == ["complete"])
+    }
 }

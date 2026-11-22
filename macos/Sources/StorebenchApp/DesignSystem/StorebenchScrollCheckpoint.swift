@@ -126,29 +126,31 @@ struct StorebenchScrollCheckpoint: NSViewRepresentable {
         private var applying = false
         private var ready = false
         private var interaction: (() -> Void)?
+        /// Room added below the content so the page can sit at its saved position before all of its content has arrived.
+        private var reserved: CGFloat = 0
+        private var automaticInsets: Bool?
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            if window == nil { capture(); lifetime.end(); owner = nil }
+            if window == nil { capture(); release(owner); lifetime.end(); owner = nil }
             else { if !lifetime.active, context != nil { start() } else { attach() } }
         }
         isolated deinit { lifetime.end() }
         func configure(_ next: NavigationPresentationContext?, interaction: (() -> Void)? = nil) {
             self.interaction = interaction
             guard context?.entry != next?.entry || context?.store !== next?.store else { attach(); return }
-            capture(); lifetime.end(); owner = nil; context = next; ready = false
+            capture(); release(owner); lifetime.end(); owner = nil; context = next; ready = false
             restoration = ScrollRestoration(next.map { $0.store.offset($0.entry) })
             lastOffset = next.map { $0.store.offset($0.entry) } ?? .zero
             next?.store.capture = { [weak self] in self?.capture() }
             next?.store.keepScroll = { [weak self] in self?.cancelForInput() }
             if window != nil, next != nil { start() }
         }
+        /// The saved position is applied at once, in the same pass that shows the page, and held while its content arrives.
         private func start() {
             let ticket = lifetime.begin()
+            ready = true
             attach()
             let task = Task { @MainActor [weak self] in
-                do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
-                guard !Task.isCancelled, self?.lifetime.accepts(ticket) == true else { return }
-                self?.ready = true; self?.restore()
                 do { try await Task.sleep(for: .seconds(8)) } catch { return }
                 guard !Task.isCancelled, self?.lifetime.accepts(ticket) == true else { return }
                 self?.restore(finishedWaiting: true)
@@ -184,18 +186,46 @@ struct StorebenchScrollCheckpoint: NSViewRepresentable {
             restore()
         }
         private func observe(_ name: Notification.Name, object: AnyObject, action: @escaping @MainActor @Sendable (CheckpointView) -> Void) {
-            let token = NotificationCenter.default.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in
+            // Handled as posted, inside the layout pass, so a correction is drawn in the same frame as the change.
+            let token = NotificationCenter.default.addObserver(forName: name, object: object, queue: nil) { [weak self] _ in
                 MainActor.assumeIsolated { if let self { action(self) } }
             }
             lifetime.own({ NotificationCenter.default.removeObserver(token) }, ticket: lifetime.generation)
         }
         private func restore(finishedWaiting: Bool = false) {
-            guard ready, !applying, let owner, let document = owner.documentView,
-                  let point = restoration.resolve(content: document.bounds.size, viewport: owner.contentView.bounds.size, finishedWaiting: finishedWaiting) else { return }
-            applying = true; owner.contentView.scroll(to: point); owner.reflectScrolledClipView(owner.contentView); applying = false
-            recordOffset()
+            guard ready, !applying, let owner, let document = owner.documentView, let target = restoration.target else { return }
+            let clip = owner.contentView
+            if let point = restoration.resolve(content: document.bounds.size, viewport: clip.bounds.size, finishedWaiting: finishedWaiting) {
+                // The content is there, or waiting ended: the page scrolls normally from the saved position.
+                release(owner); place(owner, at: point); recordOffset(); return
+            }
+            // Not all content has arrived yet: hold the page at its saved position with room below, rather than at its top.
+            reserve(owner, through: target.y); place(owner, at: CGPoint(x: clip.bounds.minX, y: target.y))
         }
-        private func cancelForInput() { restoration.cancel(); recordOffset() }
+        private func place(_ owner: NSScrollView, at point: CGPoint) {
+            guard owner.contentView.bounds.origin != point else { return }
+            applying = true; owner.contentView.scroll(to: point); owner.reflectScrolledClipView(owner.contentView); applying = false
+        }
+        private func reserve(_ owner: NSScrollView, through y: CGFloat) {
+            guard let document = owner.documentView else { return }
+            let clip = owner.contentView, base = clip.contentInsets.bottom - reserved
+            let needed = max(0, y + clip.bounds.height - document.frame.height - base)
+            guard abs(needed - reserved) > 0.5 else { return }
+            if automaticInsets == nil { automaticInsets = clip.automaticallyAdjustsContentInsets; clip.automaticallyAdjustsContentInsets = false }
+            var insets = clip.contentInsets; insets.bottom = base + needed
+            applying = true; clip.contentInsets = insets; applying = false
+            reserved = needed
+        }
+        private func release(_ owner: NSScrollView?) {
+            guard let clip = owner?.contentView else { reserved = 0; automaticInsets = nil; return }
+            if reserved > 0 {
+                var insets = clip.contentInsets; insets.bottom -= reserved
+                applying = true; clip.contentInsets = insets; applying = false
+                reserved = 0
+            }
+            if let automaticInsets { clip.automaticallyAdjustsContentInsets = automaticInsets; self.automaticInsets = nil }
+        }
+        private func cancelForInput() { restoration.cancel(); release(owner); recordOffset() }
         private func userInteracted() { cancelForInput(); interaction?() }
         private func recordOffset() {
             guard !applying, restoration.target == nil, let owner else { return }
@@ -206,6 +236,6 @@ struct StorebenchScrollCheckpoint: NSViewRepresentable {
             guard !applying, restoration.target == nil, let context else { return }
             context.store.save(lastOffset, for: context.entry)
         }
-        func retire() { capture(); lifetime.end(); owner = nil; context = nil; interaction = nil }
+        func retire() { capture(); release(owner); lifetime.end(); owner = nil; context = nil; interaction = nil }
     }
 }

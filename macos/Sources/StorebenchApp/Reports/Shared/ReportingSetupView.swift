@@ -41,7 +41,7 @@ struct ReportingSetupView: View {
     }
     private var connected: ReportingConnection.Reporter? { replacing ? nil : baseline?.connection?.reporter }
     var body: some View {
-        Card(title: "Reporting connection", subtitle: connected != nil || (source == .api && !savedVendor.isEmpty)
+        Card(title: "Reporting Connection", subtitle: connected != nil || (source == .api && !savedVendor.isEmpty)
              ? "Sales and Finance downloads use this connection."
              : "Connect to download Sales and Finance reports.",
              help: "reporter", actions: connectionMenu) {
@@ -52,7 +52,7 @@ struct ReportingSetupView: View {
             if source == .api {
                 if baseline != nil {
                     StorebenchInputActions {
-                        StorebenchTextField("Vendor number", text: $vendor, hint: "6–20 digits.", placeholder: "6–20 digits")
+                        StorebenchTextField("Vendor Number", text: $vendor, hint: "6–20 digits.", placeholder: "6–20 digits")
                             .info("In App Store Connect, click Reports at the top of the page. Your vendor number is at the top left, under your legal entity name.")
                             .focused($focused, equals: .vendor).storebenchWorking(disabled || working)
                     } actions: {
@@ -125,13 +125,13 @@ struct ReportingSetupView: View {
                 .storebenchWorking(disabled || working)
         }
         if !accounts.isEmpty {
-            StorebenchPicker("Reporting account", selection: Binding(get: { selectedAccount }, set: { selectedAccount = $0; vendors = []; selectedVendor = "" })) {
+            StorebenchPicker("Reporting Account", selection: Binding(get: { selectedAccount }, set: { selectedAccount = $0; vendors = []; selectedVendor = "" })) {
                 SelectionOption("Choose account", value: "")
                 selectionOptions(accounts) { item in SelectionOption("\(item.name) · \(item.number)", value: item.number) }
             }.storebenchFormColumn().storebenchWorking(disabled || working)
         }
         if !vendors.isEmpty {
-            StorebenchPicker("Reporting vendor", selection: $selectedVendor) {
+            StorebenchPicker("Reporting Vendor", selection: $selectedVendor) {
                 SelectionOption("Choose vendor", value: "")
                 selectionOptions(vendors) { SelectionOption($0, value: $0) }
             }.storebenchFormColumn().storebenchWorking(disabled || working)

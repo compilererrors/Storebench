@@ -138,12 +138,14 @@ struct StorebenchTopbar: View {
     let overview: () -> Void
     let signOut: (() -> Void)?
     @Environment(\.workspaceWidth) private var width
+    @Environment(\.shortcutSettings) private var shortcuts
     var body: some View {
         let insets = ComponentLayout.pageInsets(viewportWidth: width)
+        let backHelp = HistoryGesture.help(.back, binding: shortcuts?.keymap.binding(.back)), forwardHelp = HistoryGesture.help(.forward, binding: shortcuts?.keymap.binding(.forward))
         HStack(spacing: StorebenchTheme.space(2)) {
             HStack(spacing: 4) {
-                Button { if canGoBack { back() } } label: { StorebenchIcon(name: "previous") }.buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).opacity(canGoBack ? 1 : 0).allowsHitTesting(canGoBack).accessibilityHidden(!canGoBack).help("Back").accessibilityLabel("Back").storebenchControlID("navigation.back").storebenchWorking(!canGoBack)
-                Button { if canGoForward { forward() } } label: { StorebenchIcon(name: "next") }.buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).opacity(canGoForward ? 1 : 0).allowsHitTesting(canGoForward).accessibilityHidden(!canGoForward).help("Forward").accessibilityLabel("Forward").storebenchControlID("navigation.forward").storebenchWorking(!canGoForward)
+                Button { if canGoBack { back() } } label: { StorebenchIcon(name: "previous") }.buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).opacity(canGoBack ? 1 : 0).allowsHitTesting(canGoBack).accessibilityHidden(!canGoBack).help(backHelp).accessibilityLabel("Back").storebenchControlID("navigation.back").storebenchWorking(!canGoBack)
+                Button { if canGoForward { forward() } } label: { StorebenchIcon(name: "next") }.buttonStyle(StorebenchButtonStyle(.quiet, size: .icon)).opacity(canGoForward ? 1 : 0).allowsHitTesting(canGoForward).accessibilityHidden(!canGoForward).help(forwardHelp).accessibilityLabel("Forward").storebenchControlID("navigation.forward").storebenchWorking(!canGoForward)
             }
             HStack(spacing: StorebenchTheme.space(2)) {
                 Button("Overview", action: overview).buttonStyle(StorebenchPressStyle()).font(.sbSubheadline).foregroundStyle(StorebenchTheme.muted).frame(height: StorebenchTheme.controlHeight).fixedSize(horizontal: true, vertical: false)

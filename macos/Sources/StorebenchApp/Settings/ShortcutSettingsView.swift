@@ -9,7 +9,7 @@ struct ShortcutSettingsView: View {
     private struct Edit: Identifiable { let id = UUID(); let command: ShortcutCommand }
     var body: some View {
         StorebenchForm {
-            Card(title: "Keyboard shortcuts", subtitle: "Customize actions and navigation. Shortcuts apply to the active window. Command+Comma always opens Settings.",
+            Card(title: "Keyboard Shortcuts", subtitle: "Customize actions and navigation. Shortcuts apply to the active window. Command+Comma always opens Settings.",
                  accessory: AnyView(Button("Restore Defaults") { if settings?.recording != true { restoring = true } }.storebenchWorking(settings?.recording == true))) {
                 StorebenchSearchField("Search actions or sections", text: $query)
                 StorebenchFeedback(text: settings?.issue ?? "", height: 48)
@@ -55,7 +55,7 @@ private struct ShortcutEditor: View {
         baseline = value; _draft = State(initialValue: value)
     }
     var body: some View {
-        StorebenchDialog(title: command.title, height: 440, close: close) {
+        StorebenchDialog(title: command.title, kind: .question, close: close) {
             Text("Choose Record Shortcut, then press the combination. Use Command or Control. Reserved combinations and conflicts keep the current shortcut.")
                 .font(.sbCallout).foregroundStyle(StorebenchTheme.muted).fixedSize(horizontal: false, vertical: true)
             StorebenchLabeledContent("New shortcut") {

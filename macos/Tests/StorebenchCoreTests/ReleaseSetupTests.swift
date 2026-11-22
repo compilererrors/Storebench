@@ -25,6 +25,59 @@ import Testing
         #expect(inputs.start == .copy && inputs.baseVersionId == "v3" && inputs.targetVersion == "1.3")
     }
 
+    /// Quick Release prepares new versions: one already submitted or in review is the base of the next number, never reopened.
+    @Test func quickReleaseStartsTheNextVersionAfterASubmittedOne() throws {
+        for state in ["WAITING_FOR_REVIEW", "IN_REVIEW", "PENDING_DEVELOPER_RELEASE", "READY_FOR_DISTRIBUTION"] {
+            let history = [try revision("import-4", importedAt: "2026-11-16T19:05:00.000Z", versions: [("v27", "MAC_OS", "2.7", state, "AFTER_APPROVAL")])]
+            let quick = ReleaseSetup.quickSuggestion(history, date: date)
+            #expect(quick.start == .copy && quick.baseVersionId == "v27" && quick.targetVersion == "2.8" && quick.releaseType == "AFTER_APPROVAL", "\(state): \(quick)")
+        }
+        // Release itself keeps following a version in review until it is out.
+        let inReview = [try revision("import-4", importedAt: "2026-11-16T19:05:00.000Z", versions: [("v27", "MAC_OS", "2.7", "IN_REVIEW", "MANUAL")])]
+        #expect(ReleaseSetup.suggestion(inReview, date: date).start == .reuse)
+    }
+
+    /// When the last import is older than a version Apple released since, that version's number is never suggested again:
+    /// a plan that released 1.10 from a 1.9 import suggests 1.11, and an imported 1.10 still being prepared is not reopened.
+    @Test func quickReleaseSkipsNumbersAppleAlreadyHas() throws {
+        let older = [try revision("import-6", importedAt: "2026-11-10T08:00:00.000Z", versions: [("v19", "MAC_OS", "1.9", "READY_FOR_DISTRIBUTION", "MANUAL")])]
+        #expect(ReleaseSetup.quickSuggestion(older, date: date).targetVersion == "1.10")
+        let quick = ReleaseSetup.quickSuggestion(older, date: date, known: ["1.10"])
+        #expect(quick.start == .copy && quick.targetVersion == "1.11", "\(quick)")
+        let preparing = [try revision("import-7", importedAt: "2026-11-10T08:00:00.000Z", versions: [("v110", "MAC_OS", "1.10", "PREPARE_FOR_SUBMISSION", "MANUAL"), ("v19", "MAC_OS", "1.9", "READY_FOR_DISTRIBUTION", "MANUAL")])]
+        let next = ReleaseSetup.quickSuggestion(preparing, date: date, known: ["1.10"])
+        #expect(next.start == .copy && next.targetVersion == "1.11", "\(next)")
+    }
+
+    /// Apple's saved version numbers number a copy past a release the last import doesn't have yet, without stopping Quick Release
+    /// from continuing a version Apple is still preparing.
+    @Test func applesSavedNumbersNumberACopyButKeepAVersionInPreparation() throws {
+        let older = [try revision("import-9", importedAt: "2026-11-10T08:00:00.000Z", versions: [("v19", "MAC_OS", "1.9", "READY_FOR_DISTRIBUTION", "MANUAL")])]
+        #expect(ReleaseSetup.quickSuggestion(older, date: date, apple: ["MAC_OS": ["1.9", "1.10"]]).targetVersion == "1.11")
+        #expect(ReleaseSetup.quickSuggestion(older, date: date, apple: ["IOS": ["1.10"]]).targetVersion == "1.10", "Another platform's numbers don't count")
+        let preparing = [try revision("import-10", importedAt: "2026-11-10T08:00:00.000Z", versions: [("v111", "MAC_OS", "1.11", "PREPARE_FOR_SUBMISSION", "MANUAL"), ("v110", "MAC_OS", "1.10", "READY_FOR_DISTRIBUTION", "MANUAL")])]
+        let quick = ReleaseSetup.quickSuggestion(preparing, date: date, apple: ["MAC_OS": ["1.10", "1.11"]])
+        #expect(quick.start == .reuse && quick.targetVersion == "1.11", "\(quick)")
+    }
+
+    /// A new release starts from the saved import at once while it matches Apple's version list; a new version, number or state
+    /// at Apple means a fresh download first.
+    @Test func theSavedImportIsUsedWhileItMatchesApplesVersions() throws {
+        let saved = try revision("import-8", importedAt: "2026-11-10T08:00:00.000Z", versions: [("v110", "MAC_OS", "1.10", "READY_FOR_DISTRIBUTION", "MANUAL"), ("v19", "MAC_OS", "1.9", "REPLACED_WITH_NEW_VERSION", "MANUAL")]).versions
+        let apple = [PublishingWorkspace.Version(id: "v110", platform: "MAC_OS", number: "1.10", state: "READY_FOR_DISTRIBUTION"),
+                     PublishingWorkspace.Version(id: "v19", platform: "MAC_OS", number: "1.9", state: "REPLACED_WITH_NEW_VERSION")]
+        #expect(WorkspaceSession.sameVersions(saved, apple))
+        #expect(!WorkspaceSession.sameVersions(saved, apple + [.init(id: "v111", platform: "MAC_OS", number: "1.11", state: "PREPARE_FOR_SUBMISSION")]), "A new version at Apple")
+        #expect(!WorkspaceSession.sameVersions(saved, [.init(id: "v110", platform: "MAC_OS", number: "1.10", state: "READY_FOR_SALE"), apple[1]]), "A changed state")
+        #expect(!WorkspaceSession.sameVersions(saved, [apple[0]]), "A version Apple no longer lists")
+    }
+
+    @Test func quickReleaseContinuesAVersionAppleStillLetsYouEdit() throws {
+        let history = [try revision("import-5", importedAt: "2026-11-16T19:05:00.000Z", versions: [("v28", "MAC_OS", "2.8", "PREPARE_FOR_SUBMISSION", "MANUAL"), ("v27", "MAC_OS", "2.7", "READY_FOR_DISTRIBUTION", "MANUAL")])]
+        let quick = ReleaseSetup.quickSuggestion(history, date: date)
+        #expect(quick.start == .reuse && quick.baseVersionId == "v28" && quick.targetVersion == "2.8")
+    }
+
     @Test func anAppWithNothingSavedStartsItsFirstVersion() {
         let inputs = ReleaseSetup.suggestion([], date: date)
         #expect(inputs.start == .empty(platform: "IOS", locale: "en-US") && inputs.targetVersion == "1.0")

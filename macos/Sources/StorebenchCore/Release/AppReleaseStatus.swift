@@ -79,32 +79,64 @@ extension WorkspaceSession {
     }
 
     /// Two small reads at a time, behind visible work. A new session confirms every app again; later ticks reuse fresh results.
-    public func refreshReleaseOverviews(limit: Int = 20, maxAge: TimeInterval = 60, now: Date = Date()) async {
-        await refreshReleaseOverviews(limit: limit, maxAge: maxAge, now: now, clients: { account in try await self.readClient(for: account) })
+    /// `first` names the cards on screen, as "account:app", which are read before any other app. Without `limit`, the Performance
+    /// setting decides how many apps one check reads.
+    public func refreshReleaseOverviews(limit: Int? = nil, maxAge: TimeInterval = 60, now: Date = Date(), first: [String] = []) async {
+        await refreshReleaseOverviews(limit: limit, maxAge: maxAge, now: now, first: first, clients: { account in try await self.readClient(for: account) })
     }
-    func refreshReleaseOverviews(limit: Int = 20, maxAge: TimeInterval = 60, now: Date = Date(),
-                                clients: @escaping @Sendable (Account) async throws -> AppStoreConnectClient) async {
-        guard !isSample, let accounts = try? accounts() else { return }
+    /// Reads one app's release status at once, as when its card is expanded, unless it was read in the last `maxAge` seconds.
+    public func checkReleaseStatus(accountId: String, appId: String, maxAge: TimeInterval = 30) async {
+        await checkReleaseStatus(accountId: accountId, appId: appId, maxAge: maxAge, clients: { account in try await self.readClient(for: account) })
+    }
+    func checkReleaseStatus(accountId: String, appId: String, maxAge: TimeInterval = 30, now: Date = Date(),
+                            clients: @escaping @Sendable (Account) async throws -> AppStoreConnectClient) async {
+        guard !isSample, let account = (try? accounts())?.first(where: { $0.id == accountId }), account.appIds.contains(appId) else { return }
+        if appReleaseReads.contains(accountId + ":" + appId), let attempted = appReleaseStatus(account: account, appId: appId)?.attemptedAt,
+           now.timeIntervalSince(attempted) < maxAge { return }
+        await AppleReadPriority.$current.withValue(.next) {
+            await refreshReleaseOverview(account: account, appId: appId, requested: true, clients: clients)
+        }
+    }
+    /// The apps to check: the cards on screen first, then apps with a saved release plan because their cards lead Overview,
+    /// then the longest unchecked.
+    func releaseOverviewTargets(limit: Int? = nil, maxAge: TimeInterval = 60, now: Date = Date(), first: [String] = []) -> [(account: Account, appId: String, planned: Bool)] {
+        guard !isSample, let accounts = try? accounts() else { return [] }
         let candidates = accounts.flatMap { account in account.apps.map { app in
-            (account, app.id, appReleaseStatus(account: account, appId: app.id)?.attemptedAt)
+            (account: account, appId: app.id, attempted: appReleaseStatus(account: account, appId: app.id)?.attemptedAt,
+             planned: (try? releasePlan(accountId: account.id, appId: app.id)) != nil)
         } }
-        let targets = candidates.filter { account, appId, attempted in
-            !appReleaseReads.contains(account.id + ":" + appId) || attempted.map { now.timeIntervalSince($0) >= maxAge } != false
-        }.sorted { ($0.2 ?? .distantPast) < ($1.2 ?? .distantPast) }.prefix(max(0, min(100, limit)))
-        await AppleReadPriority.$current.withValue(.background) {
-            await withTaskGroup(of: Void.self) { group in
-                var iterator = targets.makeIterator()
-                for _ in 0..<2 { if let target = iterator.next() { group.addTask { await self.refreshReleaseOverview(account: target.0, appId: target.1, clients: clients) } } }
-                while await group.next() != nil {
-                    guard !Task.isCancelled else { group.cancelAll(); return }
-                    if let target = iterator.next() { group.addTask { await self.refreshReleaseOverview(account: target.0, appId: target.1, clients: clients) } }
-                }
+        let shown = Dictionary(first.enumerated().map { ($1, $0) }, uniquingKeysWith: { earlier, _ in earlier })
+        return candidates.filter { candidate in
+            !appReleaseReads.contains(candidate.account.id + ":" + candidate.appId) || candidate.attempted.map { now.timeIntervalSince($0) >= maxAge } != false
+        }.sorted { left, right in
+            let leftShown = shown[left.account.id + ":" + left.appId], rightShown = shown[right.account.id + ":" + right.appId]
+            if leftShown != nil || rightShown != nil { return (leftShown ?? .max) < (rightShown ?? .max) }
+            return left.planned != right.planned ? left.planned : (left.attempted ?? .distantPast) < (right.attempted ?? .distantPast)
+        }.prefix(max(0, min(100, limit ?? cacheBudget.releaseStatusChecks))).map { ($0.account, $0.appId, $0.planned) }
+    }
+    func refreshReleaseOverviews(limit: Int? = nil, maxAge: TimeInterval = 60, now: Date = Date(), first: [String] = [],
+                                clients: @escaping @Sendable (Account) async throws -> AppStoreConnectClient) async {
+        let targets = releaseOverviewTargets(limit: limit, maxAge: maxAge, now: now, first: first)
+        guard !targets.isEmpty else { return }
+        // A planned release is on the first screen, so it is read as the likely next step; other apps fill in behind it.
+        func check(_ target: (account: Account, appId: String, planned: Bool)) async {
+            await AppleReadPriority.$current.withValue(target.planned ? .next : .background) {
+                await self.refreshReleaseOverview(account: target.account, appId: target.appId, clients: clients)
+            }
+        }
+        await withTaskGroup(of: Void.self) { group in
+            var iterator = targets.makeIterator()
+            for _ in 0..<2 { if let target = iterator.next() { group.addTask { await check(target) } } }
+            while await group.next() != nil {
+                guard !Task.isCancelled else { group.cancelAll(); return }
+                if let target = iterator.next() { group.addTask { await check(target) } }
             }
         }
     }
-    private func refreshReleaseOverview(account: Account, appId: String, clients: @Sendable (Account) async throws -> AppStoreConnectClient) async {
+    /// `requested` is a read the user asked for, such as by expanding a card, rather than one read ahead in the background.
+    private func refreshReleaseOverview(account: Account, appId: String, requested: Bool = false, clients: @Sendable (Account) async throws -> AppStoreConnectClient) async {
         let key = account.id + ":" + appId
-        guard !Task.isCancelled, !appReleaseChecking.contains(key), AppleRequestBudget.allowsReadingAhead(keyId: account.keyId) else { return }
+        guard !Task.isCancelled, !appReleaseChecking.contains(key), requested || AppleRequestBudget.allowsReadingAhead(keyId: account.keyId) else { return }
         appReleaseChecking.insert(key); defer { appReleaseChecking.remove(key) }
         let at = Date()
         do {
@@ -113,6 +145,9 @@ extension WorkspaceSession {
             rememberAppReleaseStatus(account: account, appId: appId, versions: versions, at: at)
             if let plan = try? releasePlan(accountId: account.id, appId: appId), LibraryOverview.planState(plan, versions: versions).released {
                 try? removeReleasePlan(accountId: account.id, appId: appId, expected: plan.token)
+            } else {
+                // A version still in progress at Apple, such as one Developer Rejected, is followed even without a plan made here.
+                try? continueReleaseInProgress(account: account, appId: appId, versions: versions)
             }
         } catch { if !Task.isCancelled { rememberAppReleaseStatus(account: account, appId: appId, versions: nil, at: at) } }
     }
